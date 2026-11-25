@@ -18,6 +18,7 @@ option(IEC104_BUILD_FUZZERS        "Build libFuzzer targets (Clang only)"     OF
 option(IEC104_ENABLE_SANITIZERS    "Build with ASan and UBSan"                OFF)
 option(IEC104_WARNINGS_AS_ERRORS   "Treat warnings as errors (library code)"  ON)
 option(IEC104_ENABLE_CLANG_TIDY    "Run clang-tidy while compiling"           OFF)
+option(IEC104_BUILD_SELFTEST       "Build the self-test programs"             ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,6 +26,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+include(GNUInstallDirs)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -65,7 +67,10 @@ endfunction()
 # Library
 # ---------------------------------------------------------------------------
 add_library(iec104
+    src/api/client.cpp
     src/api/iec104.cpp
+    src/api/link_common.cpp
+    src/api/server.cpp
     src/apci/apci_config.cpp
     src/apci/connection.cpp
     src/codec/apci.cpp
@@ -73,7 +78,9 @@ add_library(iec104
     src/codec/asdu_header.cpp
     src/codec/cp56time2a.cpp
     src/codec/elements.cpp
-    src/codec/type_table.cpp)
+    src/codec/type_table.cpp
+    src/transport/link.cpp
+    src/transport/tcp.cpp)
 add_library(iec104::iec104 ALIAS iec104)
 
 target_include_directories(iec104
@@ -115,6 +122,7 @@ if(IEC104_BUILD_TESTS)
         tests/test_capture.cpp
         tests/test_cp56time2a.cpp
         tests/test_elements.cpp
+        tests/test_tcp_loopback.cpp
         tests/test_type_table.cpp)
     # Tests use the internal C++ headers directly (sans-I/O, no network)
     target_include_directories(iec104_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -124,6 +132,27 @@ if(IEC104_BUILD_TESTS)
     target_link_libraries(iec104_tests PRIVATE iec104::iec104 GTest::gtest GTest::gtest_main)
     iec104_set_warnings(iec104_tests FALSE)
     gtest_discover_tests(iec104_tests)
+endif()
+
+# ---------------------------------------------------------------------------
+# Self-test programs (server and client over TCP)
+# ---------------------------------------------------------------------------
+if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
+    foreach(role server client)
+        add_executable(iec104_selftest_${role} tools/selftest/selftest_${role}.cpp)
+        # The programs build ASDUs with the internal codec (see selftest_common.hpp).
+        target_include_directories(iec104_selftest_${role} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+        target_link_libraries(iec104_selftest_${role} PRIVATE iec104::iec104)
+        iec104_set_warnings(iec104_selftest_${role} TRUE)
+    endforeach()
+    install(TARGETS iec104_selftest_server iec104_selftest_client
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    if(IEC104_BUILD_TESTS)
+        add_test(NAME SelfTest.ServerAndClientOverTcp
+            COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
+                    $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>)
+        set_tests_properties(SelfTest.ServerAndClientOverTcp PROPERTIES TIMEOUT 90)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -146,7 +175,6 @@ endif()
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
-include(GNUInstallDirs)
 install(TARGETS iec104 EXPORT iec104Targets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})

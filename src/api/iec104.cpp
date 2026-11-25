@@ -51,12 +51,76 @@ const char* iec104_status_string(iec104_status status) {
         return "would block";
     case IEC104_ERR_WRONG_STATE:
         return "not allowed in this state";
+    case IEC104_ERR_IO:
+        return "i/o error";
+    case IEC104_ERR_CLOSED:
+        return "connection closed";
     case IEC104_ERR_INTERNAL:
         return "internal error";
     }
     // Reached for integers that are not a declared enumerator (C callers can
     // pass any int).
     return "unknown status";
+}
+
+void iec104_link_config_init(iec104_link_config* config) {
+    if (config == nullptr) {
+        return;
+    }
+    // Values of the standard (docs/05, interoperability list).
+    config->t0_ms = 30000;
+    config->t1_ms = 15000;
+    config->t2_ms = 10000;
+    config->t3_ms = 20000;
+    config->k = 12;
+    config->w = 8;
+    config->tolerant = 0;
+}
+
+const char* iec104_link_state_string(iec104_link_state state) {
+    switch (state) {
+    case IEC104_LINK_CONNECTING:
+        return "connecting";
+    case IEC104_LINK_STOPPED:
+        return "stopped";
+    case IEC104_LINK_START_PENDING:
+        return "start pending";
+    case IEC104_LINK_STARTED:
+        return "started";
+    case IEC104_LINK_STOP_PENDING:
+        return "stop pending";
+    case IEC104_LINK_CLOSED:
+        return "closed";
+    }
+    return "unknown state";
+}
+
+const char* iec104_close_reason_string(iec104_close_reason reason) {
+    switch (reason) {
+    case IEC104_CLOSE_NONE:
+        return "none";
+    case IEC104_CLOSE_LOCAL:
+        return "closed locally";
+    case IEC104_CLOSE_PEER:
+        return "closed by peer";
+    case IEC104_CLOSE_CONNECT_FAILED:
+        return "connect failed";
+    case IEC104_CLOSE_T0_TIMEOUT:
+        return "t0 timeout (connect)";
+    case IEC104_CLOSE_T1_TIMEOUT:
+        return "t1 timeout (no acknowledgement)";
+    case IEC104_CLOSE_SEQUENCE_ERROR:
+        return "sequence error";
+    case IEC104_CLOSE_ACK_OUT_OF_WINDOW:
+        return "acknowledge out of window";
+    case IEC104_CLOSE_MALFORMED:
+        return "malformed frame";
+    case IEC104_CLOSE_UNEXPECTED_FRAME:
+        return "unexpected frame";
+    case IEC104_CLOSE_SOCKET_ERROR:
+        return "socket error";
+    }
+    return "unknown reason";
 }
 
 } // extern "C"
