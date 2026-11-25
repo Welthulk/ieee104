@@ -340,8 +340,8 @@ TEST(ServerSession, ClockSyncAndTest) {
 // Rule: end of initialization (type 70, cause 4) once per connection and station.
 TEST(ServerSession, EndOfInitialization) {
     Fixture f;
-    f.session.on_started(f.image, f.options);
-    f.session.on_started(f.image, f.options); // second STARTDT: nothing more
+    f.session.on_started(f.image, f.commands, f.options);
+    f.session.on_started(f.image, f.commands, f.options); // second STARTDT: nothing more
     f.session.pump(f.sender);
     const auto a = decode_all(f.sender);
     ASSERT_EQ(a.size(), 1U);
@@ -350,7 +350,7 @@ TEST(ServerSession, EndOfInitialization) {
 
     Fixture off;
     off.options.send_end_of_init = false;
-    off.session.on_started(off.image, off.options);
+    off.session.on_started(off.image, off.commands, off.options);
     EXPECT_EQ(off.session.queued(), 0U);
 }
 
@@ -565,4 +565,55 @@ TEST(ServerCommands, StationWithCommandPointsOnly) {
     ASSERT_EQ(a.size(), 1U);
     EXPECT_EQ(a[0].header.cause, 46U);
     EXPECT_TRUE(a[0].header.negative);
+}
+
+// Rule (N10, E10): stations with command points only are stations too: they
+// get the end of initialization and answer a broadcast interrogation.
+TEST(ServerCommands, CommandOnlyStationInInitAndBroadcast) {
+    CommandFixture f;
+    ASSERT_EQ(f.commands.set(7, 100, CommandPoint{45, CommandModel::Direct, 0}), IEC104_OK);
+    f.session.on_started(f.image, f.commands, f.options);
+    f.session.pump(f.sender);
+    auto a = decode_all(f.sender);
+    ASSERT_EQ(a.size(), 2U);
+    EXPECT_EQ(a[0].header.common_address, 1U);
+    EXPECT_EQ(a[1].header.common_address, 7U);
+    EXPECT_EQ(a[1].header.type_id, 70U);
+
+    a = f.step(request(100, 6, 65535, qoi(20)));
+    std::vector<std::uint16_t> confirmed;
+    for (const Answer& x : a) {
+        if (x.header.type_id == 100U && x.header.cause == 7U) {
+            confirmed.push_back(x.header.common_address);
+        }
+    }
+    EXPECT_EQ(confirmed, (std::vector<std::uint16_t>{1, 7}));
+}
+
+// Rule: with an empty process image but command points, only the stations of
+// the command points are known; other addresses get cause 46.
+TEST(ServerCommands, EmptyImageWithCommandPoints) {
+    Fixture f;
+    f.image = ProcessImage{};
+    ASSERT_EQ(f.commands.set(7, 100, CommandPoint{45, CommandModel::Direct, 0}), IEC104_OK);
+    auto a = f.run(request(100, 6, 7, qoi(20)));
+    ASSERT_EQ(a.size(), 2U); // ACTCON, ACTTERM (no data points)
+    EXPECT_FALSE(a[0].header.negative);
+    f.sender.sent.clear();
+    a = f.run(request(100, 6, 8, qoi(20)));
+    ASSERT_EQ(a.size(), 1U);
+    EXPECT_EQ(a[0].header.cause, 46U);
+}
+
+// Rule: without any points the application manages its stations: every
+// address is accepted, a broadcast interrogation is answered once with the
+// broadcast address.
+TEST(ServerSession, BroadcastWithoutPoints) {
+    Fixture f;
+    f.image = ProcessImage{};
+    const auto a = f.run(request(100, 6, 65535, qoi(20)));
+    ASSERT_EQ(a.size(), 2U);
+    EXPECT_EQ(a[0].header.cause, 7U);
+    EXPECT_EQ(a[0].header.common_address, 65535U);
+    EXPECT_EQ(a[1].header.cause, 10U);
 }

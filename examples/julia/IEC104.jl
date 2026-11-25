@@ -20,7 +20,7 @@ export server_create, server_listen, server_port, server_add_point, server_updat
 export client_create, client_connect, client_start, client_stop, client_poll,
        client_interrogation, client_destroy, client_close, client_state,
        client_counter_interrogation, client_clock_sync, client_send_command,
-       client_select_execute, client_set_tls, client_set_log, server_set_log,
+       client_select_execute, client_read, client_set_tls, client_set_log, server_set_log,
        server_connection_count, time_now, settext!
 
 const LIB = let packaged = normpath(joinpath(@__DIR__, "..", "lib", "libiec104.so.0"))
@@ -243,6 +243,9 @@ client_clock_sync(c, station::Integer) =
 client_send_command(c, station::Integer, o::Object) =
     check(ccall((:iec104_client_send_command, LIB), Cint, (Ptr{Cvoid}, UInt16, Ref{Object}),
                 c, station, o))
+"Read command (102, cause 5): the station answers with the object via on_object."
+client_read(c, station::Integer, ioa::Integer) =
+    check(ccall((:iec104_client_read, LIB), Cint, (Ptr{Cvoid}, UInt16, UInt32), c, station, ioa))
 "Select, then execute (select before operate)."
 client_select_execute(c, station::Integer, o::Object) =
     check(ccall((:iec104_client_select_execute, LIB), Cint, (Ptr{Cvoid}, UInt16, Ref{Object}),

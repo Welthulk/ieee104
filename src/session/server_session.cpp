@@ -19,6 +19,16 @@
 namespace iec104::session {
 namespace {
 
+/** @brief Stations with data points or command points, ascending, each once. */
+std::vector<std::uint16_t> station_union(const ProcessImage& image, const CommandTable& commands) {
+    std::vector<std::uint16_t> all = image.stations();
+    const std::vector<std::uint16_t> more = commands.stations();
+    all.insert(all.end(), more.begin(), more.end());
+    std::sort(all.begin(), all.end());
+    all.erase(std::unique(all.begin(), all.end()), all.end());
+    return all;
+}
+
 // Causes of transmission (docs/02_Technik_und_Quellen.md, "Übertragungsursachen").
 constexpr std::uint8_t kCotSpontaneousInit = 4;
 constexpr std::uint8_t kCotRequest = 5;
@@ -191,10 +201,10 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
     }
     switch (type) {
     case kInterrogation:
-        answer_interrogation(d, o, image, asdu, length);
+        answer_interrogation(d, o, station, asdu, length);
         break;
     case kCounterInterrogation:
-        answer_counters(d, o, image, asdu, length);
+        answer_counters(d, o, station, asdu, length);
         break;
     case kRead:
         answer_read(d, o, image, asdu, length);
@@ -221,8 +231,9 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
 
 void ServerSession::answer_interrogation(const codec::DecodedAsdu& d,
                                          const codec::InformationObject& o,
-                                         const ProcessImage& image, const std::uint8_t* asdu,
+                                         const StationContext& station, const std::uint8_t* asdu,
                                          std::size_t length) {
+    const ProcessImage& image = *station.image;
     const codec::AsduHeader& h = d.header;
     if (h.cause == kCotDeactivation) {
         // Stopping a running interrogation is not supported: negative DEACTCON.
@@ -245,21 +256,19 @@ void ServerSession::answer_interrogation(const codec::DecodedAsdu& d,
     // QOI 20..36 and the cause of the answers 20..36 have the same values:
     // station interrogation answers with 20, group n with 20 + n.
     const unsigned group = o.qoi == kCotStation ? 0U : static_cast<unsigned>(o.qoi - kCotStation);
-    const bool broadcast = h.common_address == broadcast_address(profile_);
-    const std::vector<std::uint16_t> stations =
-        broadcast ? image.stations() : std::vector<std::uint16_t>{h.common_address};
-    for (const std::uint16_t station : stations) {
+    const std::vector<std::uint16_t> stations = addressed_stations(h.common_address, station);
+    for (const std::uint16_t ca : stations) {
         // Confirmation, data, termination, each with the address of the
         // station (also when the request used the broadcast address).
         codec::AsduHeader reply = h;
-        reply.common_address = station;
+        reply.common_address = ca;
         reply.cause = kCotActivationCon;
         push_encoded(reply, o);
 
         codec::AsduHeader data = h;
-        data.common_address = station;
+        data.common_address = ca;
         data.cause = o.qoi;
-        push_job(data, image.select(station, false, group));
+        push_job(data, image.select(ca, false, group));
 
         reply.cause = kCotActivationTerm;
         push_encoded(reply, o);
@@ -267,8 +276,9 @@ void ServerSession::answer_interrogation(const codec::DecodedAsdu& d,
 }
 
 void ServerSession::answer_counters(const codec::DecodedAsdu& d, const codec::InformationObject& o,
-                                    const ProcessImage& image, const std::uint8_t* asdu,
+                                    const StationContext& station, const std::uint8_t* asdu,
                                     std::size_t length) {
+    const ProcessImage& image = *station.image;
     const codec::AsduHeader& h = d.header;
     if (h.cause != kCotActivation) {
         answer(asdu, length, kCotUnknownCause, true);
@@ -283,12 +293,10 @@ void ServerSession::answer_counters(const codec::DecodedAsdu& d, const codec::In
         return;
     }
     const unsigned group = o.qcc.rqt == kAllCounters ? 0U : o.qcc.rqt;
-    const bool broadcast = h.common_address == broadcast_address(profile_);
-    const std::vector<std::uint16_t> stations =
-        broadcast ? image.stations() : std::vector<std::uint16_t>{h.common_address};
-    for (const std::uint16_t station : stations) {
+    const std::vector<std::uint16_t> stations = addressed_stations(h.common_address, station);
+    for (const std::uint16_t ca : stations) {
         codec::AsduHeader reply = h;
-        reply.common_address = station;
+        reply.common_address = ca;
         reply.cause = kCotActivationCon;
         push_encoded(reply, o);
         // FRZ 0 = read: report the counters. Freeze and reset (FRZ 1..3) are
@@ -296,10 +304,10 @@ void ServerSession::answer_counters(const codec::DecodedAsdu& d, const codec::In
         // TODO(norm): freeze/reset semantics of the counter interrogation, clause 7.
         if (o.qcc.frz == 0U) {
             codec::AsduHeader data = h;
-            data.common_address = station;
+            data.common_address = ca;
             data.cause = static_cast<std::uint8_t>(kCotCounters + (group == 0U ? 0U : group));
             data.negative = false;
-            push_job(data, image.select(station, true, group));
+            push_job(data, image.select(ca, true, group));
         }
         reply.cause = kCotActivationTerm;
         push_encoded(reply, o);
@@ -425,14 +433,30 @@ void ServerSession::execute(const codec::DecodedAsdu& d, const codec::Informatio
 // Outgoing
 // ---------------------------------------------------------------------------
 
-void ServerSession::on_started(const ProcessImage& image, const SessionOptions& options) {
+std::vector<std::uint16_t> ServerSession::addressed_stations(std::uint16_t common_address,
+                                                             const StationContext& station) const {
+    if (common_address != broadcast_address(profile_)) {
+        return {common_address};
+    }
+    // Broadcast: every known station answers with its own address. Without
+    // any points the application manages its stations: the request is
+    // answered once, with the broadcast address.
+    std::vector<std::uint16_t> all = station_union(*station.image, *station.commands);
+    if (all.empty()) {
+        all.push_back(common_address);
+    }
+    return all;
+}
+
+void ServerSession::on_started(const ProcessImage& image, const CommandTable& commands,
+                               const SessionOptions& options) {
     if (!options.send_end_of_init || init_sent_) {
         return;
     }
     init_sent_ = true;
     // One end of initialization per station (type 70, cause 4, IOA 0;
     // docs/05_Normfragen_und_Festlegungen.md, N8).
-    for (const std::uint16_t station : image.stations()) {
+    for (const std::uint16_t station : station_union(image, commands)) {
         codec::AsduHeader h{};
         h.type_id = kEndOfInit;
         h.cause = kCotSpontaneousInit;

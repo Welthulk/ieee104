@@ -167,12 +167,18 @@ class Writer {
         }
         std::printf(" %s |\n", remark.c_str());
     }
-    /** @brief A value row (parameters): same columns, values instead of marks. */
+    /**
+     * @brief A value row (parameters). Markdown: own table with standard and
+     *        selected value. CSV: the selected value stands in the column of
+     *        each listed role, the standard value in the remark.
+     */
     void value(const std::string& section, const std::string& name, const std::string& standard,
                const std::string& selected, const std::string& remark) const {
         if (o_.csv) {
-            std::printf("%s;%s;%s;%s;;%s\n", csv(section).c_str(), csv(name).c_str(),
-                        csv(standard).c_str(), csv(selected).c_str(), csv(remark).c_str());
+            const std::string note = "Normwert " + standard + (remark.empty() ? "" : ", " + remark);
+            std::printf("%s;%s;;%s;%s;%s\n", csv(section).c_str(), csv(name).c_str(),
+                        o_.station ? csv(selected).c_str() : "",
+                        o_.master ? csv(selected).c_str() : "", csv(note).c_str());
             return;
         }
         std::printf("| %s | %s | %s | %s |\n", name.c_str(), standard.c_str(), selected.c_str(),
@@ -190,14 +196,19 @@ class Writer {
     const Options& o_;
 };
 
+/** @brief Milliseconds as seconds, exact: "15 s", "15.25 s", "172799.5 s". */
 std::string seconds(std::uint32_t ms) {
-    char buf[32];
-    if (ms % 1000U == 0U) {
-        std::snprintf(buf, sizeof buf, "%u s", ms / 1000U);
-    } else {
-        std::snprintf(buf, sizeof buf, "%.3g s", static_cast<double>(ms) / 1000.0);
+    std::string text = std::to_string(ms / 1000U);
+    if (ms % 1000U != 0U) {
+        char fraction[8];
+        std::snprintf(fraction, sizeof fraction, "%03u", ms % 1000U);
+        std::string f = fraction;
+        while (f.back() == '0') {
+            f.pop_back();
+        }
+        text += "." + f;
     }
-    return buf;
+    return text + " s";
 }
 
 std::string octets(unsigned n) {
@@ -206,7 +217,9 @@ std::string octets(unsigned n) {
 
 void print_header(const Writer& w, const Options& o, const Parameters& p) {
     if (o.csv) {
-        std::printf("Abschnitt;Punkt;Bezeichnung;Station;Leitstelle;Bemerkung\n");
+        // UTF-8 with byte order mark, so that spreadsheets show umlauts and dashes.
+        std::printf("\xEF\xBB\xBF"
+                    "Abschnitt;Punkt;Bezeichnung;Station;Leitstelle;Bemerkung\n");
         return;
     }
     std::printf("# Interoperabilitätsliste (IEC 60870-5-104, Abschnitt 9)\n\n");
@@ -402,7 +415,12 @@ int main(int argc, char** argv) {
     Options o;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
-        const char* value = i + 1 < argc ? argv[i + 1] : "";
+        const bool takes_value = arg == "--role" || arg == "--config" || arg == "--format";
+        if (takes_value && (i + 1 >= argc || argv[i + 1][0] == '\0')) {
+            std::fprintf(stderr, "missing value for %s (see --help)\n", arg.c_str());
+            return 2;
+        }
+        const char* value = takes_value ? argv[i + 1] : "";
         if (arg == "--role") {
             const std::string r = value;
             ++i;

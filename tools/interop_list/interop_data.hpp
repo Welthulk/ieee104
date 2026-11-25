@@ -50,7 +50,7 @@ struct TypeRow {
 };
 
 constexpr const char* kMonitorCauses = "1 2 3 5 11 12 20-36";
-constexpr const char* kCommandStation = "6 7 8 9 10 44 45 46 47";
+constexpr const char* kCommandStation = "6 7 8 9 10 45 46 47";
 constexpr const char* kCommandMaster = "6 7 10 44 45 46 47";
 
 // clang-format off
@@ -106,17 +106,17 @@ inline constexpr TypeRow kTypes[] = {
     {64, "C_BO_TA_1", "Bitstring of 32 bit with time tag CP56Time2a", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, "ohne Select/Execute"},
 
     // System information in monitor direction.
-    {70, "M_EI_NA_1", "End of initialization", Group::SystemMonitor, Mark::Yes, Mark::Yes, "4", "4", "nach dem ersten STARTDT jeder Verbindung, je Station"},
+    {70, "M_EI_NA_1", "End of initialization", Group::SystemMonitor, Mark::Yes, Mark::Yes, "4", "4", "nach dem ersten STARTDT jeder Verbindung, je Station mit Daten- oder Befehlspunkten (send_end_of_init, cause_of_init)"},
 
     // System information in control direction.
-    {100, "C_IC_NA_1", "Interrogation command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 8 9 10 44 45 46 47", "6 7 10 44 45 46 47", "Station und Gruppen 1–16; Abbruch (8) wird negativ bestätigt"},
-    {101, "C_CI_NA_1", "Counter interrogation command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 10 44 45 46 47", "6 7 10 44 45 46 47", "Freeze/Reset nur bestätigt"},
-    {102, "C_RD_NA_1", "Read command", Group::SystemControl, Mark::Yes, Mark::Yes, "5 44 45 46 47", "5 44 45 46 47", "Antwort mit dem Typ des Punktes"},
-    {103, "C_CS_NA_1", "Clock synchronization command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 44 45 46", "6 7 44 45 46", "Uhr stellt die Anwendung (on_command)"},
-    {104, "C_TS_NA_1", "Test command", Group::SystemControl, Mark::NotIn104, Mark::NotIn104, "6 7 44 45 46", "", "Station spiegelt ihn trotzdem; Leitstelle nur roh"},
-    {105, "C_RP_NA_1", "Reset process command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 44 45 46", "6 7 44 45 46", "Ausführung durch die Anwendung (on_command)"},
-    {106, "C_CD_NA_1", "Delay acquisition command", Group::SystemControl, Mark::NotIn104, Mark::NotIn104, "6 7 44 45 46", "", "Station antwortet negativ"},
-    {107, "C_TS_TA_1", "Test command with time tag CP56Time2a", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 44 45 46", "6 7 44 45 46", ""},
+    {100, "C_IC_NA_1", "Interrogation command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 8 9 10 45 46 47", "6 7 10 44 45 46 47", "Station und Gruppen 1–16; Abbruch (8) wird negativ bestätigt"},
+    {101, "C_CI_NA_1", "Counter interrogation command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 10 45 46 47", "6 7 10 44 45 46 47", "Freeze/Reset nur bestätigt"},
+    {102, "C_RD_NA_1", "Read command", Group::SystemControl, Mark::Yes, Mark::Yes, "5 45 46 47", "5 44 45 46 47", "Antwort aus dem Prozessabbild mit dem Typ ohne Zeitmarke, Ursache 5"},
+    {103, "C_CS_NA_1", "Clock synchronization command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 45 46", "6 7 44 45 46", "Uhr stellt die Anwendung (on_command)"},
+    {104, "C_TS_NA_1", "Test command", Group::SystemControl, Mark::NotIn104, Mark::NotIn104, "6 7 45 46", "", "Station spiegelt ihn trotzdem; Leitstelle nur roh"},
+    {105, "C_RP_NA_1", "Reset process command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 45 46", "6 7 44 45 46", "Ausführung durch die Anwendung (on_command)"},
+    {106, "C_CD_NA_1", "Delay acquisition command", Group::SystemControl, Mark::NotIn104, Mark::NotIn104, "6 7 45 46", "", "Station antwortet negativ"},
+    {107, "C_TS_TA_1", "Test command with time tag CP56Time2a", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 45 46", "6 7 44 45 46", "maximale Befehlsverzögerung prüfbar; Station spiegelt (Ursache 7)"},
 
     // Parameter in control direction.
     {110, "P_ME_NA_1", "Parameter of measured value, normalized value", Group::Parameter, Mark::No, Mark::Raw, "", "", "Station antwortet negativ (Ursache 7, P/N = 1)"},
@@ -145,7 +145,7 @@ struct FunctionRow {
 };
 
 inline constexpr FunctionRow kFunctions[] = {
-    {"Station initialization", "Remote initialization", Mark::Yes, Mark::Yes, "C_RP_NA_1 an die Anwendung; Ende der Initialisierung (Typ 70) automatisch"},
+    {"Station initialization", "Remote initialization", Mark::Partial, Mark::Yes, "Station: C_RP_NA_1 an die Anwendung (on_command); Typ 70 danach sendet die Anwendung (iec104_server_send, Ursache 4); automatisch nur beim ersten STARTDT je Verbindung"},
     {"Cyclic data transmission", "Cyclic data transmission", Mark::Yes, Mark::Yes, "Station: Anwendung sendet mit Ursache 1 (iec104_server_send), nicht gepuffert"},
     {"Read procedure", "Read procedure", Mark::Yes, Mark::Yes, "Antwort aus dem Prozessabbild; Leitstelle: iec104_client_read()"},
     {"Spontaneous transmission", "Spontaneous transmission", Mark::Yes, Mark::Yes, "iec104_server_update(); gepuffert je Redundanzgruppe bis zur Quittung"},
@@ -160,20 +160,20 @@ inline constexpr FunctionRow kFunctions[] = {
     {"Station interrogation", "group 1 … group 16", Mark::Yes, Mark::Yes, "Gruppenmaske je Punkt (iec104_server_add_point)"},
     {"Clock synchronization", "Clock synchronization", Mark::Yes, Mark::Yes, "Station: Uhr stellt die Anwendung (on_command)"},
     {"Clock synchronization", "Day of week used", Mark::Yes, Mark::Yes, "iec104_time.day_of_week, 0 = nicht verwendet"},
-    {"Clock synchronization", "RES1, GEN (time tag substituted/ not substituted) used", Mark::Partial, Mark::Partial, "Bits werden unverändert übertragen, nicht ausgewertet"},
+    {"Clock synchronization", "RES1, GEN (time tag substituted/ not substituted) used", Mark::Partial, Mark::Partial, "nur in rohen ASDUs und gespiegelten Bestätigungen erhalten; über iec104_time immer 0"},
     {"Clock synchronization", "SU-bit (summertime) used", Mark::Yes, Mark::Yes, "iec104_time.summer_time"},
-    {"Command transmission", "Direct command transmission", Mark::Yes, Mark::Yes, ""},
+    {"Command transmission", "Direct command transmission", Mark::Yes, Mark::Yes, "Station: IOA-Prüfung (Ursache 47) nur mit Befehlspunkten"},
     {"Command transmission", "Direct set point command transmission", Mark::Yes, Mark::Yes, ""},
-    {"Command transmission", "Select and execute command", Mark::Yes, Mark::Yes, "Station: Befehlspunkt mit Auswahl-Timeout"},
+    {"Command transmission", "Select and execute command", Mark::Yes, Mark::Yes, "Station: Befehlspunkt mit Auswahl-Timeout; Abbruch (8) nur mit Befehlspunkten wirksam, sonst positive Bestätigung ohne Anwendung"},
     {"Command transmission", "Select and execute set point command", Mark::Yes, Mark::Yes, "Station: Befehlspunkt mit Auswahl-Timeout"},
     {"Command transmission", "C_SE ACTTERM used", Mark::Yes, Mark::Yes, "abschaltbar (command_termination, expect_termination)"},
     {"Command transmission", "No additional definition", Mark::Yes, Mark::Yes, "Qualifier (QU) wird durchgereicht"},
     {"Command transmission", "Short-pulse duration", Mark::Partial, Mark::Yes, "Station: Dauer bestimmt die Anwendung"},
     {"Command transmission", "Long-pulse duration", Mark::Partial, Mark::Yes, "Station: Dauer bestimmt die Anwendung"},
     {"Command transmission", "Persistent output", Mark::Partial, Mark::Yes, "Station: Ausgabe bestimmt die Anwendung"},
-    {"Command transmission", "Supervision of maximum delay in command direction", Mark::Yes, Mark::No, "max_command_delay; Leitstelle setzt nur die Zeitmarke"},
+    {"Command transmission", "Supervision of maximum delay in command direction", Mark::Yes, Mark::No, "Station: max_command_delay_ms; Leitstelle: Zeitmarke setzt die Anwendung (iec104_object.time)"},
     {"Transmission of integrated totals", "Mode A: Local freeze with spontaneous transmission", Mark::Partial, Mark::Yes, "Station: Anwendung friert ein und sendet spontan"},
-    {"Transmission of integrated totals", "Mode B: Local freeze with counter interrogation", Mark::Yes, Mark::Yes, "Station antwortet aus dem Prozessabbild"},
+    {"Transmission of integrated totals", "Mode B: Local freeze with counter interrogation", Mark::Partial, Mark::Yes, "Station: Anwendung friert ein und legt den Wert mit iec104_server_add_point() ab (iec104_server_update() sendet spontan); Zählerabfrage antwortet aus dem Prozessabbild"},
     {"Transmission of integrated totals", "Mode C: Freeze and transmit by counter-interrogation commands", Mark::Partial, Mark::Yes, "Station bestätigt FRZ; Einfrieren durch die Anwendung (on_asdu)"},
     {"Transmission of integrated totals", "Mode D: Freeze by counter-interrogation command, frozen values reported spontaneously", Mark::Partial, Mark::Yes, "Station bestätigt FRZ; Einfrieren und Senden durch die Anwendung"},
     {"Transmission of integrated totals", "Counter read", Mark::Yes, Mark::Yes, ""},

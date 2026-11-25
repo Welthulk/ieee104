@@ -43,7 +43,7 @@ Für `-liec104` einmal `ln -s libiec104.so.0 lib/libiec104.so` anlegen. `find_pa
 Eigenes CMake-Projekt:
 
 ```cmake
-find_package(iec104 0.5 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
+find_package(iec104 0.6 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
 target_link_libraries(meine_app PRIVATE iec104::iec104)
 ```
 
@@ -165,6 +165,7 @@ Daten fließen nur in STARTED.
 | Aufgabe | Aufruf |
 | --- | --- |
 | Generalabfrage | `iec104_client_interrogation(client, station, 20)` (Gruppe n: 20 + n) |
+| einzelnen Punkt lesen | `iec104_client_read(client, station, ioa)`; Antwort über `on_object` mit Ursache 5 |
 | Zählerabfrage | `iec104_client_counter_interrogation(client, station, 5, 0)` |
 | Uhrzeit setzen | `iec104_client_clock_sync(client, station, &zeit)`; `iec104_time_from_unix_ms()` |
 | Befehl direkt | `iec104_client_send_command(client, station, &cmd)` |

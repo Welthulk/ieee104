@@ -156,8 +156,12 @@ class ServerSession {
     bool handle(const std::uint8_t* asdu, std::size_t length, const StationContext& station,
                 CommandHandler& handler);
 
-    /** @brief Data transfer was started: queue end of initialization once per connection. */
-    void on_started(const ProcessImage& image, const SessionOptions& options);
+    /**
+     * @brief Data transfer was started: queue end of initialization once per
+     *        connection, for every station with data or command points.
+     */
+    void on_started(const ProcessImage& image, const CommandTable& commands,
+                    const SessionOptions& options);
 
     /**
      * @brief Queues an ASDU for sending (e.g. a spontaneous value).
@@ -208,11 +212,14 @@ class ServerSession {
     void push_job(const codec::AsduHeader& header, std::vector<Point> points);
     std::vector<std::uint8_t> mirror(const std::uint8_t* asdu, std::size_t length,
                                      std::uint8_t cause, bool negative) const;
+    [[nodiscard]] std::vector<std::uint16_t>
+    addressed_stations(std::uint16_t common_address, const StationContext& station) const;
     void answer_interrogation(const codec::DecodedAsdu& d, const codec::InformationObject& o,
-                              const ProcessImage& image, const std::uint8_t* asdu,
+                              const StationContext& station, const std::uint8_t* asdu,
                               std::size_t length);
     void answer_counters(const codec::DecodedAsdu& d, const codec::InformationObject& o,
-                         const ProcessImage& image, const std::uint8_t* asdu, std::size_t length);
+                         const StationContext& station, const std::uint8_t* asdu,
+                         std::size_t length);
     void answer_read(const codec::DecodedAsdu& d, const codec::InformationObject& o,
                      const ProcessImage& image, const std::uint8_t* asdu, std::size_t length);
     void answer_command(const codec::DecodedAsdu& d, const codec::InformationObject& o,

@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <map>
 #include <utility>
+#include <vector>
 
 namespace iec104::session {
 
@@ -65,6 +66,9 @@ class CommandTable {
 
     /** @brief True if at least one command point belongs to @p common_address. */
     [[nodiscard]] bool has_station(std::uint16_t common_address) const;
+
+    /** @brief Common addresses with command points, ascending. */
+    [[nodiscard]] std::vector<std::uint16_t> stations() const;
 
   private:
     std::map<std::pair<std::uint16_t, std::uint32_t>, CommandPoint> points_;

@@ -61,7 +61,7 @@ extern "C" {
 /** @brief Major version of this header. Incompatible API changes increment it. */
 #define IEC104_VERSION_MAJOR 0
 /** @brief Minor version of this header. Compatible additions increment it. */
-#define IEC104_VERSION_MINOR 5
+#define IEC104_VERSION_MINOR 6
 /** @brief Patch version of this header. Fixes without API change increment it. */
 #define IEC104_VERSION_PATCH 0
 
@@ -774,6 +774,12 @@ typedef enum iec104_command_model {
  *     less than @p select_timeout_ms ago; a deactivation (cause 8) cancels
  *     the selection.
  *
+ * Stations: a common address is known if it has data points or command
+ * points. Requests to other addresses are answered with cause 46. Only a
+ * server without any point accepts every address (the application manages
+ * its stations). Known stations get the end of initialization and answer a
+ * broadcast interrogation.
+ *
  * @param server The server.
  * @param common_address Station of the command point.
  * @param ioa Information object address of the command point.
@@ -795,7 +801,9 @@ IEC104_API iec104_status iec104_server_add_command(iec104_server* server, uint16
  * for a point added as 13); it is sent as given, the image keeps the value.
  * The event goes into the buffer of every redundancy group (see
  * iec104_server_add_group()) and stays there until the active connection
- * has acknowledged it; without a started connection it waits there.
+ * has acknowledged it, also while no connection of the group is started.
+ * Without any group (no iec104_server_add_group() and no open connection)
+ * the event is not buffered; only the image keeps the value.
  *
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT if the point is unknown or
  *         the type does not fit; IEC104_ERR_OUT_OF_RANGE for a bad value;
@@ -810,16 +818,24 @@ IEC104_API iec104_status iec104_server_update(iec104_server* server, uint16_t co
  *
  * Long lists are split into several ASDUs. Objects are not stored in the image.
  *
+ * | connection | cause | goes to |
+ * |---|---|---|
+ * | id | any | that connection, if started |
+ * | 0 | 1 periodic, 2 background | the active connection of every group, not buffered |
+ * | 0 | other | the buffer of every group, like iec104_server_update() |
+ *
  * @param server The server.
  * @param common_address Station of the objects.
  * @param cause Cause of transmission, e.g. IEC104_COT_PERIODIC.
  * @param objects Objects of one type.
  * @param count Number of @p objects.
- * @param connection Connection id, or 0 = all started connections.
+ * @param connection Connection id, or 0 = all (see table).
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, count 0, mixed or
  *         unsupported types; IEC104_ERR_OUT_OF_RANGE for a bad value;
- *         IEC104_ERR_WRONG_STATE if no started connection matches;
- *         IEC104_ERR_WOULD_BLOCK if a send queue is full.
+ *         IEC104_ERR_WRONG_STATE if the connection is not started, or for
+ *         cause 1/2 if no connection is active (also if there is no group at
+ *         all); IEC104_ERR_WOULD_BLOCK if the send queue of the connection is
+ *         full, or a group buffer is full and set to IEC104_OVERFLOW_REJECT.
  */
 IEC104_API iec104_status iec104_server_send(iec104_server* server, uint32_t connection,
                                             uint16_t common_address, uint8_t cause,
@@ -934,7 +950,8 @@ IEC104_API iec104_status iec104_client_set_options(iec104_client* client,
  * In addition the library follows the command and reports its final result
  * once via on_command_result (see iec104_client_options for the time limits).
  * A command with select = 1 ends with IEC104_COMMAND_SELECTED; the execute
- * is a second call with select = 0.
+ * is a second call with select = 0. Type 102 (read) is sent with cause 5
+ * and not followed (see iec104_client_read()).
  *
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL or an unsupported
  *         type; IEC104_ERR_OUT_OF_RANGE for a bad value; IEC104_ERR_WRONG_STATE
@@ -965,6 +982,9 @@ IEC104_API iec104_status iec104_client_select_execute(iec104_client* client,
  * on_object, or negatively with cause 47 (unknown IOA) or 46 (unknown
  * station). A read has no confirmation and is not followed by
  * on_command_result. iec104_client_send_command() with type 102 does the same.
+ * @param client The client.
+ * @param common_address Station of the object.
+ * @param ioa Information object address to read.
  * @return As iec104_client_send_command().
  */
 IEC104_API iec104_status iec104_client_read(iec104_client* client, uint16_t common_address,

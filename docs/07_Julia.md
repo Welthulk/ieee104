@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
 Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
 
 ```bash
-cd iec104-0.5.0-linux-x86_64
+cd iec104-0.6.0-linux-x86_64
 julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
 julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
 ```
@@ -26,7 +26,7 @@ type 13  cause 3  station 1  IOA 100  value 31.0    spontan
 
 | Datei | Inhalt |
 | --- | --- |
-| `IEC104.jl` | Modul `IEC104`: Typen wie im Header, Funktionen für Server und Client |
+| `IEC104.jl` | Modul `IEC104`: Typen wie im Header, Funktionen für Server und Client (u. a. `client_interrogation`, `client_read`, `client_send_command`, `client_clock_sync`) |
 | `client.jl` | Leitstelle: verbinden, STARTDT, Generalabfrage, Werte ausgeben |
 | `server.jl` | Station: ein Messwert, spontane Meldung jede Sekunde, Befehle annehmen |
 

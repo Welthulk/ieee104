@@ -17,7 +17,7 @@
 #
 # Inhalt: alle versionierten Dateien des letzten Commits außer den internen
 # Unterlagen (intern/, tasks/, CLAUDE.md, .vscode/, dist/) und den internen
-# Prüf- und Paketskripten. Ungespeicherte Änderungen landen nicht im Zip.
+# Prüf-, Paket- und Sync-Skripten. Ungespeicherte Änderungen landen nicht im Zip.
 #
 # Prüfung des fertigen Zips (bei einem Treffer wird es gelöscht, Rückgabe 1):
 #   1. Begriffsliste mit tools/check_neutral.sh --root (Kunden, Projekte,
@@ -47,9 +47,9 @@ if ! git diff --quiet HEAD -- . ':!dist'; then
 fi
 
 # Paketdateien: alles außer den internen Unterlagen und Skripten.
-EXCLUDE='^(intern/|tasks/|CLAUDE\.md|\.vscode/|dist/|tools/check_neutral\.sh|tools/make_package\.sh)'
+EXCLUDE='^(intern/|tasks/|CLAUDE\.md|\.vscode/|dist/|tools/check_neutral\.sh|tools/make_package\.sh|tools/sync_lieferung\.sh)'
 EXCLUDE_SPEC=(':!intern' ':!tasks' ':!CLAUDE.md' ':!.vscode' ':!dist'
-              ':!tools/check_neutral.sh' ':!tools/make_package.sh')
+              ':!tools/check_neutral.sh' ':!tools/make_package.sh' ':!tools/sync_lieferung.sh')
 mapfile -t FILES < <(git ls-files | grep -v -E "$EXCLUDE")
 
 mkdir -p dist
@@ -118,13 +118,15 @@ cp "$WORK/full/include/iec104/iec104.h" "$P/include/iec104/"
 cp "$WORK/$NAME"/LICENSES/* "$P/LICENSES/"
 sed "s/@VERSION@/$VERSION/g" "$WORK/$NAME/packaging/README-binary.md" > "$P/README.md"
 cp -r "$WORK/$NAME/examples/julia" "$P/julia"   # Julia binding, finds ../lib by itself
+cp "$WORK/$NAME"/packaging/pruefen.sh "$WORK/$NAME"/packaging/gui.sh \
+   "$WORK/$NAME"/packaging/beispiel.sh "$P/"     # Prüfen, GUI, Beispiel (Linux/WSL)
 ELF=("$P/lib/$SONAME")
 
 # Zeichenketten der Library und die Kurzanleitung als Text prüfen.
 mkdir -p "$WORK/bincheck"
 for f in "${ELF[@]}"; do strings -a "$f" > "$WORK/bincheck/$(basename "$f").txt"; done
 cp "$P/README.md" "$WORK/bincheck/"
-cp -r "$P/julia" "$WORK/bincheck/"
+cp -r "$P/julia" "$P"/*.sh "$WORK/bincheck/"
 "$ROOT/tools/check_neutral.sh" --root "$WORK/bincheck" > "$WORK/neutral_bin.log" 2>&1 \
     || { cat "$WORK/neutral_bin.log" >&2; fail "verbotene Begriffe in den Binärdateien"; }
 if grep -r -n -i -E "intern/|tasks/|TASK-[0-9]|claude|anthropic|$HOME|$ROOT" \

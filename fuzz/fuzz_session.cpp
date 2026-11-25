@@ -101,7 +101,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     static const session::CommandTable commands = make_commands();
     const session::StationContext station{&image, &commands, &options,
                                           session::SessionClock{1000, 1795604465931LL}};
-    s.on_started(image, options);
+    s.on_started(image, commands, options);
     (void)s.handle(data, size, station, handler);
     s.pump(sender);
 

@@ -343,7 +343,7 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
         Peer& peer = it->second;
         session::RedundancyGroup& group = *peer.group;
         if (state == apci::State::Started) {
-            peer.session.on_started(image, options); // end of initialization first
+            peer.session.on_started(image, commands, options); // end of initialization first
             const std::uint32_t previous = group.start(id);
             if (previous != 0U) {
                 withdraw(previous);

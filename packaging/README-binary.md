@@ -8,6 +8,19 @@ Geteilte Library für Linux x86-64 (Release, mit TLS).
 | `include/iec104/iec104.h` | C-Schnittstelle mit Beschreibung jeder Funktion |
 | `LICENSES/` | Lizenzen: Header Apache-2.0, Library proprietär |
 | `julia/` | Anbindung für Julia (`IEC104.jl`) mit Client- und Server-Beispiel, Test-GUI im Browser (`gui/`) |
+| `pruefen.sh` | prüft System, OpenSSL und Julia: `bash pruefen.sh` |
+| `gui.sh` | startet die Test-GUI: `bash gui.sh`, dann `http://localhost:8080` |
+| `beispiel.sh` | Julia-Station und -Leitstelle gegeneinander: `bash beispiel.sh` |
+
+## Schnellstart (Linux oder WSL)
+
+```bash
+bash pruefen.sh        # alles bereit?
+bash gui.sh            # Test-GUI, dann http://localhost:8080 im Browser
+bash beispiel.sh       # Station und Leitstelle in Julia gegeneinander
+```
+
+Unter WSL geht das direkt im Windows-Ordner, z. B. `cd /mnt/c/rd/.../iec104-<version>-linux-x86_64`.
 
 ## Voraussetzungen
 

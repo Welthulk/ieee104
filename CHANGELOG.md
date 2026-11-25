@@ -1,13 +1,19 @@
 # Änderungen
 
-## In Arbeit (nächste Lieferung)
+## 0.6.0 (25.11.2026)
 
 | Bereich | Änderung |
 | --- | --- |
 | Interop | `iec104_interop_list`: Interoperabilitätsliste nach Abschnitt 9 für Rolle und Konfiguration, Markdown oder CSV; `docs/09_Interoperabilitaetsliste.md` für die Standardwerte, Test hält sie aktuell |
 | Doku | API-Doku mit Doxygen (Ziel `doc`), öffentlicher Header ohne Warnungen (Test `Doc.NoDoxygenWarnings`); Typentabelle bei `iec104_object` repariert |
 | Client | `iec104_client_read()`; Lesebefehl (102) jetzt mit Ursache 5 statt 6 (vorher von jeder Station abgelehnt) |
-| Server | Station ist auch über ihre Befehlspunkte bekannt (vorher Ursache 46 ohne Datenpunkte); `iec104_server_set_options` prüft `cause_of_init` (≤ 127) und übernimmt bei Fehler nichts |
+| Server | Eine Station ist über ihre Daten- oder Befehlspunkte bekannt: Stationen nur mit Befehlspunkten werden nicht mehr mit Ursache 46 abgelehnt, bekommen das Ende der Initialisierung und antworten auf eine Broadcast-Abfrage. Mit Befehlspunkten und leerem Prozessabbild gilt die Prüfung jetzt ebenfalls (andere Adressen: Ursache 46); nur ein Server ganz ohne Punkte nimmt jede Adresse an |
+| Server | Broadcast-Abfrage ohne bekannte Station wird einmal mit der Broadcast-Adresse bestätigt (vorher keine Antwort) |
+| Server | `iec104_server_set_options` prüft `cause_of_init` (≤ 127) und übernimmt bei Fehler nichts |
+| Werkzeug | `iec104_interop_list`: exakte Zeitwerte, fehlende Optionswerte als Fehler, CSV mit BOM und Parametern in der Rollenspalte |
+| Lieferung | Binärpaket mit `pruefen.sh`, `gui.sh`, `beispiel.sh` für Linux und WSL |
+| Werkzeug | `tools/wsl_ausprobieren.sh`: Repo nach `~/src/iee104` holen, Voraussetzungen prüfen, fertige Library testen, bauen, alle Tests |
+| Julia | `client_read` in `IEC104.jl` |
 
 ## 0.5.0 (25.11.2026)
 

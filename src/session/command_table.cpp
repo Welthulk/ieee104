@@ -60,6 +60,16 @@ bool CommandTable::has_station(std::uint16_t common_address) const {
     return it != points_.end() && it->first.first == common_address;
 }
 
+std::vector<std::uint16_t> CommandTable::stations() const {
+    std::vector<std::uint16_t> result;
+    for (const auto& entry : points_) {
+        if (result.empty() || result.back() != entry.first.first) {
+            result.push_back(entry.first.first);
+        }
+    }
+    return result;
+}
+
 const CommandPoint* CommandTable::find(std::uint16_t common_address, std::uint32_t ioa) const {
     const auto it = points_.find({common_address, ioa});
     return it != points_.end() ? &it->second : nullptr;

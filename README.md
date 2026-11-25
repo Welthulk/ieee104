@@ -2,7 +2,7 @@
 
 Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
 
-Stand: 25.11.2026, Version 0.5.0, Linux x86-64.
+Stand: 25.11.2026, Version 0.6.0, Linux x86-64.
 
 ## Sofort nutzen, ohne zu bauen
 
@@ -15,8 +15,10 @@ Stand: 25.11.2026, Version 0.5.0, Linux x86-64.
 
 Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab 2.34, OpenSSL 3).
 
+Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iee104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
+
 ```bash
-cd dist/iec104-0.5.0-linux-x86_64
+cd dist/iec104-0.6.0-linux-x86_64
 gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
 julia julia/server.jl 2404 &                                                       # Julia: Station
 julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
@@ -30,7 +32,7 @@ julia julia/gui/iec104_gui.jl                                                   
 | Rollen | Server (gesteuerte Station) und Client (Leitstelle), beide im selben Prozess nutzbar |
 | Protokoll | IEC 60870-5-104 Ed. 2.1: APCI mit STARTDT/STOPDT/TESTFR, Folgenummern, k/w, Timer t0–t3; alle 59 Typkennungen, ASDUs mit SQ = 0/1, CP56Time2a; strikter Normmodus und toleranter Modus für bekannte Abweichungen |
 | Parameter | Timer, k, w, Feldlängen (COT, CA, IOA), maximale ASDU-Länge, Port, Adresse; alles je Verbindung einstellbar, auch per Konfigurationsdatei |
-| Server | Prozessabbild; Generalabfrage (Station, Gruppen 1–16), Zählerabfrage, Lesebefehl, Testbefehl, Uhrzeit beantwortet die Library selbst; Ende der Initialisierung; negative Bestätigungen (Ursachen 44–47); Broadcast-Adresse |
+| Server | Prozessabbild; Generalabfrage (Station, Gruppen 1–16), Zählerabfrage, Lesebefehl und Testbefehl beantwortet die Library selbst; Uhrzeit und Reset entscheidet die Anwendung (`on_command`); Ende der Initialisierung; negative Bestätigungen (Ursachen 44–47); Broadcast-Adresse |
 | Befehle | Einzel-, Doppel-, Stufen-, Sollwert- und Bitmusterbefehle mit und ohne Zeitmarke; Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout); maximale Befehlsverzögerung; Client verfolgt jeden Befehl bis zum Ergebnis |
 | Redundanz | Redundanzgruppen nach Edition 2: eine aktive Verbindung je Gruppe, Umschaltung per STOPDT/STARTDT, Ereignispuffer je Gruppe bis zur Quittung, erneutes Senden nach Abbruch, Überlaufstrategie, Zuordnung über die Adresse der Leitstelle |
 | Sicherheit | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3: gegenseitige Authentifizierung, Sperrlisten, Prüfung von Name oder Fingerprint, Key Update und Renegotiation, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse; Abweisung unbekannter Absender |
@@ -42,9 +44,9 @@ julia julia/gui/iec104_gui.jl                                                   
 
 | Art | Umfang |
 | --- | --- |
-| Unit-Tests (GoogleTest) | 158 Tests: Codec mit Referenz-Hexdumps, Zustandsmaschine mit simulierter Zeit, Abläufe der Station, Befehle, C-API über Loopback, TLS mit Negativfällen, Redundanz, Konfigurationsdatei |
+| Unit-Tests (GoogleTest) | Codec mit Referenz-Hexdumps, Zustandsmaschine mit simulierter Zeit, Abläufe der Station, Befehle, C-API über Loopback, TLS mit Negativfällen, Redundanz, Konfigurationsdatei |
 | Referenzdaten | Mitschnitte einer fremden Implementierung, auch über TLS (`tests/data/`); jede APDU wird dekodiert und bitgenau neu kodiert |
-| Selbsttest | Server und Client über TCP, über TLS und mit Umschaltung einer Redundanzgruppe, als Teil von `ctest` (162 Fälle gesamt) |
+| Selbsttest | Server und Client über TCP, über TLS und mit Umschaltung einer Redundanzgruppe, als Teil von `ctest` |
 | Sanitizer | alle Tests mit AddressSanitizer und UBSan (Preset `asan`) |
 | Statische Analyse | clang-tidy ohne Befunde, Übersetzung mit `-Werror`; API-Doku ohne Doxygen-Warnungen (Test `Doc.NoDoxygenWarnings`) |
 | Fuzzing | libFuzzer für Codec, Zustandsmaschine und Abläufe der Station |
@@ -80,8 +82,9 @@ julia julia/gui/iec104_gui.jl                                                   
 | `examples/` | Hello World: kleinster Server und Client; `examples/julia/` für Julia |
 | `tools/selftest/` | Selbsttest-Programme und Testskript |
 | `tools/interop/` | Interop-Tests gegen lib60870 |
+| `tools/interop_list/` | Interoperabilitätsliste (Abschnitt 9) für Rolle und Konfiguration |
 | `dist/` | fertig gebaute Library je Version |
-| `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer, Test-PKI für TLS |
+| `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer, Test-PKI für TLS, `wsl_ausprobieren.sh` |
 
 ## Bauen und testen
 

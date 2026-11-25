@@ -1,6 +1,6 @@
 # Interoperabilitätsliste (IEC 60870-5-104, Abschnitt 9)
 
-IEC 60870-5-104 Library 0.5.0 · Rolle: Station und Leitstelle · Parameter: Standardwerte
+IEC 60870-5-104 Library 0.6.0 · Rolle: Station und Leitstelle · Parameter: Standardwerte
 
 Erzeugt mit `iec104_interop_list`. Gliederung und Bezeichnungen nach öffentlichen Wiedergaben der Checkliste (docs/02_Technik_und_Quellen.md, [ORA]); die Angaben stammen aus dem Code der Library. Eigene Parameter: `iec104_interop_list --config datei.conf`, zum Abgleich mit der Liste einer Gegenstelle `--format csv`.
 
@@ -93,7 +93,7 @@ Entfallen in IEC 104 (schwarze Felder): Übertragung über TCP/IP.
 
 | Typ | Bezeichnung | Station | Leitstelle | Bemerkung |
 | --- | --- | --- | --- | --- |
-| <70> M_EI_NA_1 | End of initialization | X | X | nach dem ersten STARTDT jeder Verbindung, je Station |
+| <70> M_EI_NA_1 | End of initialization | X | X | nach dem ersten STARTDT jeder Verbindung, je Station mit Daten- oder Befehlspunkten (send_end_of_init, cause_of_init) |
 
 ### 9.5 System information in control direction
 
@@ -101,12 +101,12 @@ Entfallen in IEC 104 (schwarze Felder): Übertragung über TCP/IP.
 | --- | --- | --- | --- | --- |
 | <100> C_IC_NA_1 | Interrogation command | X | X | Station und Gruppen 1–16; Abbruch (8) wird negativ bestätigt |
 | <101> C_CI_NA_1 | Counter interrogation command | X | X | Freeze/Reset nur bestätigt |
-| <102> C_RD_NA_1 | Read command | X | X | Antwort mit dem Typ des Punktes |
+| <102> C_RD_NA_1 | Read command | X | X | Antwort aus dem Prozessabbild mit dem Typ ohne Zeitmarke, Ursache 5 |
 | <103> C_CS_NA_1 | Clock synchronization command | X | X | Uhr stellt die Anwendung (on_command) |
 | <104> C_TS_NA_1 | Test command | – | – | Station spiegelt ihn trotzdem; Leitstelle nur roh |
 | <105> C_RP_NA_1 | Reset process command | X | X | Ausführung durch die Anwendung (on_command) |
 | <106> C_CD_NA_1 | Delay acquisition command | – | – | Station antwortet negativ |
-| <107> C_TS_TA_1 | Test command with time tag CP56Time2a | X | X |  |
+| <107> C_TS_TA_1 | Test command with time tag CP56Time2a | X | X | maximale Befehlsverzögerung prüfbar; Station spiegelt (Ursache 7) |
 
 ### 9.5 Parameter in control direction
 
@@ -153,29 +153,29 @@ Ursachen, die die Station sendet oder auswertet.
 | <35> M_ME_TE_1 |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
 | <36> M_ME_TF_1 |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
 | <37> M_IT_TB_1 |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| <45> C_SC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <46> C_DC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <47> C_RC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <48> C_SE_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <49> C_SE_NB_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <50> C_SE_NC_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <51> C_BO_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <58> C_SC_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <59> C_DC_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <60> C_RC_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <61> C_SE_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <62> C_SE_TB_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <63> C_SE_TC_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <64> C_BO_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
+| <45> C_SC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <46> C_DC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <47> C_RC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <48> C_SE_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <49> C_SE_NB_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <50> C_SE_NC_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <51> C_BO_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <58> C_SC_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <59> C_DC_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <60> C_RC_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <61> C_SE_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <62> C_SE_TB_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <63> C_SE_TC_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <64> C_BO_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
 | <70> M_EI_NA_1 |  |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| <100> C_IC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  | X | X | X | X |
-| <101> C_CI_NA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
-| <102> C_RD_NA_1 |  |  |  |  | X |  |  |  |  |  |  |  |  |  |  | X | X | X | X |
-| <103> C_CS_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  | X | X | X |  |
-| <104> C_TS_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  | X | X | X |  |
-| <105> C_RP_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  | X | X | X |  |
-| <106> C_CD_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  | X | X | X |  |
-| <107> C_TS_TA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  | X | X | X |  |
+| <100> C_IC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
+| <101> C_CI_NA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  |  | X | X | X |
+| <102> C_RD_NA_1 |  |  |  |  | X |  |  |  |  |  |  |  |  |  |  |  | X | X | X |
+| <103> C_CS_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  |  | X | X |  |
+| <104> C_TS_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  |  | X | X |  |
+| <105> C_RP_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  |  | X | X |  |
+| <106> C_CD_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  |  | X | X |  |
+| <107> C_TS_TA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  |  | X | X |  |
 
 ### 9.5 Type identification and cause of transmission assignments (Leitstelle)
 
@@ -226,7 +226,7 @@ Ursachen, die die Leitstelle sendet oder auswertet.
 
 | Funktion | Punkt | Station | Leitstelle | Bemerkung |
 | --- | --- | --- | --- | --- |
-| Station initialization | Remote initialization | X | X | C_RP_NA_1 an die Anwendung; Ende der Initialisierung (Typ 70) automatisch |
+| Station initialization | Remote initialization | teilw. | X | Station: C_RP_NA_1 an die Anwendung (on_command); Typ 70 danach sendet die Anwendung (iec104_server_send, Ursache 4); automatisch nur beim ersten STARTDT je Verbindung |
 | Cyclic data transmission | Cyclic data transmission | X | X | Station: Anwendung sendet mit Ursache 1 (iec104_server_send), nicht gepuffert |
 | Read procedure | Read procedure | X | X | Antwort aus dem Prozessabbild; Leitstelle: iec104_client_read() |
 | Spontaneous transmission | Spontaneous transmission | X | X | iec104_server_update(); gepuffert je Redundanzgruppe bis zur Quittung |
@@ -241,20 +241,20 @@ Ursachen, die die Leitstelle sendet oder auswertet.
 | Station interrogation | group 1 … group 16 | X | X | Gruppenmaske je Punkt (iec104_server_add_point) |
 | Clock synchronization | Clock synchronization | X | X | Station: Uhr stellt die Anwendung (on_command) |
 | Clock synchronization | Day of week used | X | X | iec104_time.day_of_week, 0 = nicht verwendet |
-| Clock synchronization | RES1, GEN (time tag substituted/ not substituted) used | teilw. | teilw. | Bits werden unverändert übertragen, nicht ausgewertet |
+| Clock synchronization | RES1, GEN (time tag substituted/ not substituted) used | teilw. | teilw. | nur in rohen ASDUs und gespiegelten Bestätigungen erhalten; über iec104_time immer 0 |
 | Clock synchronization | SU-bit (summertime) used | X | X | iec104_time.summer_time |
-| Command transmission | Direct command transmission | X | X |  |
+| Command transmission | Direct command transmission | X | X | Station: IOA-Prüfung (Ursache 47) nur mit Befehlspunkten |
 | Command transmission | Direct set point command transmission | X | X |  |
-| Command transmission | Select and execute command | X | X | Station: Befehlspunkt mit Auswahl-Timeout |
+| Command transmission | Select and execute command | X | X | Station: Befehlspunkt mit Auswahl-Timeout; Abbruch (8) nur mit Befehlspunkten wirksam, sonst positive Bestätigung ohne Anwendung |
 | Command transmission | Select and execute set point command | X | X | Station: Befehlspunkt mit Auswahl-Timeout |
 | Command transmission | C_SE ACTTERM used | X | X | abschaltbar (command_termination, expect_termination) |
 | Command transmission | No additional definition | X | X | Qualifier (QU) wird durchgereicht |
 | Command transmission | Short-pulse duration | teilw. | X | Station: Dauer bestimmt die Anwendung |
 | Command transmission | Long-pulse duration | teilw. | X | Station: Dauer bestimmt die Anwendung |
 | Command transmission | Persistent output | teilw. | X | Station: Ausgabe bestimmt die Anwendung |
-| Command transmission | Supervision of maximum delay in command direction | X |  | max_command_delay; Leitstelle setzt nur die Zeitmarke |
+| Command transmission | Supervision of maximum delay in command direction | X |  | Station: max_command_delay_ms; Leitstelle: Zeitmarke setzt die Anwendung (iec104_object.time) |
 | Transmission of integrated totals | Mode A: Local freeze with spontaneous transmission | teilw. | X | Station: Anwendung friert ein und sendet spontan |
-| Transmission of integrated totals | Mode B: Local freeze with counter interrogation | X | X | Station antwortet aus dem Prozessabbild |
+| Transmission of integrated totals | Mode B: Local freeze with counter interrogation | teilw. | X | Station: Anwendung friert ein und legt den Wert mit iec104_server_add_point() ab (iec104_server_update() sendet spontan); Zählerabfrage antwortet aus dem Prozessabbild |
 | Transmission of integrated totals | Mode C: Freeze and transmit by counter-interrogation commands | teilw. | X | Station bestätigt FRZ; Einfrieren durch die Anwendung (on_asdu) |
 | Transmission of integrated totals | Mode D: Freeze by counter-interrogation command, frozen values reported spontaneously | teilw. | X | Station bestätigt FRZ; Einfrieren und Senden durch die Anwendung |
 | Transmission of integrated totals | Counter read | X | X |  |

@@ -358,18 +358,39 @@ TEST(ClientRead, RequestAndAnswer) {
 }
 
 // Rule: server options are checked before anything is applied; the cause of
-// initialization has 7 bits.
+// initialization has 7 bits. A rejected call leaves the previous options in
+// force (seen in the end of initialization after STARTDT).
 TEST(ServerOptions, RangeCheckedBeforeApplying) {
     iec104_server* s = nullptr;
     ASSERT_EQ(iec104_server_create(nullptr, nullptr, &s), IEC104_OK);
     iec104_server_options o{};
     iec104_server_options_init(&o);
-    o.cause_of_init = 127;
-    EXPECT_EQ(iec104_server_set_options(s, &o), IEC104_OK);
     o.cause_of_init = 128;
     EXPECT_EQ(iec104_server_set_options(s, &o), IEC104_ERR_OUT_OF_RANGE);
-    o.cause_of_init = 0;
-    o.event_buffer_size = 0;
+    o.cause_of_init = 5;
+    EXPECT_EQ(iec104_server_set_options(s, &o), IEC104_OK);
+    o.cause_of_init = 9;     // would change the COI ...
+    o.event_buffer_size = 0; // ... but this value is invalid
     EXPECT_EQ(iec104_server_set_options(s, &o), IEC104_ERR_OUT_OF_RANGE);
+
+    iec104_object p{};
+    p.type = 13;
+    p.ioa = 100;
+    ASSERT_EQ(iec104_server_add_point(s, 1, &p, 1), IEC104_OK);
+    ASSERT_EQ(iec104_server_listen(s, "127.0.0.1", 0), IEC104_OK);
+    Received r;
+    iec104_callbacks cb{};
+    cb.user = &r;
+    cb.on_object = Received::on_object;
+    cb.on_state = Received::on_state;
+    iec104_client* c = nullptr;
+    ASSERT_EQ(iec104_client_create(nullptr, &cb, &c), IEC104_OK);
+    ASSERT_EQ(iec104_client_connect(c, "127.0.0.1", iec104_server_port(s)), IEC104_OK);
+    ASSERT_TRUE(run_until(s, c, [&] { return r.state == IEC104_LINK_STOPPED; }));
+    ASSERT_EQ(iec104_client_start(c), IEC104_OK);
+    ASSERT_TRUE(run_until(s, c, [&] { return !r.objects.empty(); }));
+    EXPECT_EQ(r.objects[0].first.type, 70U);
+    EXPECT_EQ(r.objects[0].second.qualifier, 5U); // COI of the last accepted call
+    iec104_client_destroy(c);
     iec104_server_destroy(s);
 }
