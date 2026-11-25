@@ -10,6 +10,7 @@ Exemplarische Library für IEC 60870-5-104: Client und Server, Kern in C++17, st
 | `docs/02_Konzept_IEC104_Library.md` | Konzept: Sprache, Architektur, Parameter, TLS, Laufzeit, Tests, offene Entscheidungen |
 | `docs/03_Recherchebericht_IEC104_im_Detail.md` | Recherche: Norm, Praxis bei Netzbetreibern, Interop-Fallstricke, Sicherheit, Tests (mit Quellen) |
 | `docs/04_Analyse.md` | Analyse vor Umsetzungsbeginn: Widersprüche, offene Normfragen, Code-Abgleich, Aufgabenreihe |
+| `docs/05_Quellen_APCI.md` | Öffentliche Belege für die Regeln der APCI-Zustandsmaschine |
 | `folien/Konzept_IEC104_Library_Folien.html` | Folien zum Konzept, im Browser öffnen (10 Folien, 1920×1080) |
 | `CLAUDE.md` | Regeln für Claude Code |
 | `tasks/` | Aufgaben, eine nach der anderen; `TASK-000_Auftrag.md` ist der Gesamtauftrag |
@@ -35,5 +36,6 @@ Rechteinhaber und Lizenztexte: `LICENSES/`. Der öffentliche Header `include/iec
 | Modul | Stand |
 | --- | --- |
 | `codec` | APCI (I/S/U), ASDU-Kopf, IOA, CP56Time2a, Informationselemente, Typtabelle (59 Typen), vollständige ASDUs mit SQ 0/1, Aufteilen, strikt/tolerant (`tasks/TASK-001_codec.md`) |
-| `apci`, `session`, `transport` | offen |
+| `apci` | Zustandsmaschine sans-I/O (STARTDT/STOPDT/TESTFR, k/w, t1–t3), Selbsttest ohne Netz (`tasks/TASK-002_apci.md`) |
+| `session`, `transport` | offen; nächster Schritt TCP und Selbsttest-Programme (TASK-003) |
 | C-API | Version und Statuscodes |

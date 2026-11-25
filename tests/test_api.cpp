@@ -30,5 +30,7 @@ TEST(Api, VersionStringMatchesMacros) {
 TEST(Api, StatusStringNeverNull) {
     EXPECT_STREQ(iec104_status_string(IEC104_OK), "ok");
     EXPECT_STREQ(iec104_status_string(IEC104_ERR_MALFORMED), "malformed frame");
-    EXPECT_STREQ(iec104_status_string(static_cast<iec104_status>(12345)), "unknown status");
+    EXPECT_STREQ(iec104_status_string(IEC104_ERR_WOULD_BLOCK), "would block");
+    EXPECT_STREQ(iec104_status_string(IEC104_ERR_WRONG_STATE), "not allowed in this state");
+    EXPECT_STREQ(iec104_status_string(static_cast<iec104_status>(-50)), "unknown status");
 }

@@ -184,8 +184,8 @@ TEST(Apci, DecodeRejectsMalformed) {
     const std::uint8_t u_two[] = {0x68, 0x04, 0x47, 0x00, 0x00, 0x00};
     EXPECT_EQ(decode_apci(u_two, sizeof u_two, apci), IEC104_ERR_MALFORMED);
     // U-frame with trailing ASDU
-    const std::uint8_t u_long[] = {0x68, 0x05, 0x07, 0x00, 0x00, 0x00, 0x00};
-    EXPECT_EQ(decode_apci(u_long, sizeof u_long, apci), IEC104_ERR_MALFORMED);
+    const std::uint8_t u_with_payload[] = {0x68, 0x05, 0x07, 0x00, 0x00, 0x00, 0x00};
+    EXPECT_EQ(decode_apci(u_with_payload, sizeof u_with_payload, apci), IEC104_ERR_MALFORMED);
     // I-frame with LSB of N(R) set
     const std::uint8_t i_bad_nr[] = {0x68, 0x05, 0x00, 0x00, 0x01, 0x00, 0x00};
     EXPECT_EQ(decode_apci(i_bad_nr, sizeof i_bad_nr, apci), IEC104_ERR_MALFORMED);

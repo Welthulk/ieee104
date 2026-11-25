@@ -9,4 +9,5 @@ leak-*
 timeout-*
 oom-*
 fuzz/corpus/
+fuzz/corpus_apci/
 *.swp

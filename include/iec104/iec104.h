@@ -95,6 +95,15 @@ typedef enum iec104_status {
     IEC104_ERR_OUT_OF_RANGE = -5,
     /** The input is well formed but not supported (yet), e.g. a type rejected in strict mode. */
     IEC104_ERR_UNSUPPORTED = -6,
+    /**
+     * The call cannot be served now but may succeed later, e.g. sending while
+     * k I-frames are unacknowledged or the output buffer is full. Retry after
+     * the peer has acknowledged or the output has been taken.
+     */
+    IEC104_ERR_WOULD_BLOCK = -7,
+    /** The call is not allowed in the current connection state, e.g. sending data before STARTDT.
+     */
+    IEC104_ERR_WRONG_STATE = -8,
     /** An internal invariant was violated. Indicates a bug in the library. */
     IEC104_ERR_INTERNAL = -99
 } iec104_status;

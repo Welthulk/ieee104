@@ -47,6 +47,10 @@ const char* iec104_status_string(iec104_status status) {
         return "value out of range";
     case IEC104_ERR_UNSUPPORTED:
         return "unsupported";
+    case IEC104_ERR_WOULD_BLOCK:
+        return "would block";
+    case IEC104_ERR_WRONG_STATE:
+        return "not allowed in this state";
     case IEC104_ERR_INTERNAL:
         return "internal error";
     }

@@ -66,6 +66,8 @@ endfunction()
 # ---------------------------------------------------------------------------
 add_library(iec104
     src/api/iec104.cpp
+    src/apci/apci_config.cpp
+    src/apci/connection.cpp
     src/codec/apci.cpp
     src/codec/asdu.cpp
     src/codec/asdu_header.cpp
@@ -105,6 +107,8 @@ if(IEC104_BUILD_TESTS)
     add_executable(iec104_tests
         tests/test_api.cpp
         tests/test_apci.cpp
+        tests/test_apci_connection.cpp
+        tests/test_apci_selftest.cpp
         tests/test_asdu.cpp
         tests/test_asdu_header.cpp
         tests/test_asdu_reference.cpp
@@ -131,6 +135,12 @@ if(IEC104_BUILD_FUZZERS)
     target_link_libraries(fuzz_codec PRIVATE iec104::iec104)
     target_link_options(fuzz_codec PRIVATE -fsanitize=fuzzer)
     iec104_set_warnings(fuzz_codec FALSE)
+
+    add_executable(fuzz_apci fuzz/fuzz_apci.cpp)
+    target_include_directories(fuzz_apci PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(fuzz_apci PRIVATE iec104::iec104)
+    target_link_options(fuzz_apci PRIVATE -fsanitize=fuzzer)
+    iec104_set_warnings(fuzz_apci FALSE)
 endif()
 
 # ---------------------------------------------------------------------------
