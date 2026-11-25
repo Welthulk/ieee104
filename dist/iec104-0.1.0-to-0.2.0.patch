@@ -1,0 +1,3144 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..d80d0df
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,18 @@
++# Änderungen
++
++## 0.2.0 (25.11.2026)
++
++| Bereich | Änderung |
++| --- | --- |
++| Betrieb | Log-Callback je Handle (`iec104_*_set_log`), Stufen Fehler bis Trace; Trace zeigt jede APDU als Hexdump |
++| Betrieb | Statistik je Verbindung (`iec104_*_get_stats`): Rahmen, Oktette, Anfragen, Befehle, negative Antworten |
++| Betrieb | Konfigurationsdatei `key = value` (`iec104_config_load`) |
++| Einbindung | `cmake --install`, `find_package(iec104)`, Ziel `iec104::iec104`; statisch oder geteilt (`BUILD_SHARED_LIBS`, Preset `shared`) |
++| Beispiele | `examples/hello_server.c`, `examples/hello_client.c`; Test baut sie gegen die installierte Library |
++| Selbsttest | Optionen `--config`, `--log`, `--stats` |
++| Doku | neu `docs/06_Anleitung.md`; docs/02–05 gestrafft |
++| Festlegung | E8: kein interner Thread, Poll im Thread der Anwendung |
++
++## 0.1.0 (25.11.2026)
++
++Erste Lieferung: Codec aller Typen, Zustandsmaschine der Verbindung, TCP, C-API, Abläufe der gesteuerten Station (Generalabfrage, Zählerabfrage, Uhrzeit, Befehle), Befehlsmodelle mit Select/Execute, maximale Befehlsverzögerung, Befehlsverfolgung am Client, Selbsttest-Programme.
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b7cea40..f8f0e2a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,7 @@
+ cmake_minimum_required(VERSION 3.21)
+ 
+ project(iec104
+-    VERSION 0.1.0
++    VERSION 0.2.0
+     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
+     LANGUAGES C CXX)
+ 
+@@ -66,10 +66,12 @@ endfunction()
+ # ---------------------------------------------------------------------------
+ # Library
+ # ---------------------------------------------------------------------------
+-add_library(iec104
++add_library(iec104_objects OBJECT
+     src/api/client.cpp
++    src/api/config.cpp
+     src/api/iec104.cpp
+     src/api/link_common.cpp
++    src/api/logger.cpp
+     src/api/server.cpp
+     src/api/values.cpp
+     src/apci/apci_config.cpp
+@@ -86,27 +88,39 @@ add_library(iec104
+     src/session/server_session.cpp
+     src/transport/link.cpp
+     src/transport/tcp.cpp)
+-add_library(iec104::iec104 ALIAS iec104)
+-
+-target_include_directories(iec104
+-    PUBLIC  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+-            $<INSTALL_INTERFACE:include>
++# The sources are compiled once; the library (static or shared, see
++# BUILD_SHARED_LIBS) is made from these objects. Tests and fuzzers link the
++# objects directly because they check internal functions.
++target_include_directories(iec104_objects
++    PUBLIC  ${PROJECT_SOURCE_DIR}/include
+     PRIVATE ${PROJECT_SOURCE_DIR}/src)
+-
+-target_compile_definitions(iec104 PRIVATE IEC104_BUILDING_LIBRARY
++target_compile_definitions(iec104_objects PRIVATE IEC104_BUILDING_LIBRARY
+     IEC104_VERSION_STRING="${PROJECT_VERSION}")
+-
+ # Core rules: no exceptions, no RTTI (see docs/02_Technik_und_Quellen.md, "Sprache und Architektur")
+-target_compile_options(iec104 PRIVATE -fno-exceptions -fno-rtti)
+-set_target_properties(iec104 PROPERTIES
++target_compile_options(iec104_objects PRIVATE -fno-exceptions -fno-rtti)
++set_target_properties(iec104_objects PROPERTIES
++    POSITION_INDEPENDENT_CODE ON
+     CXX_VISIBILITY_PRESET hidden
+-    VISIBILITY_INLINES_HIDDEN ON
++    VISIBILITY_INLINES_HIDDEN ON)
++if(IEC104_ENABLE_CLANG_TIDY)
++    set_target_properties(iec104_objects PROPERTIES CXX_CLANG_TIDY "${IEC104_CLANG_TIDY}")
++endif()
++iec104_set_warnings(iec104_objects TRUE)
++
++add_library(iec104 $<TARGET_OBJECTS:iec104_objects>)
++add_library(iec104::iec104 ALIAS iec104)
++target_include_directories(iec104 PUBLIC
++    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
++    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
++set_target_properties(iec104 PROPERTIES
++    LINKER_LANGUAGE CXX
+     VERSION ${PROJECT_VERSION}
+     SOVERSION ${PROJECT_VERSION_MAJOR})
+-if(IEC104_ENABLE_CLANG_TIDY)
+-    set_target_properties(iec104 PROPERTIES CXX_CLANG_TIDY "${IEC104_CLANG_TIDY}")
++if(NOT BUILD_SHARED_LIBS)
++    # A static library carries no dependencies: users that link with the C
++    # compiler need the C++ runtime and libm explicitly.
++    target_link_libraries(iec104 INTERFACE stdc++ m)
+ endif()
+-iec104_set_warnings(iec104 TRUE)
+ 
+ # ---------------------------------------------------------------------------
+ # Tests
+@@ -128,6 +142,7 @@ if(IEC104_BUILD_TESTS)
+         tests/test_command_tracker.cpp
+         tests/test_cp56time2a.cpp
+         tests/test_elements.cpp
++        tests/test_operation.cpp
+         tests/test_session.cpp
+         tests/test_tcp_loopback.cpp
+         tests/test_type_table.cpp
+@@ -137,7 +152,7 @@ if(IEC104_BUILD_TESTS)
+     # Reference data (captures of foreign implementations), read at run time
+     target_compile_definitions(iec104_tests PRIVATE
+         IEC104_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
+-    target_link_libraries(iec104_tests PRIVATE iec104::iec104 GTest::gtest GTest::gtest_main)
++    target_link_libraries(iec104_tests PRIVATE iec104_objects GTest::gtest GTest::gtest_main)
+     iec104_set_warnings(iec104_tests FALSE)
+     gtest_discover_tests(iec104_tests)
+ endif()
+@@ -168,27 +183,57 @@ endif()
+ if(IEC104_BUILD_FUZZERS)
+     add_executable(fuzz_codec fuzz/fuzz_codec.cpp)
+     target_include_directories(fuzz_codec PRIVATE ${PROJECT_SOURCE_DIR}/src)
+-    target_link_libraries(fuzz_codec PRIVATE iec104::iec104)
++    target_link_libraries(fuzz_codec PRIVATE iec104_objects)
+     target_link_options(fuzz_codec PRIVATE -fsanitize=fuzzer)
+     iec104_set_warnings(fuzz_codec FALSE)
+ 
+     add_executable(fuzz_session fuzz/fuzz_session.cpp)
+     target_include_directories(fuzz_session PRIVATE ${PROJECT_SOURCE_DIR}/src)
+-    target_link_libraries(fuzz_session PRIVATE iec104::iec104)
++    target_link_libraries(fuzz_session PRIVATE iec104_objects)
+     target_link_options(fuzz_session PRIVATE -fsanitize=fuzzer)
+     iec104_set_warnings(fuzz_session FALSE)
+ 
+     add_executable(fuzz_apci fuzz/fuzz_apci.cpp)
+     target_include_directories(fuzz_apci PRIVATE ${PROJECT_SOURCE_DIR}/src)
+-    target_link_libraries(fuzz_apci PRIVATE iec104::iec104)
++    target_link_libraries(fuzz_apci PRIVATE iec104_objects)
+     target_link_options(fuzz_apci PRIVATE -fsanitize=fuzzer)
+     iec104_set_warnings(fuzz_apci FALSE)
+ endif()
+ 
+ # ---------------------------------------------------------------------------
+-# Install
++# Examples
++# ---------------------------------------------------------------------------
++option(IEC104_BUILD_EXAMPLES "Build the examples (examples/)" ON)
++if(IEC104_BUILD_EXAMPLES AND NOT IEC104_BUILD_FUZZERS)
++    add_subdirectory(examples)
++    if(IEC104_BUILD_TESTS AND NOT IEC104_ENABLE_SANITIZERS)
++        # The examples, built against the installed library (find_package)
++        # and run against each other. Not with sanitizers: the installed
++        # library would need the sanitizer runtime in the foreign project.
++        add_test(NAME Examples.HelloWorldInstalled
++            COMMAND ${PROJECT_SOURCE_DIR}/tools/check_install.sh ${CMAKE_BINARY_DIR}
++                    ${PROJECT_SOURCE_DIR})
++        set_tests_properties(Examples.HelloWorldInstalled PROPERTIES TIMEOUT 120)
++    endif()
++endif()
++
++# ---------------------------------------------------------------------------
++# Install and package export (find_package(iec104), target iec104::iec104)
+ # ---------------------------------------------------------------------------
++include(CMakePackageConfigHelpers)
++set(IEC104_CMAKE_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/iec104)
+ install(TARGETS iec104 EXPORT iec104Targets
+     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
++    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
++    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+ install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
++install(EXPORT iec104Targets NAMESPACE iec104:: DESTINATION ${IEC104_CMAKE_DIR})
++configure_package_config_file(cmake/iec104Config.cmake.in
++    ${CMAKE_CURRENT_BINARY_DIR}/iec104Config.cmake
++    INSTALL_DESTINATION ${IEC104_CMAKE_DIR})
++# Version 0.x: only the same minor version is compatible.
++write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/iec104ConfigVersion.cmake
++    VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
++install(FILES ${CMAKE_CURRENT_BINARY_DIR}/iec104Config.cmake
++              ${CMAKE_CURRENT_BINARY_DIR}/iec104ConfigVersion.cmake
++        DESTINATION ${IEC104_CMAKE_DIR})
+diff --git a/CMakePresets.json b/CMakePresets.json
+index 2f71493..988ceec 100644
+--- a/CMakePresets.json
++++ b/CMakePresets.json
+@@ -1,6 +1,10 @@
+ {
+   "version": 3,
+-  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
++  "cmakeMinimumRequired": {
++    "major": 3,
++    "minor": 21,
++    "patch": 0
++  },
+   "configurePresets": [
+     {
+       "name": "base",
+@@ -12,13 +16,26 @@
+       "name": "debug",
+       "displayName": "Debug (GCC)",
+       "inherits": "base",
+-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
++      "cacheVariables": {
++        "CMAKE_BUILD_TYPE": "Debug"
++      }
+     },
+     {
+       "name": "release",
+       "displayName": "Release (GCC)",
+       "inherits": "base",
+-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
++      "cacheVariables": {
++        "CMAKE_BUILD_TYPE": "Release"
++      }
++    },
++    {
++      "name": "shared",
++      "displayName": "Debug, shared library (GCC)",
++      "inherits": "base",
++      "cacheVariables": {
++        "CMAKE_BUILD_TYPE": "Debug",
++        "BUILD_SHARED_LIBS": "ON"
++      }
+     },
+     {
+       "name": "asan",
+@@ -54,16 +71,66 @@
+     }
+   ],
+   "buildPresets": [
+-    { "name": "debug",   "configurePreset": "debug" },
+-    { "name": "release", "configurePreset": "release" },
+-    { "name": "asan",    "configurePreset": "asan" },
+-    { "name": "clang",   "configurePreset": "clang" },
+-    { "name": "fuzz",    "configurePreset": "fuzz" }
++    {
++      "name": "debug",
++      "configurePreset": "debug"
++    },
++    {
++      "name": "release",
++      "configurePreset": "release"
++    },
++    {
++      "name": "asan",
++      "configurePreset": "asan"
++    },
++    {
++      "name": "clang",
++      "configurePreset": "clang"
++    },
++    {
++      "name": "fuzz",
++      "configurePreset": "fuzz"
++    },
++    {
++      "name": "shared",
++      "configurePreset": "shared"
++    }
+   ],
+   "testPresets": [
+-    { "name": "debug",   "configurePreset": "debug",   "output": { "outputOnFailure": true } },
+-    { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } },
+-    { "name": "asan",    "configurePreset": "asan",    "output": { "outputOnFailure": true } },
+-    { "name": "clang",   "configurePreset": "clang",   "output": { "outputOnFailure": true } }
++    {
++      "name": "debug",
++      "configurePreset": "debug",
++      "output": {
++        "outputOnFailure": true
++      }
++    },
++    {
++      "name": "release",
++      "configurePreset": "release",
++      "output": {
++        "outputOnFailure": true
++      }
++    },
++    {
++      "name": "asan",
++      "configurePreset": "asan",
++      "output": {
++        "outputOnFailure": true
++      }
++    },
++    {
++      "name": "clang",
++      "configurePreset": "clang",
++      "output": {
++        "outputOnFailure": true
++      }
++    },
++    {
++      "name": "shared",
++      "configurePreset": "shared",
++      "output": {
++        "outputOnFailure": true
++      }
++    }
+   ]
+ }
+diff --git a/README.md b/README.md
+index 9d0fe1f..368a575 100644
+--- a/README.md
++++ b/README.md
+@@ -1,8 +1,8 @@
+ # IEC 60870-5-104 Library
+ 
+-Library für IEC 60870-5-104 mit Client (steuernde Station) und Server (gesteuerte Station). Der Kern ist in C++17 geschrieben, nach außen gibt es eine stabile C-Schnittstelle (`include/iec104/iec104.h`). Ziel ist eine normgerechte, gut lesbare und vollständig getestete Implementierung; jede Protokollregel im Code nennt ihre Quelle.
++Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`). Jede Protokollregel im Code nennt ihre Quelle.
+ 
+-Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
++Stand: 25.11.2026, Version 0.2.0, Linux x86-64.
+ 
+ ## Stand
+ 
+@@ -15,7 +15,8 @@ Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
+ | C-API | Server und Client mit Handles, konfigurierbaren Ports, Timern und ASDU-Profil; Werte statt Oktette (`iec104_object`), Callbacks für Objekte, Befehle und Zustandswechsel |
+ | Selbsttest | `iec104_selftest_server` und `iec104_selftest_client` für automatische und manuelle Tests |
+ | Befehle | Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung am Client mit Ergebnis je Befehl und getrennten Timeouts |
+-| in Arbeit | Pufferung, TLS (OpenSSL 3.x), Redundanzgruppen, Logging und Statistik |
++| Betrieb | Log-Callback mit Stufen und APDU-Trace, Statistik je Verbindung, Konfigurationsdatei, `find_package(iec104)`, statisch oder geteilt |
++| in Arbeit | Pufferung, TLS (OpenSSL 3.x), Redundanzgruppen |
+ 
+ ## Unterlagen
+ 
+@@ -25,7 +26,8 @@ Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
+ | `docs/02_Technik_und_Quellen.md` | Architektur, Protokollaufbau, Parameter, Typkennungen, Elemente, Quellen |
+ | `docs/03_Quellen_APCI.md` | Öffentliche Belege für die Regeln der Verbindungssteuerung |
+ | `docs/04_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
+-| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E7), auf die der Code verweist |
++| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E8), auf die der Code verweist |
++| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Regeln |
+ 
+ ## Verzeichnisse
+ 
+@@ -39,6 +41,7 @@ Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
+ | `src/api/` | Implementierung der C-Schnittstelle |
+ | `tests/` | Unit-Tests (GoogleTest), Referenzdaten unter `tests/data/` |
+ | `fuzz/` | libFuzzer-Ziele für Codec und Zustandsmaschine |
++| `examples/` | Hello World: kleinster Server und Client |
+ | `tools/selftest/` | Selbsttest-Programme und Testskript |
+ | `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer |
+ 
+diff --git a/cmake/iec104Config.cmake.in b/cmake/iec104Config.cmake.in
+new file mode 100644
+index 0000000..82fcc01
+--- /dev/null
++++ b/cmake/iec104Config.cmake.in
+@@ -0,0 +1,11 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# Package configuration for find_package(iec104). Provides the target
++# iec104::iec104 (include directory and library).
++@PACKAGE_INIT@
++
++include("${CMAKE_CURRENT_LIST_DIR}/iec104Targets.cmake")
++check_required_components(iec104)
+diff --git a/docs/02_Technik_und_Quellen.md b/docs/02_Technik_und_Quellen.md
+index df40bd7..468e5af 100644
+--- a/docs/02_Technik_und_Quellen.md
++++ b/docs/02_Technik_und_Quellen.md
+@@ -1,37 +1,30 @@
+ # Technik und Quellen
+ 
+-Stand: 25.11.2026
+-
+-Dieses Dokument fasst die technischen Grundlagen der Library zusammen: Architektur, Protokollaufbau, Parameter und die öffentlichen Quellen, auf die sich die Regeln im Code stützen. Kommentare im Code verweisen auf die Abschnitte hier („docs/02_Technik_und_Quellen.md, …“). Die Regeln der Verbindungssteuerung sind in `docs/03_Quellen_APCI.md` einzeln belegt, offene Normfragen stehen in `docs/05_Normfragen_und_Festlegungen.md`.
+-
+-Normstand: IEC 60870-5-104 Ed. 2.1 (2016), also Ed. 2 von 2006 mit Amendment 1 von 2016, ergänzt um die Berichtigung COR1:2023. Der Normtext lag bei der Entwicklung nicht vor; die Quellen sind am Ende aufgeführt (Kürzel in eckigen Klammern).
++Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 (2016) mit COR1:2023 · Quellen-Kürzel siehe letzter Abschnitt.
+ 
+ ## Sprache und Architektur
+ 
+-Der Kern ist in C++17 geschrieben, nach außen gibt es nur eine C-Schnittstelle. Innen bringt das RAII und Typsicherheit, außen ein stabiles ABI, das sich aus C, C++ und jeder Sprache mit C-Anbindung nutzen lässt.
+-
+-Regeln:
+-
+-- Keine Exceptions und kein RTTI im Library-Code (`-fno-exceptions -fno-rtti`); Fehler sind Rückgabewerte vom Typ `iec104_status`.
+-- Öffentliche Header sind reines C, ohne STL-Typen; alle exportierten Symbole tragen `IEC104_API`, alle anderen sind verborgen.
+-- Lesbarkeit vor Performance: kleine Funktionen, ausführliche Kommentare mit Bit-Layouts, jede Protokollregel mit Quelle.
+-- Normverhalten ist Default. Bekannte Abweichungen von Gegenstellen werden Parameter, nie ein Code-Zweig für ein bestimmtes Gerät.
+-
+-Schichten (jede ohne Abhängigkeit nach oben):
++| Punkt | Festlegung |
++| --- | --- |
++| Sprache | Kern C++17, Schnittstelle nur C (`include/iec104/iec104.h`) |
++| Fehler | Rückgabewert `iec104_status`; keine Exceptions, kein RTTI (`-fno-exceptions -fno-rtti`) |
++| Öffentlicher Header | reines C, keine STL-Typen, Export nur über `IEC104_API` |
++| Abweichungen von Gegenstellen | Parameter, nie ein Code-Zweig für ein Gerät |
++| Stil | Lesbarkeit vor Performance; jede Protokollregel mit Quelle im Kommentar |
+ 
+ | Schicht | Ordner | Aufgabe |
+ | --- | --- | --- |
+-| codec | `src/codec` | APCI und ASDU kodieren und dekodieren; reine Funktionen auf Byte-Puffern, kein I/O, keine Allokation |
++| codec | `src/codec` | APCI und ASDU kodieren/dekodieren; reine Funktionen, kein I/O, keine Allokation |
+ | apci | `src/apci` | Zustandsmaschine je Verbindung: Bytes und Zeit rein, Bytes und Ereignisse raus |
+-| session | `src/session` | Abläufe der gesteuerten Station: Prozessabbild, Generalabfrage, Zählerabfrage, Lesen, Test, Uhrzeit, Befehle; später Pufferung und Redundanzgruppen |
+-| transport | `src/transport` | TCP (später TLS), Verbindungsaufbau, Zeitbasis |
+-| API | `include/iec104/iec104.h`, `src/api` | C-Schnittstelle: Handles, Konfiguration, Callbacks |
++| session | `src/session` | Prozessabbild, Abfragen, Uhrzeit, Befehle, Befehlsverfolgung |
++| transport | `src/transport` | TCP, Verbindungsaufbau, Uhren |
++| API | `src/api` | C-Schnittstelle: Handles, Konfiguration, Callbacks |
+ 
+-Weil Codec und Zustandsmaschine kein I/O machen, sind sie vollständig ohne Netz und mit simulierter Zeit testbar.
++Keine Schicht hängt von einer höheren ab. Codec, Zustandsmaschine und Session sind ohne Netz und mit simulierter Zeit testbar.
+ 
+ ## APCI
+ 
+-Eine APDU beginnt mit dem Startoktett 0x68, gefolgt vom Längenoktett und vier Steueroktetten. Die Länge zählt Steueroktette plus ASDU; sie ist höchstens 253, die APDU damit höchstens 255 Oktette und die ASDU höchstens 249 Oktette [WS].
++APDU = 0x68, Längenoktett, 4 Steueroktette, ASDU. Länge ≤ 253, also APDU ≤ 255 und ASDU ≤ 249 Oktette [WS].
+ 
+ | Format | Erkennung (Oktett 3) | Inhalt |
+ | --- | --- | --- |
+@@ -39,26 +32,26 @@ Eine APDU beginnt mit dem Startoktett 0x68, gefolgt vom Längenoktett und vier S
+ | S | Bits 0–1 = 01 | nur N(R) |
+ | U | Bits 0–1 = 11 | genau eine Funktion: STARTDT act 0x07 / con 0x0B, STOPDT act 0x13 / con 0x23, TESTFR act 0x43 / con 0x83 |
+ 
+-Folgenummern zählen modulo 32768 und beginnen nach dem Verbindungsaufbau bei 0 [VUT]. Die gesteuerte Station lauscht auf TCP-Port 2404 [IANA], [WS].
++Folgenummern modulo 32768, Start bei 0 nach dem Verbindungsaufbau [VUT]. Port 2404 [IANA].
+ 
+ ## Verbindung und Timer
+ 
+ | Parameter | Bedeutung | Default | Bereich |
+ | --- | --- | --- | --- |
+ | t0 | Timeout Verbindungsaufbau | 30 s | 1–255 s |
+-| t1 | Timeout für Sende- oder Test-APDUs; Ablauf schließt die Verbindung | 15 s | 1–255 s |
+-| t2 | Quittung spätestens nach t2, wenn keine eigenen Daten anstehen; t2 < t1 | 10 s | 1–255 s |
+-| t3 | Testrahmen nach langer Ruhe | 20 s | 1 s – 48 h |
+-| k | höchstens k unquittierte gesendete I-Rahmen | 12 | 1–32767 |
+-| w | Quittung spätestens nach w empfangenen I-Rahmen; Empfehlung w ≤ 2/3 k | 8 | 1–32767 |
++| t1 | Timeout für Sende- und Test-APDUs; Ablauf schließt die Verbindung | 15 s | 1–255 s |
++| t2 | Quittung spätestens nach t2 ohne eigene Daten; t2 < t1 | 10 s | 1–255 s |
++| t3 | Testrahmen nach Ruhe | 20 s | 1 s–48 h |
++| k | max. unquittierte gesendete I-Rahmen | 12 | 1–32767 |
++| w | Quittung spätestens nach w I-Rahmen; w ≤ 2/3 k empfohlen | 8 | 1–32767 |
+ 
+-Quelle der Werte: Interoperabilitätsliste der Norm, öffentlich wiedergegeben in [ORA].
++Quelle: Interoperabilitätsliste, wiedergegeben in [ORA].
+ 
+-Abweichungen aus der Praxis, die die Library als Parameter abdeckt:
+-
+-- Einige Netzbetreiber fordern lange Timer, z. B. t1 = 250 s, t2 = 240 s, t3 = 255 s. Deshalb gilt der volle Bereich ohne künstliche Grenzen, und die Empfehlungen t2 < t1 und w ≤ 2/3 k werden standardmäßig nur gewarnt (E2 in `docs/05_Normfragen_und_Festlegungen.md`).
+-- Einige Gegenstellen schalten den Verbindungstest mit t3 = 0 ab; das ist im toleranten Modus erlaubt (E3).
+-- Hersteller interpretieren t1 unterschiedlich, manche nur als Antwortzeit für U-Rahmen. Die Library überwacht mit t1 I-Rahmen und U-Rahmen act (`docs/03_Quellen_APCI.md`, R10).
++| Abweichung in der Praxis | Umsetzung |
++| --- | --- |
++| lange Timer (z. B. t1 250 s, t2 240 s, t3 255 s) | voller Bereich; t2 < t1 und w ≤ 2/3 k nur als Warnung (E2) |
++| Verbindungstest abgeschaltet (t3 = 0) | nur im toleranten Modus (E3) |
++| t1 nur für U-Rahmen | t1 überwacht I-Rahmen und U-Rahmen act (R10) |
+ 
+ ## ASDU-Kopf und ASDU-Profil
+ 
+@@ -71,17 +64,17 @@ Datenkopf im IEC-104-Profil (6 Oktette) [WS], [VUT]:
+ | COT | 2 | Bits 0–5 Ursache, Bit 6 P/N (negativ), Bit 7 T (Test); zweites Oktett Herkunftsadresse (0 = ungenutzt) |
+ | CA | 2 | gemeinsame Adresse: 0 ungenutzt, 1–65534 Station, 65535 Broadcast |
+ 
+-Jedes Informationsobjekt beginnt mit einer 3-Oktett-IOA; IOA 0 steht für systembezogene Befehle wie die Generalabfrage. Alle Mehroktettwerte werden mit dem niederwertigen Oktett zuerst übertragen (in Interoperabilitätslisten „Mode 1“).
++Danach je Objekt eine IOA (3 Oktette; IOA 0 = systembezogene Befehle wie die Generalabfrage). Mehroktettwerte: niederwertiges Oktett zuerst („Mode 1“).
+ 
+-SQ = 0: jedes Objekt hat seine eigene IOA. SQ = 1: nur das erste Objekt trägt eine IOA, die folgenden haben fortlaufende Adressen.
++SQ = 0: jedes Objekt mit eigener IOA. SQ = 1: eine IOA, folgende Objekte fortlaufend adressiert.
+ 
+-ASDU-Profil (Parameter, `AsduProfile`):
++ASDU-Profil (`iec104_link_config`):
+ 
+ | Parameter | Default | Bereich | Zweck |
+ | --- | --- | --- | --- |
+-| Längen COT / CA / IOA | 2 / 2 / 3 | 1–2 / 1–2 / 1–3 | Gegenstellen außerhalb der Norm (Feldlängen wie bei IEC 101) |
+-| maximale ASDU-Länge | 249 | 1–249 | Gegenstellen mit kleinerem Maximum; der Sender teilt lange Objektlisten auf |
+-| strikter Modus | an | an / tolerant | Abweichungen bewusst zulassen (E1) |
++| Längen COT / CA / IOA | 2 / 2 / 3 | 1–2 / 1–2 / 1–3 | Gegenstellen mit Feldlängen wie IEC 101 |
++| max. ASDU-Länge | 249 | 1–249 | kleineres Maximum der Gegenstelle; lange Listen werden aufgeteilt |
++| strikt | an | an / tolerant | bekannte Abweichungen zulassen (E1) |
+ 
+ ## Typkennungen
+ 
+@@ -102,36 +95,55 @@ Elementlängen je Typ: [WS]; Elementfolge je Typ: `src/codec/type_table.cpp`, ge
+ 
+ ## Übertragungsursachen
+ 
+-1 zyklisch, 2 Hintergrund, 3 spontan, 4 initialisiert, 5 Abfrage, 6 Aktivierung, 7 Bestätigung der Aktivierung, 8 Abbruch, 9 Bestätigung des Abbruchs, 10 Beendigung der Aktivierung, 11 Rückmeldung Fernbefehl, 12 Rückmeldung Ortsbefehl, 13 Dateiübertragung, 20 Generalabfrage, 21–36 Gruppen 1–16, 37 allgemeine Zählerabfrage, 38–41 Zählergruppen 1–4, 44 unbekannte Typkennung, 45 unbekannte Übertragungsursache, 46 unbekannte gemeinsame Adresse, 47 unbekannte IOA, 48–63 privat [WS].
+-
+-Welche Ursache für welchen Typ zulässig ist, regelt Abschnitt 9.5 der Norm; die Tabelle ist angelegt, aber noch leer (N3).
++| COT | Bedeutung | COT | Bedeutung |
++| --- | --- | --- | --- |
++| 1 | zyklisch | 11 | Rückmeldung Fernbefehl |
++| 2 | Hintergrund | 12 | Rückmeldung Ortsbefehl |
++| 3 | spontan | 13 | Dateiübertragung |
++| 4 | initialisiert | 20 | Generalabfrage (Station) |
++| 5 | Abfrage | 21–36 | Generalabfrage Gruppe 1–16 |
++| 6 | Aktivierung | 37 | Zählerabfrage allgemein |
++| 7 | Bestätigung der Aktivierung | 38–41 | Zählerabfrage Gruppe 1–4 |
++| 8 | Abbruch | 44 | unbekannte Typkennung |
++| 9 | Bestätigung des Abbruchs | 45 | unbekannte Übertragungsursache |
++| 10 | Beendigung der Aktivierung | 46 | unbekannte gemeinsame Adresse |
++| | | 47 | unbekannte IOA |
++
++48–63: privat. Quelle [WS]. Zulässige Kombinationen Typ/COT (Abschnitt 9.5): N3.
+ 
+ ## Informationselemente
+ 
+-- Qualitätsbits: IV 0x80 (ungültig), NT 0x40 (nicht aktuell), SB 0x20 (ersetzt), BL 0x10 (blockiert), bei QDS zusätzlich OV 0x01 (Überlauf) [WS].
+-- DIQ: 0 und 3 unbestimmt, 1 AUS, 2 EIN.
+-- NVA: vorzeichenbehaftet 16 Bit, Wert = Rohwert / 32768. SVA: vorzeichenbehaftet 16 Bit. R32: IEEE 754 einfache Genauigkeit, niederwertiges Oktett zuerst.
+-- CP56Time2a, 7 Oktette: Millisekunden einschließlich Sekunden (0–59999), Minute mit IV-Bit, Stunde mit SU-Bit (Sommerzeit), Tag mit Wochentag (3 Bit), Monat, Jahr 0–99 [WS].
++| Element | Inhalt |
++| --- | --- |
++| Qualität | IV 0x80 ungültig, NT 0x40 nicht aktuell, SB 0x20 ersetzt, BL 0x10 blockiert; QDS zusätzlich OV 0x01 Überlauf [WS] |
++| DIQ | 0 und 3 unbestimmt, 1 AUS, 2 EIN |
++| NVA | 16 Bit mit Vorzeichen, Wert = Rohwert / 32768 |
++| SVA | 16 Bit mit Vorzeichen |
++| R32 | IEEE 754 einfach, niederwertiges Oktett zuerst |
++| CP56Time2a | 7 Oktette: ms inkl. Sekunden (0–59999), Minute + IV, Stunde + SU, Tag + Wochentag, Monat, Jahr 0–99 [WS] |
+ 
+-Bit-Layouts aller Elemente: `src/codec/elements.hpp`. Jede Bitposition ist durch die Referenz-ASDUs bestätigt.
++Bit-Layouts: `src/codec/elements.hpp`, bestätigt durch die Referenz-ASDUs in `tests/data/`.
+ 
+ ## Zeit
+ 
+-Die Norm legt nicht fest, ob Zeitmarken UTC oder Ortszeit sind; das ist ein Punkt der Interoperabilitätsliste. Der Codec trägt deshalb keine Zeitzone und führt IV, SU und den optionalen Wochentag ausdrücklich. Die Zeitbasis (UTC, fester Offset, Ortszeit mit SU-Bit) wird ein Parameter der Session-Schicht (N13).
++UTC oder Ortszeit ist nicht genormt, sondern Teil der Interoperabilitätsliste. Der Codec trägt keine Zeitzone; IV, SU und Wochentag sind eigene Felder. Die Library rechnet in UTC (N13).
+ 
+ ## Sicherheit
+ 
+-IEC 104 selbst bietet weder Integrität noch Authentifizierung noch Verschlüsselung. Vorgesehen ist TLS nach IEC 62351-3 Ed. 2 (2023) für TLS 1.2 und 1.3, mit Regeln zu Cipher-Suites, Resumption, Renegotiation und Key Update [62351]. Den Port überlässt die Norm dem Anwendungsprotokoll; IANA registriert TCP 19998 als „iec-104-sec“ [IANA]. Die Library bindet TLS über OpenSSL 3.x hinter einer schmalen Backend-Schnittstelle an (in Arbeit).
++| Punkt | Stand |
++| --- | --- |
++| IEC 104 | keine Integrität, Authentifizierung oder Verschlüsselung |
++| TLS | IEC 62351-3 Ed. 2 (2023), TLS 1.2/1.3 [62351]; Umsetzung über OpenSSL 3.x geplant |
++| Port | 2404 ohne TLS, 19998 mit TLS („iec-104-sec“) [IANA] |
+ 
+ ## Designfolgerungen
+ 
+ | Thema | Folgerung |
+ | --- | --- |
+-| Strikt und tolerant | Strikt ist Default (Normverhalten). Tolerant erlaubt CP24-Typen, ASDUs ohne Objekte und t3 = 0 |
+-| Nie toleriert | Länge über 253, mehr als ein U-Funktionsbit, falsche N(S), N(R) außerhalb des Fensters: das sind Fehler in der Rahmenstruktur oder der Datenintegrität |
+-| Dekodieren | verlustfrei, auch reservierte Bits bleiben erhalten; Kodieren schneidet nie ab (E5) |
+-| Zustandsmaschine | ohne I/O, mit von außen gelieferter Zeit; dadurch vollständig mit simulierter Zeit testbar |
+-| Tests | Unit-Tests mit Referenzbytes einer fremden Implementierung, Fuzzing von Codec und Zustandsmaschine, Selbsttest über TCP, Gegenprobe mit lib60870 als externer Gegenstelle |
++| strikt/tolerant | strikt ist Default; tolerant erlaubt CP24-Typen, ASDUs ohne Objekte, t3 = 0 |
++| nie toleriert | Länge > 253, mehrere U-Funktionsbits, falsche N(S), N(R) außerhalb des Fensters |
++| Dekodieren | verlustfrei, reservierte Bits bleiben erhalten; Kodieren schneidet nie ab (E5) |
++| Tests | Referenzbytes einer fremden Implementierung, Fuzzing, Selbsttest über TCP, Gegenprobe mit lib60870 |
+ 
+ ## Quellen
+ 
+diff --git a/docs/03_Quellen_APCI.md b/docs/03_Quellen_APCI.md
+index 38afbd0..03747a7 100644
+--- a/docs/03_Quellen_APCI.md
++++ b/docs/03_Quellen_APCI.md
+@@ -1,6 +1,6 @@
+-# Öffentliche Belege für die APCI-Regeln
++# Belege für die APCI-Regeln
+ 
+-Stand: 25.11.2026 · Anlass: Der Normtext lag bei der Entwicklung nicht vor (siehe `docs/05_Normfragen_und_Festlegungen.md`). Jede Regel der Zustandsmaschine (`src/apci/connection.cpp`, R1–R12) wird hier mit öffentlicher Quelle belegt oder als offen markiert.
++Stand: 25.11.2026 · Regeln R1–R12 in `src/apci/connection.cpp`.
+ 
+ ## Quellen
+ 
+@@ -14,7 +14,14 @@ Stand: 25.11.2026 · Anlass: Der Normtext lag bei der Entwicklung nicht vor (sie
+ | PRO | Protokollhandbuch eines Gateway-Herstellers: https://www.prosoft-technology.com/prosoft/download/14015/317164/file/PLX32_104S_Protocol_UM.pdf | Herstellerdoku |
+ | LIB | lib60870 User Guide (nur Verhaltenshinweis, kein Code übernommen): https://github.com/mz-automation/lib60870/blob/master/user_guide.adoc | sekundär |
+ 
+-Gliederung laut CON: 5.1 Schutz gegen Verlust und Verdopplung, 5.2 Testprozeduren, 5.3 Übertragungssteuerung mit Start/Stopp (Bild 17 gesteuerte, Bild 18 steuernde Station), 5.4 Portnummer, 5.5 maximale Zahl unquittierter I-Rahmen (k), 10 Redundante Verbindungen.
++| Abschnitt (CON) | Inhalt |
++| --- | --- |
++| 5.1 | Schutz gegen Verlust und Verdopplung |
++| 5.2 | Testprozeduren |
++| 5.3 | Start/Stopp (Bild 17 gesteuerte, Bild 18 steuernde Station) |
++| 5.4 | Portnummer |
++| 5.5 | max. unquittierte I-Rahmen (k) |
++| 10 | redundante Verbindungen |
+ 
+ ## Regeln und Belege
+ 
+@@ -36,15 +43,15 @@ Gliederung laut CON: 5.1 Schutz gegen Verlust und Verdopplung, 5.2 Testprozedure
+ | R11 | t3: Testrahmen nach langer Ruhe; Bereich 1 s–48 h. t3 = 0 (abgeschaltet) verlangen einzelne Anwenderrichtlinien; nur im toleranten Modus | ORA | „Time-out for sending test frames in case of a long idle state. Range 1 s to 48 h“ |
+ | R12 | STOPDT act: ohne offene I-Rahmen sofort bestätigen, sonst Zustand „Pending unconfirmed stopped“, Bestätigung nach S-Rahmen, der alles quittiert; dort I-Rahmen oder t1 → schließen | FIG17 | „STOPDT act[unconfirmed I-frames]“ → „S-frame [no unconfirmed I-frames] /Send STOPDT con“ |
+ 
+-## Offen (keine öffentliche Quelle)
++## Festlegungen ohne Beleg
+ 
+-| Thema | Annahme im Code |
++| Thema | Umsetzung |
+ | --- | --- |
+-| Bild 18 (steuernde Station) | I-Rahmen im Zustand gestoppt: strikt schließen, tolerant annehmen. Nach eigenem STOPDT act werden eintreffende I-Rahmen sofort per S-Rahmen quittiert, damit die Gegenstelle bestätigen kann (bekanntes Interop-Problem bei verzögerter Quittung) |
++| steuernde Station (Bild 18) | I-Rahmen im Zustand gestoppt: strikt schließen, tolerant annehmen. Nach eigenem STOPDT act sofort quittieren, damit die Gegenstelle bestätigen kann |
+ | Startbedingung von t3 | t3 läuft ab dem letzten empfangenen Rahmen beliebigen Formats |
+-| Gleichzeitige U-Rahmen act | Ein offener Testrahmen und ein offenes STARTDT/STOPDT werden getrennt mit t1 überwacht; ein Verbindungstest blockiert Start und Stopp nicht |
++| gleichzeitige U-Rahmen act | Test und STARTDT/STOPDT getrennt mit t1 überwacht; ein Test blockiert Start und Stopp nicht |
+ | N(R) außerhalb des Fensters | schließen |
+ | Erreichen von k | Senden anhalten (`IEC104_ERR_WOULD_BLOCK`), nicht schließen |
+ | Wortlaut „modulo 32768“ | aus 15 Bit abgeleitet |
+ 
+-Hinweis: FIG17 stammt aus dem Normentwurf (FDIS), nicht aus der veröffentlichten Fassung. Bei Zugang zum Normtext gegen 5.1–5.5 prüfen.
++FIG17 stammt aus dem Normentwurf (FDIS).
+diff --git a/docs/04_Selbsttest.md b/docs/04_Selbsttest.md
+index 2bdd411..494cf63 100644
+--- a/docs/04_Selbsttest.md
++++ b/docs/04_Selbsttest.md
+@@ -1,6 +1,6 @@
+ # Selbsttest und manuelle Tests
+ 
+-Diese Anleitung beschreibt, wie die Library ohne fremde Gegenstelle geprüft wird und wie die beiden Selbsttest-Programme für manuelle Tests gegen andere IEC-104-Geräte eingesetzt werden. Beide Programme nutzen ausschließlich die öffentliche C-Schnittstelle (`include/iec104/iec104.h`) und sind damit zugleich Beispiele für deren Verwendung.
++Zwei Programme prüfen die Library über TCP, gegeneinander oder gegen fremde Geräte. Sie nutzen nur die öffentliche C-API und dienen zugleich als Beispiel.
+ 
+ ## 1. Überblick
+ 
+@@ -123,7 +123,7 @@ Erwartung: Client `result: PASSED`; der Server meldet je Verbindung `connection
+ iec104_selftest_client --host <Gerät> --port 2404 --foreign --ca <gemeinsame Adresse> --idle 60
+ ```
+ 
+-Mit `--foreign` prüft der Client nur die Abläufe, nicht die Datenpunkte des Selbsttest-Servers: Verbindungsaufbau, STARTDT, Generalabfrage (Bestätigung und Beendigung, Anzahl der Objekte), Uhrzeitsynchronisation, Zählerabfrage, Ruhephase mit Verbindungstest und STOPDT. Lehnt das Gerät eine Anfrage normgerecht ab (Ursache 44 bis 47), meldet der Client „not supported (cause …)“; das gilt nicht als Fehler. Beispiel gegen einen Server, der keine Zählerabfrage kennt:
++Mit `--foreign` prüft der Client nur die Abläufe: Verbindung, STARTDT, Generalabfrage, Uhrzeit, Zählerabfrage, Ruhephase, STOPDT. Eine normgerechte Ablehnung (Ursache 44–47) meldet er als „not supported (cause …)“, nicht als Fehler:
+ 
+ ```
+   general interrogation ................ 14 objects
+@@ -206,6 +206,9 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
+ | `--k N`, `--w N` | Fenstergrößen | 12, 8 |
+ | `--tolerant` | bekannte Abweichungen zulassen | aus (strikt) |
+ | `--verbose` | jeden Zustandswechsel und jedes Objekt ausgeben | aus |
++| `--config F` | Parameter aus Datei F (`docs/06_Anleitung.md`, Abschnitt 5); Optionen auf der Kommandozeile überschreiben die Datei | – |
++| `--log STUFE` | Log der Library: error, warning, info, debug, trace (trace = jede APDU als Hexdump) | aus |
++| `--stats` | Zähler je Verbindung am Ende ausgeben | aus |
+ 
+ ## 6. Was der Selbsttest abdeckt und was nicht
+ 
+diff --git a/docs/05_Normfragen_und_Festlegungen.md b/docs/05_Normfragen_und_Festlegungen.md
+index b25f379..1d43380 100644
+--- a/docs/05_Normfragen_und_Festlegungen.md
++++ b/docs/05_Normfragen_und_Festlegungen.md
+@@ -1,14 +1,10 @@
+-# Offene Normfragen und technische Festlegungen
++# Normfragen und Festlegungen
+ 
+-Stand: 25.11.2026
++Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stellen zu N1–N13 sind mit `TODO(norm)` markiert; E1–E8 sind technische Festlegungen. Belege: `docs/02_Technik_und_Quellen.md`, `docs/03_Quellen_APCI.md`.
+ 
+-Die Library folgt IEC 60870-5-104 Ed. 2.1 einschließlich AMD1:2016. Der Normtext lag bei der Entwicklung nicht vor. Alle Regeln stützen sich auf öffentliche Quellen: Leseproben der Norm, die Interoperabilitätsliste (Abschnitt 9), den Wireshark-Dissector, Fachberichte und Herstellerdokumentation (siehe `docs/02_Technik_und_Quellen.md` und `docs/03_Quellen_APCI.md`).
++## Normfragen
+ 
+-Stellen im Code, die nur aus Sekundärquellen belegt sind, tragen den Kommentar `TODO(norm): …`. Dieses Dokument fasst die offenen Fragen zusammen (N1–N13) und hält die technischen Festlegungen fest, auf die der Code verweist (E1–E7). Sobald der Normtext verfügbar ist, werden die Punkte dagegen geprüft.
+-
+-## Offene Normfragen
+-
+-| Nr. | Thema (Normabschnitt) | Modul | Auswirkung | Umsetzung bis zur Klärung |
++| Nr. | Thema (Normabschnitt) | Modul | Auswirkung | Umsetzung |
+ | --- | --- | --- | --- | --- |
+ | N1 | Zustandsverhalten der Verbindung (104, Abschnitt 5) | apci | Wann I-Rahmen erlaubt sind, wann geschlossen wird | Regeln R1–R12 nach öffentlichen Belegen, siehe `docs/03_Quellen_APCI.md`; unbelegte Punkte (N(R) außerhalb des Fensters, Verhalten bei Erreichen von k, Startbedingung von t3) mit `TODO(norm)` |
+ | N2 | Bedeutung von t1 | apci | Einige Geräte überwachen mit t1 nur U-Rahmen | t1 überwacht I-Rahmen und U-Rahmen act (Bild 17 des Normentwurfs, Interoperabilitätsliste) |
+@@ -35,3 +31,4 @@ Stellen im Code, die nur aus Sekundärquellen belegt sind, tragen den Kommentar
+ | E5 | Dekodieren ist verlustfrei: auch reservierte Bits bleiben erhalten (z. B. RES1–RES4 der CP56Time2a). Kodieren prüft Wertebereiche und schneidet nie ab | Eine dekodierte ASDU ergibt beim erneuten Kodieren dieselben Oktette (wichtig für Gateways, Mitschnitte und den Fuzzer); Programmierfehler werden nicht zu falschen Daten auf der Leitung |
+ | E6 | Die Library testet sich selbst: Zustandsmaschinen im Speicher gekoppelt (ohne Netz) und Selbsttest-Programme über TCP | Prüfung ohne fremde Gegenstelle, Grundlage für manuelle Tests (`docs/04_Selbsttest.md`) |
+ | E7 | Befehlsmodell je IOA: ohne Befehlspunkte entscheidet die Anwendung allein; mit Befehlspunkten prüft die Library IOA, Typ, Select/Execute und Auswahl-Timeout, bevor die Anwendung gefragt wird. Eine Auswahl gilt je Verbindung | Bekannte Anforderungen von Gegenstellen (Select/Execute je Datenpunkt, nur Befehle mit Zeitmarke) werden Parameter statt Anwendungslogik |
++| E8 | Laufzeitmodell: kein interner Thread; die Anwendung ruft `*_poll()` in ihrem Thread, dort laufen auch alle Callbacks. Ein Handle gehört einem Thread | keine Sperren in der Library, vorhersagbares Verhalten; die Anwendung wählt selbst, ob Poll in einem eigenen Thread läuft |
+diff --git a/docs/06_Anleitung.md b/docs/06_Anleitung.md
+new file mode 100644
+index 0000000..167b01b
+--- /dev/null
++++ b/docs/06_Anleitung.md
+@@ -0,0 +1,203 @@
++# Anleitung: Library verwenden
++
++Stand: 25.11.2026 · Schnittstelle: `include/iec104/iec104.h` · Beispiele: `examples/`
++
++## 1. Einbinden
++
++Installieren:
++
++```bash
++cmake --preset release && cmake --build --preset release
++cmake --install build/release --prefix /opt/iec104
++```
++
++| Variante | Einstellung |
++| --- | --- |
++| statisch (Default) | – |
++| geteilt (`libiec104.so`) | `-DBUILD_SHARED_LIBS=ON` oder Preset `shared` |
++
++Eigenes CMake-Projekt:
++
++```cmake
++find_package(iec104 0.2 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
++target_link_libraries(meine_app PRIVATE iec104::iec104)
++```
++
++Ohne CMake: `-I/opt/iec104/include -L/opt/iec104/lib -liec104 -lstdc++ -lm`.
++
++## 2. Hello World
++
++Zwei Programme in `examples/`: ein Server mit einem Messwert und ein Client, der ihn abfragt.
++
++```bash
++cmake -S examples -B build-ex -DCMAKE_PREFIX_PATH=/opt/iec104 && cmake --build build-ex
++build-ex/hello_server 2404 &
++build-ex/hello_client 127.0.0.1 2404
++```
++
++Ausgabe des Clients:
++
++```
++state: stopped
++state: start pending
++state: started
++type  70  cause  4  station 1  IOA 0  value 0
++type 100  cause  7  station 1  IOA 0  value 0
++type  13  cause 20  station 1  IOA 100  value 2
++type 100  cause 10  station 1  IOA 0  value 0
++type  13  cause  3  station 1  IOA 100  value 3
++type  13  cause  3  station 1  IOA 100  value 4
++type  13  cause  3  station 1  IOA 100  value 5
++```
++
++| Zeile | Bedeutung |
++| --- | --- |
++| type 70, cause 4 | Ende der Initialisierung (Server nach STARTDT) |
++| type 100, cause 7 | Bestätigung der Generalabfrage |
++| type 13, cause 20 | Messwert aus der Generalabfrage |
++| type 100, cause 10 | Ende der Generalabfrage |
++| type 13, cause 3 | spontane Änderung |
++
++### Server (`examples/hello_server.c`, Kern)
++
++```c
++iec104_callbacks callbacks = {0};
++callbacks.on_command = on_command;               /* Befehle: 1 = annehmen, 0 = ablehnen */
++
++iec104_server* server = NULL;
++iec104_server_create(NULL, &callbacks, &server); /* NULL = Normwerte (t0..t3, k, w) */
++
++iec104_object value = {0};
++value.type = 13;                                 /* M_ME_NC_1, Gleitkomma */
++value.ioa = 100;
++iec104_server_add_point(server, 1, &value, 0x0001);  /* Station 1, Abfragegruppe 1 */
++
++iec104_server_listen(server, NULL, 2404);
++for (;;) {
++    iec104_server_poll(server, 100);             /* Empfang, Timer, Antworten, Callbacks */
++    value.value += 1.0;
++    iec104_server_update(server, 1, &value);     /* spontan an alle gestarteten Verbindungen */
++}
++```
++
++Generalabfrage, Zählerabfrage, Lesebefehl, Testbefehl und STARTDT/STOPDT beantwortet die Library selbst.
++
++### Client (`examples/hello_client.c`, Kern)
++
++```c
++iec104_callbacks callbacks = {0};
++callbacks.on_state = on_state;                   /* STOPPED, STARTED, CLOSED, ... */
++callbacks.on_object = on_object;                 /* jedes empfangene Objekt als Wert */
++
++iec104_client* client = NULL;
++iec104_client_create(NULL, &callbacks, &client);
++iec104_client_connect(client, "127.0.0.1", 2404);
++for (;;) {
++    iec104_client_poll(client, 100);
++    if (state == IEC104_LINK_STOPPED && !started)     { iec104_client_start(client); started = 1; }
++    if (state == IEC104_LINK_STARTED && !interrogated) {
++        iec104_client_interrogation(client, 1, 20);     /* Station 1, alle Punkte */
++        interrogated = 1;
++    }
++}
++```
++
++## 3. Grundbegriffe
++
++| Begriff | Bedeutung |
++| --- | --- |
++| Handle | `iec104_server*` (gesteuerte Station, beliebig viele Verbindungen) oder `iec104_client*` (steuernde Station, eine Verbindung) |
++| Poll | `iec104_server_poll()` / `iec104_client_poll()` erledigt alles: Empfang, Timer, Senden, Callbacks. Regelmäßig aufrufen (z. B. alle 10–100 ms) |
++| Callbacks | `on_state`, `on_object`, `on_command` (Server), `on_command_result` (Client), `on_asdu` (Rohdaten); jeder Zeiger darf NULL sein |
++| Objekt | `iec104_object`: Typ, IOA, Wert, Qualität, Zeitmarke, Qualifier; Belegung je Typ siehe Tabelle im Header |
++| Verbindungs-Id | `connection` in Callbacks und Server-Funktionen; Client immer 1 |
++| Status | jede Funktion liefert `iec104_status`; Text mit `iec104_status_string()` |
++
++Zustände einer Verbindung:
++
++```
++CONNECTING (nur Client) -> STOPPED -> (STARTDT) -> STARTED -> (STOPDT) -> STOPPED
++                                  jederzeit -> CLOSED (Grund: iec104_close_reason)
++```
++
++Daten fließen nur in STARTED.
++
++## 4. Typische Aufgaben
++
++### Server
++
++| Aufgabe | Aufruf |
++| --- | --- |
++| Datenpunkt anlegen | `iec104_server_add_point(server, station, &obj, gruppen)` |
++| Wert ändern und spontan melden | `iec104_server_update(server, station, &obj)` |
++| zyklisch oder mit eigener Ursache senden | `iec104_server_send(server, 0, station, IEC104_COT_PERIODIC, objs, n)` |
++| Befehle entscheiden | `on_command` liefert 1 (positive Bestätigung, danach Beendigung) oder 0 |
++| Befehlsmodell je IOA | `iec104_server_add_command(server, station, ioa, typ, IEC104_COMMAND_SELECT_EXECUTE, 5000)` |
++| verspätete Befehle verwerfen | `iec104_server_options.max_command_delay_ms` |
++| Ende der Initialisierung, Beendigung abschalten | `iec104_server_options` |
++
++### Client
++
++| Aufgabe | Aufruf |
++| --- | --- |
++| Generalabfrage | `iec104_client_interrogation(client, station, 20)` (Gruppe n: 20 + n) |
++| Zählerabfrage | `iec104_client_counter_interrogation(client, station, 5, 0)` |
++| Uhrzeit setzen | `iec104_client_clock_sync(client, station, &zeit)`; `iec104_time_from_unix_ms()` |
++| Befehl direkt | `iec104_client_send_command(client, station, &cmd)` |
++| Befehl mit Select/Execute | `iec104_client_select_execute(client, station, &cmd)` |
++| Ergebnis eines Befehls | `on_command_result`: `TERMINATED`, `REJECTED`, `NO_CONFIRMATION`, … |
++| Timeouts für Befehle | `iec104_client_set_options()` |
++
++Beispiel Befehl:
++
++```c
++iec104_object cmd = {0};
++cmd.type = 45;      /* C_SC_NA_1 Einzelbefehl */
++cmd.ioa = 6000;
++cmd.value = 1;      /* EIN */
++iec104_client_select_execute(client, 1, &cmd);   /* Ergebnis kommt über on_command_result */
++```
++
++### Beide
++
++| Aufgabe | Aufruf |
++| --- | --- |
++| Timer, k, w, ASDU-Profil | `iec104_link_config` vor `*_create()` |
++| Log | `iec104_server_set_log()` / `iec104_client_set_log()`; Stufe `IEC104_LOG_TRACE` zeigt jede APDU als Hexdump |
++| Statistik | `iec104_server_get_stats(server, id, &s)` / `iec104_client_get_stats(client, &s)` |
++| Rohdaten (Typen außerhalb der Werte-API) | `on_asdu`, `iec104_server_send_asdu()`, `iec104_client_send_asdu()` |
++
++## 5. Konfigurationsdatei
++
++```ini
++# Gegenstelle mit langen Timern
++host = 10.0.0.5
++port = 2404
++t1 = 250
++t2 = 240
++t3 = 255
++max_command_delay = 10
++confirmation_timeout = 20
++```
++
++```c
++iec104_config cfg;
++iec104_config_init(&cfg);
++int zeile = 0;
++if (iec104_config_load("anlage.conf", &cfg, &zeile) != IEC104_OK) { /* Fehler in Zeile 'zeile' */ }
++iec104_client_create(&cfg.link, &callbacks, &client);
++iec104_client_set_options(client, &cfg.client);
++iec104_client_connect(client, cfg.host, cfg.port);
++```
++
++Alle Schlüssel: Kommentar zu `iec104_config_load()` im Header. Zeiten in Sekunden.
++
++## 6. Regeln
++
++| Regel | Grund |
++| --- | --- |
++| Ein Handle wird nur von einem Thread benutzt | keine internen Sperren; Poll, Senden und Callbacks laufen im Thread der Anwendung (E8) |
++| In Callbacks dürfen Sende-, Start- und Stopp-Funktionen desselben Handles aufgerufen werden, `*_destroy()` nicht | das Handle wird gerade benutzt |
++| `IEC104_ERR_WOULD_BLOCK` beim Senden: pollen und erneut senden | Fenster k voll |
++| Zeiger in Callbacks gelten nur während des Aufrufs | Puffer der Library |
++| Zeitmarken: UTC | `iec104_time` hat keine Zeitzone (N13) |
+diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
+new file mode 100644
+index 0000000..b0e5fc6
+--- /dev/null
++++ b/examples/CMakeLists.txt
+@@ -0,0 +1,19 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# Examples. Builds inside the library project, or on its own against an
++# installed library:
++#   cmake -S examples -B build-examples -DCMAKE_PREFIX_PATH=<install prefix>
++cmake_minimum_required(VERSION 3.21)
++project(iec104_examples LANGUAGES C)
++
++if(NOT TARGET iec104::iec104)
++    find_package(iec104 REQUIRED)
++endif()
++
++foreach(name hello_server hello_client)
++    add_executable(${name} ${name}.c)
++    target_link_libraries(${name} PRIVATE iec104::iec104)
++endforeach()
+diff --git a/examples/hello_client.c b/examples/hello_client.c
+new file mode 100644
+index 0000000..93a3c8c
+--- /dev/null
++++ b/examples/hello_client.c
+@@ -0,0 +1,82 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/*
++ * hello_client: smallest useful IEC 104 client (controlling station).
++ *
++ * Connects, starts data transfer, sends a general interrogation to station 1,
++ * prints every received object, and ends when the interrogation is
++ * terminated and three spontaneous values have arrived.
++ *
++ *   hello_client [host] [port]     default 127.0.0.1 2404
++ *
++ * Exit code 0 = done, 1 = connection failed or closed.
++ */
++#include <iec104/iec104.h>
++#include <stdio.h>
++#include <stdlib.h>
++
++static int interrogation_done = 0;
++static int spontaneous = 0;
++static iec104_link_state state = IEC104_LINK_CONNECTING;
++
++static void on_state(void* user, uint32_t connection, iec104_link_state s,
++                     iec104_close_reason reason) {
++    (void)user;
++    (void)connection;
++    state = s;
++    printf("state: %s", iec104_link_state_string(s));
++    if (s == IEC104_LINK_CLOSED) {
++        printf(" (%s)", iec104_close_reason_string(reason));
++    }
++    printf("\n");
++}
++
++static void on_object(void* user, uint32_t connection, const iec104_asdu_info* info,
++                      const iec104_object* object) {
++    (void)user;
++    (void)connection;
++    printf("type %3u  cause %2u  station %u  IOA %u  value %g\n", info->type, info->cause,
++           info->common_address, object->ioa, object->value);
++    if (info->type == 100 && info->cause == IEC104_COT_ACTIVATION_TERMINATION) {
++        interrogation_done = 1;
++    }
++    if (info->cause == IEC104_COT_SPONTANEOUS) {
++        ++spontaneous;
++    }
++}
++
++int main(int argc, char** argv) {
++    const char* host = argc > 1 ? argv[1] : "127.0.0.1";
++    const uint16_t port = argc > 2 ? (uint16_t)atoi(argv[2]) : IEC104_DEFAULT_PORT;
++
++    iec104_callbacks callbacks = {0};
++    callbacks.on_state = on_state;
++    callbacks.on_object = on_object;
++
++    iec104_client* client = NULL;
++    if (iec104_client_create(NULL, &callbacks, &client) != IEC104_OK ||
++        iec104_client_connect(client, host, port) != IEC104_OK) {
++        return 1;
++    }
++
++    int started = 0;
++    int interrogated = 0;
++    while (state != IEC104_LINK_CLOSED && !(interrogation_done && spontaneous >= 3)) {
++        iec104_client_poll(client, 100);
++        if (state == IEC104_LINK_STOPPED && !started) {
++            iec104_client_start(client); /* STARTDT */
++            started = 1;
++        }
++        if (state == IEC104_LINK_STARTED && !interrogated) {
++            iec104_client_interrogation(client, 1, 20); /* station 1, QOI 20 = all points */
++            interrogated = 1;
++        }
++    }
++    const int ok = state != IEC104_LINK_CLOSED;
++    iec104_client_destroy(client);
++    return ok ? 0 : 1;
++}
+diff --git a/examples/hello_server.c b/examples/hello_server.c
+new file mode 100644
+index 0000000..a9a9d31
+--- /dev/null
++++ b/examples/hello_server.c
+@@ -0,0 +1,83 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/*
++ * hello_server: smallest useful IEC 104 server (controlled station).
++ *
++ * One station (common address 1) with one measured value (IOA 100, short
++ * float). The value rises every second and is sent spontaneously; the
++ * library answers a general interrogation by itself. Commands are logged
++ * and accepted.
++ *
++ *   hello_server [port]       default port 2404, 0 = any free port
++ */
++#include <iec104/iec104.h>
++#include <signal.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <time.h>
++
++static volatile sig_atomic_t stop = 0;
++static void on_signal(int sig) {
++    (void)sig;
++    stop = 1;
++}
++
++static int on_command(void* user, uint32_t connection, const iec104_asdu_info* info,
++                      const iec104_object* command) {
++    (void)user;
++    printf("connection %u: command type %u, IOA %u, value %g\n", connection, info->type,
++           command->ioa, command->value);
++    return 1; /* accept */
++}
++
++static void on_log(void* user, iec104_log_level level, uint32_t connection, const char* message) {
++    (void)user;
++    printf("[%s] %u: %s\n", iec104_log_level_string(level), connection, message);
++}
++
++int main(int argc, char** argv) {
++    const uint16_t port = argc > 1 ? (uint16_t)atoi(argv[1]) : IEC104_DEFAULT_PORT;
++
++    iec104_callbacks callbacks = {0};
++    callbacks.on_command = on_command;
++
++    iec104_server* server = NULL;
++    if (iec104_server_create(NULL, &callbacks, &server) != IEC104_OK) { /* NULL = standard values */
++        return 1;
++    }
++    iec104_server_set_log(server, IEC104_LOG_INFO, on_log, NULL);
++
++    iec104_object value = {0};
++    value.type = 13; /* M_ME_NC_1: short floating point measured value */
++    value.ioa = 100;
++    value.value = 0.0;
++    iec104_server_add_point(server, 1, &value, 0x0001); /* station 1, interrogation group 1 */
++
++    iec104_status st = iec104_server_listen(server, NULL, port);
++    if (st != IEC104_OK) {
++        fprintf(stderr, "listen: %s\n", iec104_status_string(st));
++        iec104_server_destroy(server);
++        return 1;
++    }
++    printf("listening on port %u\n", iec104_server_port(server));
++    fflush(stdout);
++
++    signal(SIGINT, on_signal);
++    signal(SIGTERM, on_signal);
++    time_t last = time(NULL);
++    while (!stop) {
++        iec104_server_poll(server, 100); /* receive, timers, answers, callbacks */
++        if (time(NULL) != last) {        /* once per second: new value, sent spontaneously */
++            last = time(NULL);
++            value.value += 1.0;
++            iec104_server_update(server, 1, &value);
++        }
++        fflush(stdout);
++    }
++    iec104_server_destroy(server);
++    return 0;
++}
+diff --git a/include/iec104/iec104.h b/include/iec104/iec104.h
+index 3607072..7c2e9a3 100644
+--- a/include/iec104/iec104.h
++++ b/include/iec104/iec104.h
+@@ -61,7 +61,7 @@ extern "C" {
+ /** @brief Major version of this header. Incompatible API changes increment it. */
+ #define IEC104_VERSION_MAJOR 0
+ /** @brief Minor version of this header. Compatible additions increment it. */
+-#define IEC104_VERSION_MINOR 1
++#define IEC104_VERSION_MINOR 2
+ /** @brief Patch version of this header. Fixes without API change increment it. */
+ #define IEC104_VERSION_PATCH 0
+ 
+@@ -403,6 +403,50 @@ typedef struct iec104_callbacks {
+                               iec104_command_result result);
+ } iec104_callbacks;
+ 
++/* ------------------------------------------------------------------------- */
++/* Logging and statistics                                                    */
++/* ------------------------------------------------------------------------- */
++
++/** @brief Log levels, from most to least important. */
++/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
++typedef enum iec104_log_level {
++    IEC104_LOG_ERROR = 0,   /**< Connection lost because of an error, protocol violation. */
++    IEC104_LOG_WARNING = 1, /**< Unusual: negative answers, discarded commands, config warnings. */
++    IEC104_LOG_INFO = 2,    /**< Connections, start/stop, command results. */
++    IEC104_LOG_DEBUG = 3,   /**< Every state change, received requests. */
++    IEC104_LOG_TRACE = 4    /**< Every APDU as hex dump. */
++} iec104_log_level;
++
++/**
++ * @brief Receives one log message (English, one line, without newline).
++ * @param connection Connection id, 0 for messages that concern no connection.
++ */
++typedef void (*iec104_log_fn)(void* user, iec104_log_level level, uint32_t connection,
++                              const char* message);
++
++/** @brief Short name of a log level ("error", "warning", ...). Never NULL. */
++IEC104_API const char* iec104_log_level_string(iec104_log_level level);
++
++/** @brief Counters of one connection since it was opened. */
++typedef struct iec104_link_stats {
++    uint64_t i_frames_sent;     /**< I-frames (ASDUs) sent. */
++    uint64_t i_frames_received; /**< I-frames (ASDUs) received. */
++    uint64_t s_frames_sent;     /**< S-frames sent. */
++    uint64_t s_frames_received; /**< S-frames received. */
++    uint64_t u_frames_sent;     /**< U-frames (STARTDT, STOPDT, TESTFR) sent. */
++    uint64_t u_frames_received; /**< U-frames received. */
++    uint64_t bytes_sent;        /**< Octets of all sent APDUs. */
++    uint64_t bytes_received;    /**< Octets of all received APDUs. */
++    uint64_t requests;          /**< Server: interrogations, reads, tests answered. Client: 0. */
++    uint64_t
++        commands_accepted; /**< Server: accepted by on_command. Client: confirmed or executed. */
++    uint64_t commands_rejected;  /**< Server: rejected by on_command. Client: negative answer. */
++    uint64_t commands_discarded; /**< Server: older than the maximum command delay.
++                                      Client: no confirmation or termination in time. */
++    uint64_t negative_answers;   /**< Server: sent. Client: received. */
++    uint32_t send_queue;         /**< Server: ASDUs waiting for the window. Client: 0. */
++} iec104_link_stats;
++
+ /* ------------------------------------------------------------------------- */
+ /* Server (controlled station)                                               */
+ /* ------------------------------------------------------------------------- */
+@@ -563,6 +607,23 @@ IEC104_API iec104_status iec104_server_send(iec104_server* server, uint32_t conn
+                                             uint16_t common_address, uint8_t cause,
+                                             const iec104_object* objects, size_t count);
+ 
++/**
++ * @brief Sets the log callback; messages up to @p max_level are passed on.
++ *
++ * Configuration warnings (t2 >= t1, w > 2/3 k) are reported at once.
++ * @p fn NULL switches logging off.
++ */
++IEC104_API void iec104_server_set_log(iec104_server* server, iec104_log_level max_level,
++                                      iec104_log_fn fn, void* user);
++
++/**
++ * @brief Counters of one connection.
++ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL; IEC104_ERR_WRONG_STATE
++ *         if the connection does not exist (any more).
++ */
++IEC104_API iec104_status iec104_server_get_stats(const iec104_server* server, uint32_t connection,
++                                                 iec104_link_stats* out);
++
+ /** @brief Closes all connections and the listening socket and frees the handle. NULL is ignored. */
+ IEC104_API void iec104_server_destroy(iec104_server* server);
+ 
+@@ -673,6 +734,58 @@ IEC104_API iec104_link_state iec104_client_state(const iec104_client* client);
+ /** @brief Closes the connection (reported as IEC104_CLOSE_LOCAL on the next poll). */
+ IEC104_API void iec104_client_close(iec104_client* client);
+ 
++/** @brief As iec104_server_set_log(). */
++IEC104_API void iec104_client_set_log(iec104_client* client, iec104_log_level max_level,
++                                      iec104_log_fn fn, void* user);
++
++/**
++ * @brief Counters of the current (or last) connection.
++ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL; IEC104_ERR_WRONG_STATE
++ *         before the first connect.
++ */
++IEC104_API iec104_status iec104_client_get_stats(const iec104_client* client,
++                                                 iec104_link_stats* out);
++
++/* ------------------------------------------------------------------------- */
++/* Configuration file                                                        */
++/* ------------------------------------------------------------------------- */
++
++/** @brief Everything a configuration file can set. */
++typedef struct iec104_config {
++    iec104_link_config link;      /**< Timers, windows, ASDU profile. */
++    iec104_server_options server; /**< Server behaviour. */
++    iec104_client_options client; /**< Client time limits. */
++    char host[256];               /**< Address: server = bind address, client = peer. */
++    uint16_t port;                /**< TCP port. */
++} iec104_config;
++
++/** @brief Defaults of all parts (standard values, host "", port 2404). Does nothing for NULL. */
++IEC104_API void iec104_config_init(iec104_config* config);
++
++/**
++ * @brief Reads a configuration file into @p config (keys not in the file keep their value).
++ *
++ * Format: one `key = value` per line; `#` or `;` starts a comment. Times in
++ * seconds (fractions allowed). Keys:
++ *
++ * | key | field |
++ * |-----|-------|
++ * | host, port | host, port |
++ * | t0, t1, t2, t3 | link timers (s) |
++ * | k, w, tolerant | link |
++ * | cot_length, ca_length, ioa_length, max_asdu_length, originator | link (ASDU profile) |
++ * | send_end_of_init, command_termination, cause_of_init | server |
++ * | max_command_delay | server (s) |
++ * | confirmation_timeout, termination_timeout, expect_termination | client (s) |
++ *
++ * @param error_line Receives the line number of the first error (0 if none); may be NULL.
++ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, an unknown key or
++ *         a malformed line; IEC104_ERR_OUT_OF_RANGE for a value outside its
++ *         type; IEC104_ERR_IO if the file cannot be read.
++ */
++IEC104_API iec104_status iec104_config_load(const char* path, iec104_config* config,
++                                            int* error_line);
++
+ /** @brief Closes the connection and frees the handle. NULL is ignored. */
+ IEC104_API void iec104_client_destroy(iec104_client* client);
+ 
+diff --git a/src/apci/connection.cpp b/src/apci/connection.cpp
+index 73bd5a3..eba0bc6 100644
+--- a/src/apci/connection.cpp
++++ b/src/apci/connection.cpp
+@@ -9,11 +9,10 @@
+  * @brief Implementation of the APCI state machine.
+  *
+  * Rules implemented here (R1..R12 are referenced in the code and in the
+- * tests, tests/test_apci_connection.cpp). The normative text of clause 5 is
+- * not available; docs/03_Quellen_APCI.md lists the public evidence per rule
+- * (amendment 1 sample, figure 17 of the draft standard, interoperability
+- * list 9.6, technical reports). Clause numbers follow the public table of
+- * contents of edition 2.1 (5.1 loss/duplication, 5.2 test, 5.3 start/stop,
++ * tests, tests/test_apci_connection.cpp). docs/03_Quellen_APCI.md lists the
++ * evidence per rule (amendment 1, figure 17 of the draft standard,
++ * interoperability list 9.6, technical reports). Clause numbers follow the
++ * table of contents of edition 2.1 (5.1 loss/duplication, 5.2 test, 5.3 start/stop,
+  * 5.5 k).
+  *
+  *   R1  I-frames only while data transfer is started. The controlled
+@@ -40,7 +39,7 @@
+  *       are acknowledged, otherwise after the S-frame that acknowledges the
+  *       rest; an I-frame in between closes (figure 17). The controlling
+  *       station acknowledges at once what it receives after its STOPDT act
+- *       (own decision, figure 18 is not public).
++ *       (own decision; figure 18 covers the controlling station).
+  *
+  * Layer: apci (sans-I/O).
+  */
+@@ -158,6 +157,21 @@ std::size_t Connection::receive(const std::uint8_t* data, std::size_t size, Time
+             fail(CloseReason::MalformedFrame);
+             return size;
+         }
++        // Count and trace before handling: a frame that closes the
++        // connection is still part of the record.
++        switch (apci.format) {
++        case FrameFormat::I:
++            ++stats_.i_received;
++            break;
++        case FrameFormat::S:
++            ++stats_.s_received;
++            break;
++        case FrameFormat::U:
++            ++stats_.u_received;
++            break;
++        }
++        stats_.bytes_received += rx_fill_;
++        trace(false, rx_.data(), rx_fill_);
+         handle_frame(rx_.data(), apci, now);
+         rx_fill_ = 0;
+     }
+@@ -198,7 +212,7 @@ void Connection::handle_i_frame(const std::uint8_t* frame, const codec::Apci& ap
+     // accepts frames the peer sent before it saw the STOPDT act; the
+     // controlled station must not receive data after STOPDT act (figure 17).
+     // Tolerant mode accepts data outside these states.
+-    // TODO(norm): 5.3, figure 18 (controlling station) is not public.
++    // TODO(norm): 5.3, figure 18 (controlling station).
+     const bool allowed = state_ == State::Started ||
+                          (state_ == State::StopPending && config_.role == Role::Controlling);
+     if (!allowed && config_.strict) {
+@@ -443,6 +457,9 @@ iec104_status Connection::send_asdu(const std::uint8_t* asdu, std::size_t length
+     }
+     (void)append_output(header.data(), header.size());
+     (void)append_output(asdu, length);
++    // The frame is contiguous at the end of the output buffer.
++    const std::size_t frame_length = codec::kApciLength + length;
++    count_sent(FrameFormat::I, &out_[out_fill_ - frame_length], frame_length);
+ 
+     // R10: remember when the frame left, t1 runs from here.
+     sent_at_[(sent_head_ + unacknowledged()) % sent_at_.size()] = now;
+@@ -462,6 +479,7 @@ bool Connection::send_u(UFunction function, TimeMs now) noexcept {
+         !append_output(frame.data(), frame.size())) {
+         return false;
+     }
++    count_sent(FrameFormat::U, frame.data(), frame.size());
+     // R10: every act is supervised by t1 until its confirmation arrives.
+     // Start/stop and the link test are supervised separately: a test may
+     // run while STARTDT or STOPDT is open and the other way round.
+@@ -480,11 +498,35 @@ bool Connection::send_s(TimeMs /*now*/) noexcept {
+         !append_output(frame.data(), frame.size())) {
+         return false;
+     }
++    count_sent(FrameFormat::S, frame.data(), frame.size());
+     unacked_rx_ = 0;
+     t2_deadline_ = 0;
+     return true;
+ }
+ 
++void Connection::count_sent(FrameFormat format, const std::uint8_t* apdu,
++                            std::size_t length) noexcept {
++    switch (format) {
++    case FrameFormat::I:
++        ++stats_.i_sent;
++        break;
++    case FrameFormat::S:
++        ++stats_.s_sent;
++        break;
++    case FrameFormat::U:
++        ++stats_.u_sent;
++        break;
++    }
++    stats_.bytes_sent += length;
++    trace(true, apdu, length);
++}
++
++void Connection::trace(bool outgoing, const std::uint8_t* apdu, std::size_t length) const noexcept {
++    if (trace_fn_ != nullptr) {
++        trace_fn_(trace_context_, outgoing, apdu, length);
++    }
++}
++
+ bool Connection::append_output(const std::uint8_t* data, std::size_t size) noexcept {
+     if (kOutputCapacity - out_fill_ < size) {
+         // Only possible if the caller never takes the output: control frames
+diff --git a/src/apci/connection.hpp b/src/apci/connection.hpp
+index 2a0c0ac..7deaf34 100644
+--- a/src/apci/connection.hpp
++++ b/src/apci/connection.hpp
+@@ -100,6 +100,28 @@ struct Event {
+     std::array<std::uint8_t, codec::kMaxAsduLength> asdu{}; ///< AsduReceived: the ASDU.
+ };
+ 
++/** @brief Counters of one connection (frames by format, octets). */
++struct ConnectionStats {
++    std::uint64_t i_sent{0};         ///< I-frames sent.
++    std::uint64_t i_received{0};     ///< I-frames received.
++    std::uint64_t s_sent{0};         ///< S-frames sent.
++    std::uint64_t s_received{0};     ///< S-frames received.
++    std::uint64_t u_sent{0};         ///< U-frames sent.
++    std::uint64_t u_received{0};     ///< U-frames received.
++    std::uint64_t bytes_sent{0};     ///< Octets of all sent APDUs.
++    std::uint64_t bytes_received{0}; ///< Octets of all received APDUs.
++};
++
++/**
++ * @brief Observer of every complete APDU (for a raw data trace).
++ *
++ * @param context  Value given to set_trace().
++ * @param outgoing true for a frame this side sends, false for a received one.
++ * @param apdu     The complete APDU, valid only during the call.
++ */
++using TraceFn = void (*)(void* context, bool outgoing, const std::uint8_t* apdu,
++                         std::size_t length);
++
+ /**
+  * @brief Transmission control of one connection (see file comment).
+  *
+@@ -204,12 +226,25 @@ class Connection {
+     [[nodiscard]] std::uint16_t unacknowledged() const noexcept;
+     /** @brief True if send_asdu() would currently accept an ASDU of maximum length. */
+     [[nodiscard]] bool can_send() const noexcept;
++    /** @brief Counters since init(). */
++    [[nodiscard]] const ConnectionStats& stats() const noexcept { return stats_; }
++
++    /**
++     * @brief Installs a trace observer (NULL = none). Call after init(), which resets it.
++     */
++    void set_trace(TraceFn fn, void* context) noexcept {
++        trace_fn_ = fn;
++        trace_context_ = context;
++    }
+ 
+   private:
+     static constexpr std::size_t kEventCapacity = 8;
+     static constexpr std::size_t kOutputCapacity = 4096;
+ 
+     // Helpers, see connection.cpp.
++    void trace(bool outgoing, const std::uint8_t* apdu, std::size_t length) const noexcept;
++    void count_sent(codec::FrameFormat format, const std::uint8_t* apdu,
++                    std::size_t length) noexcept;
+     void handle_frame(const std::uint8_t* frame, const codec::Apci& apci, TimeMs now) noexcept;
+     void handle_i_frame(const std::uint8_t* frame, const codec::Apci& apci, TimeMs now) noexcept;
+     void handle_u_frame(codec::UFunction function, TimeMs now) noexcept;
+@@ -255,6 +290,9 @@ class Connection {
+     std::array<std::uint8_t, kOutputCapacity> out_{};
+     std::size_t out_fill_{0};
+     std::array<Event, kEventCapacity> events_{};
++    ConnectionStats stats_{};
++    TraceFn trace_fn_{nullptr};
++    void* trace_context_{nullptr};
+     std::size_t event_head_{0};
+     std::size_t event_count_{0};
+ };
+diff --git a/src/api/client.cpp b/src/api/client.cpp
+index ae36e32..4e0ab10 100644
+--- a/src/api/client.cpp
++++ b/src/api/client.cpp
+@@ -22,6 +22,7 @@
+ 
+ #include <array>
+ #include <new>
++#include <string>
+ 
+ using namespace iec104;
+ 
+@@ -45,10 +46,22 @@ struct iec104_client : api::CallbackSink {
+ 
+     session::CommandTracker tracker;
+     session::CommandTimeouts timeouts;
++    iec104_link_stats counters{};   // command and answer counters of the client
++    iec104_link_stats last_stats{}; // all counters of the last closed connection
++    bool had_connection{false};
+ 
+     void on_asdu(std::uint32_t id, const std::uint8_t* asdu, std::size_t length) override {
+         api::CallbackSink::on_asdu(id, asdu, length);
+         deliver_objects(id, asdu, length, profile);
++        codec::AsduHeader header{};
++        std::size_t header_length = 0;
++        if (codec::decode_asdu_header(asdu, length, profile, header, header_length) == IEC104_OK &&
++            header.negative) {
++            ++counters.negative_answers;
++            logger().write(IEC104_LOG_WARNING, id,
++                           "negative answer: type " + std::to_string(header.type_id) + ", cause " +
++                               std::to_string(header.cause));
++        }
+         if (tracker.open() == 0U) {
+             return;
+         }
+@@ -82,13 +95,45 @@ struct iec104_client : api::CallbackSink {
+     void on_closed(std::uint32_t id, transport::LinkCloseReason reason,
+                    apci::CloseReason protocol_reason) override {
+         api::CallbackSink::on_closed(id, reason, protocol_reason);
++        if (link() != nullptr) {
++            last_stats = stats_of(*link());
++        }
+         std::vector<session::CommandOutcome> outcomes;
+         tracker.connection_lost(outcomes);
+         report(outcomes);
+     }
+ 
+-    // Passes finished commands to on_command_result.
+-    void report(const std::vector<session::CommandOutcome>& outcomes) const {
++    // All counters of @p l plus the client's own.
++    [[nodiscard]] iec104_link_stats stats_of(const transport::Link& l) const noexcept {
++        iec104_link_stats s = counters;
++        api::copy_link_stats(l, s);
++        return s;
++    }
++
++    // Counts, logs and passes finished commands to on_command_result.
++    void report(const std::vector<session::CommandOutcome>& outcomes) {
++        for (const session::CommandOutcome& o : outcomes) {
++            switch (o.result) {
++            case session::CommandResult::Confirmed:
++            case session::CommandResult::Terminated:
++            case session::CommandResult::Selected:
++                ++counters.commands_accepted;
++                break;
++            case session::CommandResult::Rejected:
++                ++counters.commands_rejected;
++                break;
++            case session::CommandResult::NoConfirmation:
++            case session::CommandResult::NoTermination:
++                ++counters.commands_discarded;
++                break;
++            case session::CommandResult::ConnectionLost:
++                break;
++            }
++            logger().write(IEC104_LOG_INFO, kClientLinkId,
++                           "command type " + std::to_string(o.type) + " ioa " +
++                               std::to_string(o.object.ioa) + ": " +
++                               iec104_command_result_string(to_c(o.result)));
++        }
+         if (callbacks().on_command_result == nullptr) {
+             return;
+         }
+@@ -210,7 +255,12 @@ iec104_status iec104_client_connect(iec104_client* client, const char* host, uin
+     if (init != IEC104_OK) {
+         return init;
+     }
++    link->set_trace(client);
++    client->logger().write(IEC104_LOG_INFO, kClientLinkId,
++                           "connecting to " + std::string(host) + ":" + std::to_string(port));
+     client->links.push_back(std::move(link));
++    client->had_connection = true;
++    client->counters = iec104_link_stats{};
+     return IEC104_OK;
+ }
+ 
+@@ -341,6 +391,30 @@ void iec104_client_close(iec104_client* client) {
+     }
+ }
+ 
++void iec104_client_set_log(iec104_client* client, iec104_log_level max_level, iec104_log_fn fn,
++                           void* user) {
++    if (client == nullptr) {
++        return;
++    }
++    client->logger().set(max_level, fn, user);
++    api::log_config_warnings(client->config, client->logger());
++}
++
++iec104_status iec104_client_get_stats(const iec104_client* client, iec104_link_stats* out) {
++    if (client == nullptr || out == nullptr) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    if (!client->links.empty()) {
++        *out = client->stats_of(*client->links.front());
++        return IEC104_OK;
++    }
++    if (!client->had_connection) {
++        return IEC104_ERR_WRONG_STATE;
++    }
++    *out = client->last_stats;
++    return IEC104_OK;
++}
++
+ void iec104_client_destroy(iec104_client* client) {
+     delete client; // NOLINT(cppcoreguidelines-owning-memory): ends the ownership of the C caller
+ }
+diff --git a/src/api/config.cpp b/src/api/config.cpp
+new file mode 100644
+index 0000000..ecd903e
+--- /dev/null
++++ b/src/api/config.cpp
+@@ -0,0 +1,214 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file config.cpp
++ * @brief Configuration file: `key = value` lines -> iec104_config (see iec104.h).
++ *
++ * The file only fills the structs; the ranges of the standard are checked
++ * when a server or client is created with them.
++ *
++ * Layer: API.
++ */
++#include "iec104/iec104.h"
++
++#include <cerrno>
++#include <cmath>
++#include <cstdint>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++#include <string>
++
++namespace {
++
++std::string trim(const std::string& s) {
++    const char* ws = " \t\r\n";
++    const std::size_t b = s.find_first_not_of(ws);
++    if (b == std::string::npos) {
++        return {};
++    }
++    return s.substr(b, s.find_last_not_of(ws) - b + 1U);
++}
++
++/** @brief Whole number in [lo, hi]. */
++iec104_status parse_uint(const std::string& text, unsigned long hi, unsigned long& out) {
++    char* end = nullptr;
++    errno = 0;
++    const unsigned long v = std::strtoul(text.c_str(), &end, 10);
++    if (text.empty() || text[0] == '-' || *end != '\0' || errno != 0) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    if (v > hi) {
++        return IEC104_ERR_OUT_OF_RANGE;
++    }
++    out = v;
++    return IEC104_OK;
++}
++
++/** @brief Seconds (fractions allowed) -> milliseconds, at most 48 h. */
++iec104_status parse_seconds(const std::string& text, std::uint32_t& ms) {
++    char* end = nullptr;
++    const double s = std::strtod(text.c_str(), &end);
++    if (text.empty() || *end != '\0' || !std::isfinite(s)) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    if (s < 0.0 || s > 48.0 * 3600.0) {
++        return IEC104_ERR_OUT_OF_RANGE;
++    }
++    ms = static_cast<std::uint32_t>(std::lround(s * 1000.0));
++    return IEC104_OK;
++}
++
++/** @brief 0/1, no/yes, false/true, off/on. */
++iec104_status parse_flag(const std::string& text, int& out) {
++    if (text == "1" || text == "yes" || text == "true" || text == "on") {
++        out = 1;
++        return IEC104_OK;
++    }
++    if (text == "0" || text == "no" || text == "false" || text == "off") {
++        out = 0;
++        return IEC104_OK;
++    }
++    return IEC104_ERR_INVALID_ARGUMENT;
++}
++
++template <typename T> iec104_status parse_small(const std::string& text, unsigned long hi, T& out) {
++    unsigned long v = 0;
++    const iec104_status st = parse_uint(text, hi, v);
++    if (st == IEC104_OK) {
++        out = static_cast<T>(v);
++    }
++    return st;
++}
++
++/** @brief Applies one key; IEC104_ERR_INVALID_ARGUMENT for an unknown key. */
++iec104_status apply(const std::string& key, const std::string& value, iec104_config& c) {
++    iec104_link_config& l = c.link;
++    if (key == "host") {
++        if (value.size() >= sizeof c.host) {
++            return IEC104_ERR_OUT_OF_RANGE;
++        }
++        std::memcpy(static_cast<char*>(c.host), value.c_str(), value.size() + 1U);
++        return IEC104_OK;
++    }
++    if (key == "port") {
++        return parse_small(value, 65535, c.port);
++    }
++    if (key == "t0") {
++        return parse_seconds(value, l.t0_ms);
++    }
++    if (key == "t1") {
++        return parse_seconds(value, l.t1_ms);
++    }
++    if (key == "t2") {
++        return parse_seconds(value, l.t2_ms);
++    }
++    if (key == "t3") {
++        return parse_seconds(value, l.t3_ms);
++    }
++    if (key == "k") {
++        return parse_small(value, 65535, l.k);
++    }
++    if (key == "w") {
++        return parse_small(value, 65535, l.w);
++    }
++    if (key == "tolerant") {
++        return parse_flag(value, l.tolerant);
++    }
++    if (key == "cot_length") {
++        return parse_small(value, 255, l.cot_length);
++    }
++    if (key == "ca_length") {
++        return parse_small(value, 255, l.ca_length);
++    }
++    if (key == "ioa_length") {
++        return parse_small(value, 255, l.ioa_length);
++    }
++    if (key == "max_asdu_length") {
++        return parse_small(value, 255, l.max_asdu_length);
++    }
++    if (key == "originator") {
++        return parse_small(value, 255, l.originator);
++    }
++    if (key == "send_end_of_init") {
++        return parse_flag(value, c.server.send_end_of_init);
++    }
++    if (key == "command_termination") {
++        return parse_flag(value, c.server.command_termination);
++    }
++    if (key == "cause_of_init") {
++        return parse_small(value, 127, c.server.cause_of_init);
++    }
++    if (key == "max_command_delay") {
++        return parse_seconds(value, c.server.max_command_delay_ms);
++    }
++    if (key == "confirmation_timeout") {
++        return parse_seconds(value, c.client.confirmation_timeout_ms);
++    }
++    if (key == "termination_timeout") {
++        return parse_seconds(value, c.client.termination_timeout_ms);
++    }
++    if (key == "expect_termination") {
++        return parse_flag(value, c.client.expect_termination);
++    }
++    return IEC104_ERR_INVALID_ARGUMENT;
++}
++
++} // namespace
++
++extern "C" {
++
++void iec104_config_init(iec104_config* config) {
++    if (config == nullptr) {
++        return;
++    }
++    *config = iec104_config{};
++    iec104_link_config_init(&config->link);
++    iec104_server_options_init(&config->server);
++    iec104_client_options_init(&config->client);
++    config->port = IEC104_DEFAULT_PORT;
++}
++
++iec104_status iec104_config_load(const char* path, iec104_config* config, int* error_line) {
++    if (error_line != nullptr) {
++        *error_line = 0;
++    }
++    if (path == nullptr || config == nullptr) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    std::ifstream in(path);
++    if (!in) {
++        return IEC104_ERR_IO;
++    }
++    // Work on a copy, so that a broken file leaves the caller's config unchanged.
++    iec104_config c = *config;
++    std::string line;
++    int number = 0;
++    while (std::getline(in, line)) {
++        ++number;
++        const std::size_t comment = line.find_first_of("#;");
++        const std::string text = trim(line.substr(0, comment));
++        if (text.empty()) {
++            continue;
++        }
++        const std::size_t eq = text.find('=');
++        iec104_status st = IEC104_ERR_INVALID_ARGUMENT;
++        if (eq != std::string::npos) {
++            st = apply(trim(text.substr(0, eq)), trim(text.substr(eq + 1U)), c);
++        }
++        if (st != IEC104_OK) {
++            if (error_line != nullptr) {
++                *error_line = number;
++            }
++            return st;
++        }
++    }
++    *config = c;
++    return IEC104_OK;
++}
++
++} // extern "C"
+diff --git a/src/api/iec104.cpp b/src/api/iec104.cpp
+index 0bd58c7..60a2857 100644
+--- a/src/api/iec104.cpp
++++ b/src/api/iec104.cpp
+@@ -101,6 +101,22 @@ const char* iec104_link_state_string(iec104_link_state state) {
+     return "unknown state";
+ }
+ 
++const char* iec104_log_level_string(iec104_log_level level) {
++    switch (level) {
++    case IEC104_LOG_ERROR:
++        return "error";
++    case IEC104_LOG_WARNING:
++        return "warning";
++    case IEC104_LOG_INFO:
++        return "info";
++    case IEC104_LOG_DEBUG:
++        return "debug";
++    case IEC104_LOG_TRACE:
++        return "trace";
++    }
++    return "unknown level";
++}
++
+ const char* iec104_command_result_string(iec104_command_result result) {
+     switch (result) {
+     case IEC104_COMMAND_CONFIRMED:
+diff --git a/src/api/link_common.cpp b/src/api/link_common.cpp
+index d1e9f97..9381c0f 100644
+--- a/src/api/link_common.cpp
++++ b/src/api/link_common.cpp
+@@ -100,8 +100,46 @@ void CallbackSink::on_asdu(std::uint32_t id, const std::uint8_t* asdu, std::size
+     }
+ }
+ 
++void CallbackSink::on_frame(std::uint32_t id, bool outgoing, const std::uint8_t* apdu,
++                            std::size_t length) {
++    if (logger_.enabled(IEC104_LOG_TRACE)) {
++        logger_.write(IEC104_LOG_TRACE, id,
++                      std::string(outgoing ? "sent " : "received ") + Logger::hex(apdu, length));
++    }
++}
++
++void log_config_warnings(const apci::ApciConfig& config, const Logger& logger) {
++    apci::ConfigWarnings w{};
++    if (apci::validate(config, w) != IEC104_OK) {
++        return;
++    }
++    if (w.t2_not_below_t1) {
++        logger.write(IEC104_LOG_WARNING, 0, "configuration: t2 is not below t1");
++    }
++    if (w.w_above_two_thirds_k) {
++        logger.write(IEC104_LOG_WARNING, 0, "configuration: w is above 2/3 of k");
++    }
++}
++
++void copy_link_stats(const transport::Link& link, iec104_link_stats& out) noexcept {
++    const apci::ConnectionStats& s = link.stats();
++    out.i_frames_sent = s.i_sent;
++    out.i_frames_received = s.i_received;
++    out.s_frames_sent = s.s_sent;
++    out.s_frames_received = s.s_received;
++    out.u_frames_sent = s.u_sent;
++    out.u_frames_received = s.u_received;
++    out.bytes_sent = s.bytes_sent;
++    out.bytes_received = s.bytes_received;
++}
++
+ void CallbackSink::on_state(std::uint32_t id, apci::State state) {
+     // Closed is reported once, with its reason, by on_closed().
++    if (state != apci::State::Closed) {
++        const bool important = state == apci::State::Started || state == apci::State::Stopped;
++        logger_.write(important ? IEC104_LOG_INFO : IEC104_LOG_DEBUG, id,
++                      std::string("state ") + iec104_link_state_string(to_c(state)));
++    }
+     if (callbacks_.on_state != nullptr && state != apci::State::Closed) {
+         callbacks_.on_state(callbacks_.user, id, to_c(state), IEC104_CLOSE_NONE);
+     }
+@@ -109,6 +147,11 @@ void CallbackSink::on_state(std::uint32_t id, apci::State state) {
+ 
+ void CallbackSink::on_closed(std::uint32_t id, transport::LinkCloseReason reason,
+                              apci::CloseReason protocol_reason) {
++    const iec104_close_reason c = to_c(reason, protocol_reason);
++    // A regular end is information; everything else means the link failed.
++    const bool regular = c == IEC104_CLOSE_LOCAL || c == IEC104_CLOSE_PEER;
++    logger_.write(regular ? IEC104_LOG_INFO : IEC104_LOG_ERROR, id,
++                  std::string("closed: ") + iec104_close_reason_string(c));
+     if (callbacks_.on_state != nullptr) {
+         callbacks_.on_state(callbacks_.user, id, IEC104_LINK_CLOSED, to_c(reason, protocol_reason));
+     }
+diff --git a/src/api/link_common.hpp b/src/api/link_common.hpp
+index fca5f54..4464f5a 100644
+--- a/src/api/link_common.hpp
++++ b/src/api/link_common.hpp
+@@ -18,6 +18,7 @@
+ 
+ #include "apci/apci_config.hpp"
+ #include "apci/connection.hpp"
++#include "api/logger.hpp"
+ #include "codec/asdu.hpp"
+ #include "iec104/iec104.h"
+ #include "transport/link.hpp"
+@@ -48,6 +49,12 @@ class CallbackSink : public transport::LinkSink {
+     void on_state(std::uint32_t id, apci::State state) override;
+     void on_closed(std::uint32_t id, transport::LinkCloseReason reason,
+                    apci::CloseReason protocol_reason) override;
++    void on_frame(std::uint32_t id, bool outgoing, const std::uint8_t* apdu,
++                  std::size_t length) override;
++
++    /** @brief The log output of this handle. */
++    [[nodiscard]] Logger& logger() noexcept { return logger_; }
++    [[nodiscard]] const Logger& logger() const noexcept { return logger_; }
+ 
+   protected:
+     /**
+@@ -64,8 +71,15 @@ class CallbackSink : public transport::LinkSink {
+ 
+   private:
+     iec104_callbacks callbacks_{};
++    Logger logger_;
+ };
+ 
++/** @brief Logs the violated recommendations of @p config (t2 < t1, w <= 2/3 k) as warnings. */
++void log_config_warnings(const apci::ApciConfig& config, const Logger& logger);
++
++/** @brief Fills the link part of @p out from the state machine counters. */
++void copy_link_stats(const transport::Link& link, iec104_link_stats& out) noexcept;
++
+ /**
+  * @brief One round of the event loop for a set of links and an optional listener.
+  *
+diff --git a/src/api/logger.cpp b/src/api/logger.cpp
+new file mode 100644
+index 0000000..7bd4a08
+--- /dev/null
++++ b/src/api/logger.cpp
+@@ -0,0 +1,33 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file logger.cpp
++ * @brief Hex dump for the trace level of the logger.
++ *
++ * Layer: API.
++ */
++#include "api/logger.hpp"
++
++#include <string_view>
++
++namespace iec104::api {
++
++std::string Logger::hex(const std::uint8_t* data, std::size_t length) {
++    constexpr std::string_view kDigits = "0123456789abcdef";
++    std::string text;
++    text.reserve(length * 3U);
++    for (std::size_t i = 0; i < length; ++i) {
++        if (i > 0U) {
++            text.push_back(' ');
++        }
++        text.push_back(kDigits[data[i] >> 4U]);
++        text.push_back(kDigits[data[i] & 0x0FU]);
++    }
++    return text;
++}
++
++} // namespace iec104::api
+diff --git a/src/api/logger.hpp b/src/api/logger.hpp
+new file mode 100644
+index 0000000..ff98943
+--- /dev/null
++++ b/src/api/logger.hpp
+@@ -0,0 +1,57 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file logger.hpp
++ * @brief Log output of a server or client handle to the application's callback.
++ *
++ * Messages are built only if their level is enabled, so logging costs
++ * nothing when it is switched off.
++ *
++ * Layer: API (internal header).
++ */
++#pragma once
++
++#include "iec104/iec104.h"
++
++#include <cstddef>
++#include <cstdint>
++#include <string>
++
++namespace iec104::api {
++
++/** @brief Log callback with level filter. */
++class Logger {
++  public:
++    /** @brief Sets the callback (NULL = off) and the highest level passed on. */
++    void set(iec104_log_level max_level, iec104_log_fn fn, void* user) noexcept {
++        max_level_ = max_level;
++        fn_ = fn;
++        user_ = user;
++    }
++
++    /** @brief True if a message of @p level would be passed on. */
++    [[nodiscard]] bool enabled(iec104_log_level level) const noexcept {
++        return fn_ != nullptr && level <= max_level_;
++    }
++
++    /** @brief Passes @p message on if @p level is enabled. */
++    void write(iec104_log_level level, std::uint32_t connection, const std::string& message) const {
++        if (enabled(level)) {
++            fn_(user_, level, connection, message.c_str());
++        }
++    }
++
++    /** @brief Octets as hex, e.g. "68 04 07 00 00 00". */
++    static std::string hex(const std::uint8_t* data, std::size_t length);
++
++  private:
++    iec104_log_level max_level_{IEC104_LOG_ERROR};
++    iec104_log_fn fn_{nullptr};
++    void* user_{nullptr};
++};
++
++} // namespace iec104::api
+diff --git a/src/api/server.cpp b/src/api/server.cpp
+index 6d7e2b2..25255b9 100644
+--- a/src/api/server.cpp
++++ b/src/api/server.cpp
+@@ -28,6 +28,7 @@
+ #include <map>
+ #include <new>
+ #include <poll.h>
++#include <string>
+ 
+ using namespace iec104;
+ 
+@@ -48,7 +49,7 @@ class LinkSender : public session::AsduSender {
+ 
+ } // namespace
+ 
+-struct iec104_server : api::CallbackSink, session::CommandHandler {
++struct iec104_server : api::CallbackSink, session::CommandHandler, session::SessionObserver {
+     iec104_server(const apci::ApciConfig& c, const iec104_link_config& link,
+                   const iec104_callbacks* cb) noexcept
+         : api::CallbackSink(cb), config(c), profile(api::to_profile(link)),
+@@ -85,6 +86,9 @@ struct iec104_server : api::CallbackSink, session::CommandHandler {
+             auto link = std::make_unique<transport::Link>();
+             if (link->init_accepted(next_id, config, std::move(s), transport::monotonic_ms()) ==
+                 IEC104_OK) {
++                link->set_trace(this);
++                logger().write(IEC104_LOG_INFO, next_id,
++                               "connection accepted from " + link->peer());
+                 sessions.emplace(next_id, session::ServerSession(profile, originator));
+                 ++next_id;
+                 links.push_back(std::move(link));
+@@ -111,7 +115,7 @@ struct iec104_server : api::CallbackSink, session::CommandHandler {
+         current_connection = id;
+         const session::StationContext station{
+             &image, &commands, &options,
+-            session::SessionClock{transport::monotonic_ms(), transport::utc_ms()}};
++            session::SessionClock{transport::monotonic_ms(), transport::utc_ms()}, this};
+         const bool handled =
+             it != sessions.end() && it->second.handle(asdu, length, station, *this);
+         current_connection = 0;
+@@ -146,7 +150,31 @@ struct iec104_server : api::CallbackSink, session::CommandHandler {
+             return false;
+         }
+         const iec104_asdu_info info = api::to_info(header);
+-        return callbacks().on_command(callbacks().user, current_connection, &info, &c) != 0;
++        const bool accepted =
++            callbacks().on_command(callbacks().user, current_connection, &info, &c) != 0;
++        logger().write(IEC104_LOG_INFO, current_connection,
++                       "command type " + std::to_string(header.type_id) + " ioa " +
++                           std::to_string(object.ioa) + (accepted ? ": accepted" : ": rejected"));
++        return accepted;
++    }
++
++    // --- SessionObserver: notable events for the log ----------------------
++
++    void negative_answer(const std::uint8_t* asdu, std::size_t length,
++                         std::uint8_t cause) override {
++        if (logger().enabled(IEC104_LOG_WARNING) && length > 0U) {
++            logger().write(IEC104_LOG_WARNING, current_connection,
++                           "negative answer to type " + std::to_string(asdu[0]) + ", cause " +
++                               std::to_string(cause));
++        }
++    }
++
++    void discarded_command(const codec::AsduHeader& header,
++                           const codec::InformationObject& object) override {
++        logger().write(IEC104_LOG_WARNING, current_connection,
++                       "command type " + std::to_string(header.type_id) + " ioa " +
++                           std::to_string(object.ioa) +
++                           " discarded: older than the maximum command delay");
+     }
+ 
+     // Queues @p asdu on one or all started connections.
+@@ -384,6 +412,42 @@ iec104_status iec104_server_send(iec104_server* server, uint32_t connection,
+     return result;
+ }
+ 
++void iec104_server_set_log(iec104_server* server, iec104_log_level max_level, iec104_log_fn fn,
++                           void* user) {
++    if (server == nullptr) {
++        return;
++    }
++    server->logger().set(max_level, fn, user);
++    api::log_config_warnings(server->config, server->logger());
++}
++
++iec104_status iec104_server_get_stats(const iec104_server* server, uint32_t connection,
++                                      iec104_link_stats* out) {
++    if (server == nullptr || out == nullptr) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    for (const auto& link : server->links) {
++        if (link->id() != connection) {
++            continue;
++        }
++        iec104_link_stats s{};
++        api::copy_link_stats(*link, s);
++        const auto it = server->sessions.find(connection);
++        if (it != server->sessions.end()) {
++            const session::SessionStats& ss = it->second.stats();
++            s.requests = ss.requests;
++            s.commands_accepted = ss.commands_accepted;
++            s.commands_rejected = ss.commands_rejected;
++            s.commands_discarded = ss.commands_discarded;
++            s.negative_answers = ss.negative_answers;
++            s.send_queue = static_cast<uint32_t>(it->second.queued());
++        }
++        *out = s;
++        return IEC104_OK;
++    }
++    return IEC104_ERR_WRONG_STATE;
++}
++
+ void iec104_server_destroy(iec104_server* server) {
+     // Ends the ownership of the C caller; sockets close in their destructors.
+     delete server; // NOLINT(cppcoreguidelines-owning-memory)
+diff --git a/src/codec/asdu.cpp b/src/codec/asdu.cpp
+index 679b408..fc0d71e 100644
+--- a/src/codec/asdu.cpp
++++ b/src/codec/asdu.cpp
+@@ -39,7 +39,7 @@ iec104_status resolve_type(std::uint8_t type_id, const AsduProfile& profile,
+         return IEC104_ERR_UNSUPPORTED;
+     }
+     // The IEC 101 types with CP24Time2a are not part of the IEC 104 type set
+-    // according to docs/02_Technik_und_Quellen.md (no verbatim proof from the norm text, N4).
++    // according to docs/02_Technik_und_Quellen.md (N4).
+     if (profile.strict && t->time_tag == TimeTag::Cp24) {
+         return IEC104_ERR_UNSUPPORTED;
+     }
+diff --git a/src/codec/asdu.hpp b/src/codec/asdu.hpp
+index 2ec1ebf..78e0f59 100644
+--- a/src/codec/asdu.hpp
++++ b/src/codec/asdu.hpp
+@@ -36,9 +36,9 @@
+  * Types 136..255 are private: decode_asdu() hands their object octets to the
+  * caller unchanged (DecodedAsdu::object_data) and does not interpret them.
+  *
+- * Whether SQ = 1 is allowed for a given type is not checked: the norm text
+- * is not available (TODO(norm): admissible types for SQ = 1, clause unknown).
+- * The codec handles SQ = 1 for every type in the table.
++ * The codec handles SQ = 1 for every type in the table; whether SQ = 1 is
++ * admissible for a type is not checked.
++ * TODO(norm): admissible types for SQ = 1, clause unknown.
+  *
+  * Layer: codec (pure functions, no I/O, no allocation).
+  */
+diff --git a/src/codec/cp56time2a.hpp b/src/codec/cp56time2a.hpp
+index 2d4a013..926a00c 100644
+--- a/src/codec/cp56time2a.hpp
++++ b/src/codec/cp56time2a.hpp
+@@ -33,8 +33,7 @@
+  *
+  * Sources: docs/02_Technik_und_Quellen.md, section "Informationselemente" (citing the Wireshark
+  * IEC 104 dissector).
+- * TODO(norm): CP56Time2a definition, clause unknown (defined in the
+- * IEC 60870-5 series, not in the documents of this repository).
++ * TODO(norm): CP56Time2a definition, clause unknown (IEC 60870-5 series).
+  *
+  * Layer: codec (pure functions, no I/O, no allocation).
+  */
+diff --git a/src/codec/elements.hpp b/src/codec/elements.hpp
+index 0e45a56..5bdfbdd 100644
+--- a/src/codec/elements.hpp
++++ b/src/codec/elements.hpp
+@@ -38,7 +38,7 @@
+  * Wireshark 3.4.10); where Wireshark shows a type only as raw data, the
+  * lib60870 encoding is the only source and the element says so.
+  * TODO(norm): definition of the information elements, clause unknown
+- * (IEC 60870-5-101 / -104, not in the documents of this repository).
++ * (IEC 60870-5-101 / -104).
+  *
+  * Layer: codec (pure functions, no I/O, no allocation).
+  */
+diff --git a/src/codec/type_table.cpp b/src/codec/type_table.cpp
+index d8309ae..36fdb13 100644
+--- a/src/codec/type_table.cpp
++++ b/src/codec/type_table.cpp
+@@ -122,9 +122,8 @@ static_assert(is_well_formed(kTypes), "type table: size or order wrong");
+ 
+ /*
+  * Matrix "which cause of transmission is allowed for which type" (standard,
+- * clause 9.5). Empty on purpose: the normative text is not available, and a
+- * guessed matrix would reject valid traffic. Planned shape: one entry per
+- * type id with a 64-bit mask of allowed causes.
++ * clause 9.5). Empty on purpose: a guessed matrix would reject valid traffic. Planned shape: one
++ * entry per type id with a 64-bit mask of allowed causes.
+  * TODO(norm): 9.5, fill in from the standard.
+  */
+ struct CauseRule {
+diff --git a/src/codec/type_table.hpp b/src/codec/type_table.hpp
+index 229f2e3..1761820 100644
+--- a/src/codec/type_table.hpp
++++ b/src/codec/type_table.hpp
+@@ -118,10 +118,9 @@ constexpr bool is_private_type(std::uint8_t type_id) noexcept {
+ /**
+  * @brief Tells whether a cause of transmission is allowed for a type.
+  *
+- * The standard defines this matrix in clause 9.5; its text is not available
+- * in this repository (docs/05_Normfragen_und_Festlegungen.md, N3). The table behind this function
+- * is therefore empty and every combination is allowed. When the matrix is
+- * filled in, only this function and its table change.
++ * The matrix is defined in clause 9.5 (docs/05_Normfragen_und_Festlegungen.md,
++ * N3). The table behind this function is empty, so every combination is
++ * allowed; filling it in changes only this function and its table.
+  * TODO(norm): 9.5, matrix of type identification and cause of transmission.
+  *
+  * @param type_id Type identification.
+diff --git a/src/session/server_session.cpp b/src/session/server_session.cpp
+index 779ae0b..f516c59 100644
+--- a/src/session/server_session.cpp
++++ b/src/session/server_session.cpp
+@@ -119,6 +119,7 @@ bool is_late(std::uint8_t type, const codec::InformationObject& o,
+ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
+                            const StationContext& station, CommandHandler& handler) {
+     const ProcessImage& image = *station.image;
++    observer_ = station.observer; // used by answer() for negative answers
+     codec::AsduHeader header{};
+     std::size_t header_length = 0;
+     if (codec::decode_asdu_header(asdu, length, profile_, header, header_length) != IEC104_OK ||
+@@ -132,7 +133,7 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
+     if (st == IEC104_ERR_UNSUPPORTED) {
+         // Unknown type, or a type the strict profile rejects: negative mirror
+         // with cause 44 (docs/02_Technik_und_Quellen.md, "Übertragungsursachen").
+-        push_ready(mirror(asdu, length, kCotUnknownType, true));
++        answer(asdu, length, kCotUnknownType, true);
+         return true;
+     }
+     if (st != IEC104_OK) {
+@@ -150,6 +151,10 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
+     // Maximum command delay (amendment 1): a command with time tag that is
+     // older than the configured maximum is discarded without any answer.
+     if (is_late(type, o, station)) {
++        ++stats_.commands_discarded;
++        if (station.observer != nullptr) {
++            station.observer->discarded_command(header, o);
++        }
+         return true;
+     }
+ 
+@@ -162,10 +167,14 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
+     const bool system = type == kInterrogation || type == kCounterInterrogation ||
+                         type == kClockSync || type == kResetProcess;
+     if (!image.empty() && !(broadcast && system) && !image.has_station(header.common_address)) {
+-        push_ready(mirror(asdu, length, kCotUnknownStation, true));
++        answer(asdu, length, kCotUnknownStation, true);
+         return true;
+     }
+ 
++    if (type == kInterrogation || type == kCounterInterrogation || type == kRead || type == kTest ||
++        type == kTestWithTime) {
++        ++stats_.requests;
++    }
+     switch (type) {
+     case kInterrogation:
+         answer_interrogation(d, o, image, asdu, length);
+@@ -179,9 +188,8 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
+     case kTest:
+     case kTestWithTime:
+         // The test command is confirmed by mirroring it (cause 7).
+-        push_ready(mirror(asdu, length,
+-                          header.cause == kCotActivation ? kCotActivationCon : kCotUnknownCause,
+-                          header.cause != kCotActivation));
++        answer(asdu, length, header.cause == kCotActivation ? kCotActivationCon : kCotUnknownCause,
++               header.cause != kCotActivation);
+         break;
+     default:
+         if (is_command_type(type) || type == kClockSync || type == kResetProcess) {
+@@ -189,9 +197,8 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
+         } else {
+             // Control-direction types the library does not implement yet
+             // (parameters 110..113, delay acquisition 106): negative confirmation.
+-            push_ready(mirror(asdu, length,
+-                              header.cause == kCotActivation ? kCotActivationCon : kCotUnknownCause,
+-                              true));
++            answer(asdu, length,
++                   header.cause == kCotActivation ? kCotActivationCon : kCotUnknownCause, true);
+         }
+         break;
+     }
+@@ -206,19 +213,19 @@ void ServerSession::answer_interrogation(const codec::DecodedAsdu& d,
+     if (h.cause == kCotDeactivation) {
+         // Stopping a running interrogation is not supported: negative DEACTCON.
+         // TODO(norm): deactivation of an interrogation, clause 7.
+-        push_ready(mirror(asdu, length, kCotDeactivationCon, true));
++        answer(asdu, length, kCotDeactivationCon, true);
+         return;
+     }
+     if (h.cause != kCotActivation) {
+-        push_ready(mirror(asdu, length, kCotUnknownCause, true));
++        answer(asdu, length, kCotUnknownCause, true);
+         return;
+     }
+     if (o.ioa != 0U) {
+-        push_ready(mirror(asdu, length, kCotUnknownIoa, true)); // interrogation uses IOA 0
++        answer(asdu, length, kCotUnknownIoa, true); // interrogation uses IOA 0
+         return;
+     }
+     if (o.qoi < kCotStation || o.qoi > kLastGroup) {
+-        push_ready(mirror(asdu, length, kCotActivationCon, true));
++        answer(asdu, length, kCotActivationCon, true);
+         return;
+     }
+     // QOI 20..36 and the cause of the answers 20..36 have the same values:
+@@ -250,15 +257,15 @@ void ServerSession::answer_counters(const codec::DecodedAsdu& d, const codec::In
+                                     std::size_t length) {
+     const codec::AsduHeader& h = d.header;
+     if (h.cause != kCotActivation) {
+-        push_ready(mirror(asdu, length, kCotUnknownCause, true));
++        answer(asdu, length, kCotUnknownCause, true);
+         return;
+     }
+     if (o.ioa != 0U) {
+-        push_ready(mirror(asdu, length, kCotUnknownIoa, true));
++        answer(asdu, length, kCotUnknownIoa, true);
+         return;
+     }
+     if (o.qcc.rqt < 1U || o.qcc.rqt > kAllCounters) {
+-        push_ready(mirror(asdu, length, kCotActivationCon, true));
++        answer(asdu, length, kCotActivationCon, true);
+         return;
+     }
+     const unsigned group = o.qcc.rqt == kAllCounters ? 0U : o.qcc.rqt;
+@@ -290,12 +297,12 @@ void ServerSession::answer_read(const codec::DecodedAsdu& d, const codec::Inform
+                                 std::size_t length) {
+     const codec::AsduHeader& h = d.header;
+     if (h.cause != kCotRequest) {
+-        push_ready(mirror(asdu, length, kCotUnknownCause, true));
++        answer(asdu, length, kCotUnknownCause, true);
+         return;
+     }
+     const Point* p = image.find(h.common_address, o.ioa);
+     if (p == nullptr) {
+-        push_ready(mirror(asdu, length, kCotUnknownIoa, true));
++        answer(asdu, length, kCotUnknownIoa, true);
+         return;
+     }
+     codec::AsduHeader data = h;
+@@ -312,7 +319,7 @@ void ServerSession::answer_command(const codec::DecodedAsdu& d, const codec::Inf
+     if (command && !station.commands->empty()) {
+         const CommandPoint* point = station.commands->find(h.common_address, o.ioa);
+         if (point == nullptr) {
+-            push_ready(mirror(asdu, length, kCotUnknownIoa, true));
++            answer(asdu, length, kCotUnknownIoa, true);
+             return;
+         }
+         answer_point_command(d, o, *point, station, handler, asdu, length);
+@@ -320,11 +327,11 @@ void ServerSession::answer_command(const codec::DecodedAsdu& d, const codec::Inf
+     }
+     // Without command points the application alone decides about every command.
+     if (h.cause == kCotDeactivation && command) {
+-        push_ready(mirror(asdu, length, kCotDeactivationCon, false));
++        answer(asdu, length, kCotDeactivationCon, false);
+         return;
+     }
+     if (h.cause != kCotActivation) {
+-        push_ready(mirror(asdu, length, kCotUnknownCause, true));
++        answer(asdu, length, kCotUnknownCause, true);
+         return;
+     }
+     execute(d, o, station, handler, asdu, length);
+@@ -339,28 +346,28 @@ void ServerSession::answer_point_command(const codec::DecodedAsdu& d,
+     const auto key = std::make_pair(h.common_address, o.ioa);
+     if (h.type_id != point.type) {
+         // The point exists but accepts another type (e.g. only with time tag).
+-        push_ready(mirror(asdu, length,
+-                          h.cause == kCotDeactivation ? kCotDeactivationCon : kCotActivationCon,
+-                          true));
++        answer(asdu, length, h.cause == kCotDeactivation ? kCotDeactivationCon : kCotActivationCon,
++               true);
+         return;
+     }
+     if (h.cause == kCotDeactivation) {
+         // Breaking off a selection: confirmed if one exists, else negative.
+         const bool selected = selections_.erase(key) > 0U;
+-        push_ready(mirror(asdu, length, kCotDeactivationCon, !selected));
++        answer(asdu, length, kCotDeactivationCon, !selected);
+         return;
+     }
+     if (h.cause != kCotActivation) {
+-        push_ready(mirror(asdu, length, kCotUnknownCause, true));
++        answer(asdu, length, kCotUnknownCause, true);
+         return;
+     }
+     if (is_select(h.type_id, o)) {
+         if (point.model == CommandModel::Direct) {
+-            push_ready(mirror(asdu, length, kCotActivationCon, true)); // no select on this point
++            answer(asdu, length, kCotActivationCon, true); // no select on this point
+             return;
+         }
+         const bool accepted = handler.on_command(h, o);
+-        push_ready(mirror(asdu, length, kCotActivationCon, !accepted));
++        ++(accepted ? stats_.commands_accepted : stats_.commands_rejected);
++        answer(asdu, length, kCotActivationCon, !accepted);
+         if (accepted) {
+             selections_[key] =
+                 Selection{h.type_id, o, station.clock.monotonic_ms + point.select_timeout_ms};
+@@ -379,7 +386,7 @@ void ServerSession::answer_point_command(const codec::DecodedAsdu& d,
+             selections_.erase(it);
+         }
+         if (!valid) {
+-            push_ready(mirror(asdu, length, kCotActivationCon, true));
++            answer(asdu, length, kCotActivationCon, true);
+             return;
+         }
+     }
+@@ -391,11 +398,12 @@ void ServerSession::execute(const codec::DecodedAsdu& d, const codec::Informatio
+                             const std::uint8_t* asdu, std::size_t length) {
+     const codec::AsduHeader& h = d.header;
+     const bool accepted = handler.on_command(h, o);
+-    push_ready(mirror(asdu, length, kCotActivationCon, !accepted));
++    ++(accepted ? stats_.commands_accepted : stats_.commands_rejected);
++    answer(asdu, length, kCotActivationCon, !accepted);
+     // Termination after an executed command; a select is only confirmed.
+     if (accepted && is_command_type(h.type_id) && station.options->command_termination &&
+         !is_select(h.type_id, o)) {
+-        push_ready(mirror(asdu, length, kCotActivationTerm, false));
++        answer(asdu, length, kCotActivationTerm, false);
+     }
+ }
+ 
+@@ -430,6 +438,17 @@ iec104_status ServerSession::enqueue(const std::uint8_t* asdu, std::size_t lengt
+     return IEC104_OK;
+ }
+ 
++void ServerSession::answer(const std::uint8_t* asdu, std::size_t length, std::uint8_t cause,
++                           bool negative) {
++    push_ready(mirror(asdu, length, cause, negative));
++    if (negative) {
++        ++stats_.negative_answers;
++        if (observer_ != nullptr) {
++            observer_->negative_answer(asdu, length, cause);
++        }
++    }
++}
++
+ void ServerSession::push_ready(std::vector<std::uint8_t> asdu) {
+     if (asdu.empty()) {
+         return;
+diff --git a/src/session/server_session.hpp b/src/session/server_session.hpp
+index ca4a0de..45c9114 100644
+--- a/src/session/server_session.hpp
++++ b/src/session/server_session.hpp
+@@ -98,12 +98,42 @@ struct SessionClock {
+     std::int64_t utc_ms{0};        ///< Wall clock (UTC, ms since 1970) for the command delay.
+ };
+ 
++/**
++ * @brief Receives notable events of a session (for logging). Every method may be ignored.
++ */
++class SessionObserver {
++  public:
++    SessionObserver() = default;
++    SessionObserver(const SessionObserver&) = delete;
++    SessionObserver& operator=(const SessionObserver&) = delete;
++    SessionObserver(SessionObserver&&) = delete;
++    SessionObserver& operator=(SessionObserver&&) = delete;
++    virtual ~SessionObserver() = default;
++    /** @brief A request was answered negatively (@p asdu is the request). */
++    virtual void negative_answer(const std::uint8_t* asdu, std::size_t length,
++                                 std::uint8_t cause) = 0;
++    /** @brief A time-tagged command was discarded (maximum command delay). */
++    virtual void discarded_command(const codec::AsduHeader& header,
++                                   const codec::InformationObject& object) = 0;
++};
++
++/** @brief Counters of one session. */
++struct SessionStats {
++    std::uint64_t requests{0}; ///< Interrogations, counter interrogations, reads, tests.
++    std::uint64_t commands_accepted{
++        0}; ///< Commands, clock syncs, resets accepted by the application.
++    std::uint64_t commands_rejected{0};  ///< ... rejected by the application.
++    std::uint64_t commands_discarded{0}; ///< Discarded: older than the maximum command delay.
++    std::uint64_t negative_answers{0};   ///< Answers with P/N = 1 (incl. causes 44..47).
++};
++
+ /** @brief Everything the station provides to a session for handling one request (never NULL). */
+ struct StationContext {
+     const ProcessImage* image{nullptr};     ///< Data points (interrogation, read).
+     const CommandTable* commands{nullptr};  ///< Command points (empty = application decides).
+     const SessionOptions* options{nullptr}; ///< Behaviour.
+     SessionClock clock;                     ///< Current time.
++    SessionObserver* observer{nullptr};     ///< Optional, may be NULL.
+ };
+ 
+ /** @brief Application layer of one connection of the controlled station. */
+@@ -134,6 +164,9 @@ class ServerSession {
+     /** @brief Sends queued ASDUs while @p sender can take them. */
+     void pump(AsduSender& sender);
+ 
++    /** @brief Counters since creation. */
++    [[nodiscard]] const SessionStats& stats() const noexcept { return stats_; }
++
+     /** @brief Number of queued entries (ASDUs and interrogation jobs). */
+     [[nodiscard]] std::size_t queued() const noexcept { return queue_.size(); }
+ 
+@@ -149,6 +182,7 @@ class ServerSession {
+         codec::AsduHeader header{};     // job: header of the data ASDUs
+     };
+ 
++    void answer(const std::uint8_t* asdu, std::size_t length, std::uint8_t cause, bool negative);
+     void push_ready(std::vector<std::uint8_t> asdu);
+     void push_encoded(const codec::AsduHeader& header, const codec::InformationObject& object);
+     void push_job(const codec::AsduHeader& header, std::vector<Point> points);
+@@ -177,6 +211,8 @@ class ServerSession {
+     std::uint8_t originator_;
+     std::deque<Item> queue_;
+     bool init_sent_{false};
++    SessionStats stats_{};
++    SessionObserver* observer_{nullptr}; // of the request being handled
+ 
+     /** @brief A selected command waiting for its execute (select before operate). */
+     struct Selection {
+diff --git a/src/transport/link.cpp b/src/transport/link.cpp
+index 142dff6..6134b29 100644
+--- a/src/transport/link.cpp
++++ b/src/transport/link.cpp
+@@ -184,4 +184,14 @@ void Link::finish(LinkCloseReason reason, LinkSink& sink) noexcept {
+     sink.on_closed(id_, reason, protocol_reason_);
+ }
+ 
++void Link::trace_thunk(void* context, bool outgoing, const std::uint8_t* apdu,
++                       std::size_t length) noexcept {
++    // context is the Link itself (set in set_trace(); links live in unique_ptr,
++    // so the address stays valid).
++    const auto* link = static_cast<const Link*>(context);
++    if (link->trace_sink_ != nullptr) {
++        link->trace_sink_->on_frame(link->id_, outgoing, apdu, length);
++    }
++}
++
+ } // namespace iec104::transport
+diff --git a/src/transport/link.hpp b/src/transport/link.hpp
+index d4f86ac..7f7b9d9 100644
+--- a/src/transport/link.hpp
++++ b/src/transport/link.hpp
+@@ -28,6 +28,7 @@
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
++#include <string>
+ 
+ namespace iec104::transport {
+ 
+@@ -57,6 +58,9 @@ class LinkSink {
+     /** @brief Link @p id is closed; it is removed after this call. */
+     virtual void on_closed(std::uint32_t id, LinkCloseReason reason,
+                            apci::CloseReason protocol_reason) = 0;
++    /** @brief A complete APDU was sent or received on link @p id (for a raw data trace). */
++    virtual void on_frame(std::uint32_t /*id*/, bool /*outgoing*/, const std::uint8_t* /*apdu*/,
++                          std::size_t /*length*/) {}
+ };
+ 
+ /** @brief A TCP connection plus its state machine (see file comment). */
+@@ -104,12 +108,24 @@ class Link {
+     [[nodiscard]] bool connecting() const noexcept { return connecting_; }
+     [[nodiscard]] apci::State state() const noexcept { return conn_.state(); }
+     [[nodiscard]] bool can_send() const noexcept { return conn_.can_send(); }
++    /** @brief Frame and octet counters of the state machine. */
++    [[nodiscard]] const apci::ConnectionStats& stats() const noexcept { return conn_.stats(); }
++    /** @brief Address of the peer ("ip:port"), "" while connecting. */
++    [[nodiscard]] std::string peer() const { return peer_address(socket_); }
++
++    /** @brief Passes every complete APDU of this link to @p sink->on_frame() (NULL = off). */
++    void set_trace(LinkSink* sink) noexcept {
++        trace_sink_ = sink;
++        conn_.set_trace(sink != nullptr ? &Link::trace_thunk : nullptr, this);
++    }
+ 
+   private:
+     void read_input(apci::TimeMs now, LinkSink& sink) noexcept;
+     void dispatch_events(LinkSink& sink) noexcept;
+     void flush_output() noexcept;
+     void finish(LinkCloseReason reason, LinkSink& sink) noexcept;
++    static void trace_thunk(void* context, bool outgoing, const std::uint8_t* apdu,
++                            std::size_t length) noexcept;
+ 
+     std::uint32_t id_{0};
+     Socket socket_;
+@@ -119,6 +135,7 @@ class Link {
+     LinkCloseReason close_reason_{LinkCloseReason::None};
+     apci::CloseReason protocol_reason_{apci::CloseReason::None};
+     bool reported_closed_{false};
++    LinkSink* trace_sink_{nullptr};
+ 
+     // Bytes taken from the state machine but not yet accepted by the socket.
+     std::array<std::uint8_t, 8192> pending_{};
+diff --git a/src/transport/tcp.cpp b/src/transport/tcp.cpp
+index d5bde81..f05b717 100644
+--- a/src/transport/tcp.cpp
++++ b/src/transport/tcp.cpp
+@@ -12,6 +12,8 @@
+  */
+ #include "transport/tcp.hpp"
+ 
++#include <arpa/inet.h>
++#include <array>
+ #include <cerrno>
+ #include <cstring>
+ #include <ctime>
+@@ -138,6 +140,29 @@ iec104_status finish_connect(const Socket& socket) noexcept {
+     return IEC104_OK;
+ }
+ 
++std::string peer_address(const Socket& socket) {
++    sockaddr_storage addr{};
++    socklen_t len = sizeof addr;
++    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): socket API takes sockaddr*
++    if (getpeername(socket.fd(), reinterpret_cast<sockaddr*>(&addr), &len) != 0) {
++        return {};
++    }
++    std::array<char, INET6_ADDRSTRLEN> text{};
++    if (addr.ss_family == AF_INET) {
++        sockaddr_in in{};
++        std::memcpy(&in, &addr, sizeof in);
++        (void)inet_ntop(AF_INET, &in.sin_addr, text.data(), text.size());
++        return std::string(text.data()) + ":" + std::to_string(ntohs(in.sin_port));
++    }
++    if (addr.ss_family == AF_INET6) {
++        sockaddr_in6 in6{};
++        std::memcpy(&in6, &addr, sizeof in6);
++        (void)inet_ntop(AF_INET6, &in6.sin6_addr, text.data(), text.size());
++        return "[" + std::string(text.data()) + "]:" + std::to_string(ntohs(in6.sin6_port));
++    }
++    return {};
++}
++
+ std::uint16_t local_port(const Socket& socket) noexcept {
+     sockaddr_storage addr{};
+     socklen_t len = sizeof addr;
+diff --git a/src/transport/tcp.hpp b/src/transport/tcp.hpp
+index 1285b58..6d06a4e 100644
+--- a/src/transport/tcp.hpp
++++ b/src/transport/tcp.hpp
+@@ -25,6 +25,7 @@
+ 
+ #include <cstddef>
+ #include <cstdint>
++#include <string>
+ 
+ namespace iec104::transport {
+ 
+@@ -105,6 +106,9 @@ iec104_status connect_tcp(const char* host, std::uint16_t port, Socket& out) noe
+  */
+ iec104_status finish_connect(const Socket& socket) noexcept;
+ 
++/** @brief Address of the peer as "ip:port" (IPv6 in brackets), "" on error. */
++std::string peer_address(const Socket& socket);
++
+ /** @brief Local port of a bound socket, 0 on error. */
+ std::uint16_t local_port(const Socket& socket) noexcept;
+ 
+diff --git a/tests/test_apci_connection.cpp b/tests/test_apci_connection.cpp
+index 7814985..ad29bc0 100644
+--- a/tests/test_apci_connection.cpp
++++ b/tests/test_apci_connection.cpp
+@@ -459,3 +459,22 @@ TEST(ApciConnection, StopWhileTestIsOpen) {
+     EXPECT_EQ(p.client.conn.state(), State::Stopped);
+     EXPECT_EQ(p.client.close_reason(), CloseReason::None);
+ }
++
++// Rule: the counters follow every frame in both directions.
++TEST(ApciConnection, Counters) {
++    Pair p;
++    p.start();
++    ASSERT_EQ(p.server.conn.send_asdu(kAsdu.data(), kAsdu.size(), p.now), IEC104_OK);
++    p.pump();
++    p.advance(10000); // t2: the client acknowledges with an S-frame
++    const ConnectionStats& c = p.client.conn.stats();
++    const ConnectionStats& s = p.server.conn.stats();
++    EXPECT_EQ(c.u_sent, 1U); // STARTDT act
++    EXPECT_EQ(s.u_received, 1U);
++    EXPECT_EQ(s.i_sent, 1U);
++    EXPECT_EQ(c.i_received, 1U);
++    EXPECT_EQ(c.s_sent, 1U);
++    EXPECT_EQ(s.s_received, 1U);
++    EXPECT_EQ(c.bytes_received, s.bytes_sent);
++    EXPECT_EQ(s.bytes_sent, 6U + 6U + kAsdu.size() + 0U); // STARTDT con + I-frame
++}
+diff --git a/tests/test_api.cpp b/tests/test_api.cpp
+index 25a3058..2b26a23 100644
+--- a/tests/test_api.cpp
++++ b/tests/test_api.cpp
+@@ -16,12 +16,12 @@
+ #include <gtest/gtest.h>
+ 
+ // Rule: the version string reported by the built library matches the project
+-// version. Source: CMakeLists.txt (project VERSION 0.1.0) and the
++// version. Source: CMakeLists.txt (project VERSION 0.2.0) and the
+ // IEC104_VERSION_* macros in iec104.h.
+ TEST(Api, VersionStringMatchesMacros) {
+     const char* v = iec104_version_string();
+     ASSERT_NE(v, nullptr);
+-    EXPECT_STREQ(v, "0.1.0");
++    EXPECT_STREQ(v, "0.2.0");
+ }
+ 
+ // Rule: iec104_status_string() never returns NULL, also for values that are
+diff --git a/tests/test_operation.cpp b/tests/test_operation.cpp
+new file mode 100644
+index 0000000..26228ff
+--- /dev/null
++++ b/tests/test_operation.cpp
+@@ -0,0 +1,211 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file test_operation.cpp
++ * @brief Operation: configuration file, statistics and logging (public C API only).
++ */
++#include "iec104/iec104.h"
++
++#include <cstdio>
++#include <fstream>
++#include <functional>
++#include <gtest/gtest.h>
++#include <string>
++#include <vector>
++
++namespace {
++
++std::string write_file(const std::string& name, const std::string& text) {
++    const std::string path = testing::TempDir() + name;
++    std::ofstream(path) << text;
++    return path;
++}
++
++struct Log {
++    std::vector<std::string> lines;
++    static void fn(void* user, iec104_log_level level, uint32_t connection, const char* message) {
++        static_cast<Log*>(user)->lines.push_back(std::string(iec104_log_level_string(level)) + " " +
++                                                 std::to_string(connection) + " " + message);
++    }
++    [[nodiscard]] bool contains(const std::string& part) const {
++        for (const auto& l : lines) {
++            if (l.find(part) != std::string::npos) {
++                return true;
++            }
++        }
++        return false;
++    }
++};
++
++bool run_until(iec104_server* s, iec104_client* c, const std::function<bool()>& done) {
++    for (int i = 0; i < 5000 && !done(); ++i) {
++        (void)iec104_server_poll(s, 1);
++        (void)iec104_client_poll(c, 1);
++    }
++    return done();
++}
++
++} // namespace
++
++// Rule: every key of the file sets its field; times are seconds; comments and
++// blank lines are ignored; keys not in the file keep their value.
++TEST(ConfigFile, AllKeys) {
++    const std::string path = write_file("all.conf", R"(# comment
++host = 192.0.2.10
++port = 2405
++t0 = 15
++t1 = 250        ; long timers of some peers
++t2 = 240
++t3 = 0.5
++k = 16
++w = 10
++tolerant = yes
++cot_length = 1
++ca_length = 1
++ioa_length = 2
++max_asdu_length = 200
++originator = 9
++
++send_end_of_init = no
++command_termination = 0
++cause_of_init = 2
++max_command_delay = 10
++confirmation_timeout = 3.5
++termination_timeout = 20
++expect_termination = off
++)");
++    iec104_config c{};
++    iec104_config_init(&c);
++    int line = -1;
++    ASSERT_EQ(iec104_config_load(path.c_str(), &c, &line), IEC104_OK);
++    EXPECT_EQ(line, 0);
++    EXPECT_STREQ(c.host, "192.0.2.10");
++    EXPECT_EQ(c.port, 2405U);
++    EXPECT_EQ(c.link.t0_ms, 15000U);
++    EXPECT_EQ(c.link.t1_ms, 250000U);
++    EXPECT_EQ(c.link.t3_ms, 500U);
++    EXPECT_EQ(c.link.k, 16U);
++    EXPECT_EQ(c.link.w, 10U);
++    EXPECT_EQ(c.link.tolerant, 1);
++    EXPECT_EQ(c.link.cot_length, 1U);
++    EXPECT_EQ(c.link.ioa_length, 2U);
++    EXPECT_EQ(c.link.max_asdu_length, 200U);
++    EXPECT_EQ(c.link.originator, 9U);
++    EXPECT_EQ(c.server.send_end_of_init, 0);
++    EXPECT_EQ(c.server.command_termination, 0);
++    EXPECT_EQ(c.server.cause_of_init, 2U);
++    EXPECT_EQ(c.server.max_command_delay_ms, 10000U);
++    EXPECT_EQ(c.client.confirmation_timeout_ms, 3500U);
++    EXPECT_EQ(c.client.termination_timeout_ms, 20000U);
++    EXPECT_EQ(c.client.expect_termination, 0);
++}
++
++// Rule: an error names its line and leaves the configuration unchanged.
++TEST(ConfigFile, Errors) {
++    iec104_config c{};
++    iec104_config_init(&c);
++    int line = 0;
++    std::string path = write_file("unknown.conf", "t1 = 20\nunknown_key = 1\n");
++    EXPECT_EQ(iec104_config_load(path.c_str(), &c, &line), IEC104_ERR_INVALID_ARGUMENT);
++    EXPECT_EQ(line, 2);
++    EXPECT_EQ(c.link.t1_ms, 15000U); // unchanged although line 1 was valid
++
++    path = write_file("range.conf", "\n\nport = 70000\n");
++    EXPECT_EQ(iec104_config_load(path.c_str(), &c, &line), IEC104_ERR_OUT_OF_RANGE);
++    EXPECT_EQ(line, 3);
++
++    path = write_file("syntax.conf", "t1 15\n");
++    EXPECT_EQ(iec104_config_load(path.c_str(), &c, &line), IEC104_ERR_INVALID_ARGUMENT);
++    EXPECT_EQ(line, 1);
++
++    path = write_file("value.conf", "tolerant = maybe\n");
++    EXPECT_EQ(iec104_config_load(path.c_str(), &c, &line), IEC104_ERR_INVALID_ARGUMENT);
++
++    EXPECT_EQ(iec104_config_load("/nonexistent/iec104.conf", &c, &line), IEC104_ERR_IO);
++    EXPECT_EQ(iec104_config_load(nullptr, &c, &line), IEC104_ERR_INVALID_ARGUMENT);
++}
++
++// Rule: counters and log messages of server and client follow the traffic:
++// accepted connection, state changes, trace of every APDU, request and
++// command counters on both sides.
++TEST(Operation, StatisticsAndLogging) {
++    Log server_log;
++    Log client_log;
++    iec104_server* server = nullptr;
++    iec104_client* client = nullptr;
++    ASSERT_EQ(iec104_server_create(nullptr, nullptr, &server), IEC104_OK);
++    iec104_server_set_log(server, IEC104_LOG_TRACE, Log::fn, &server_log);
++    iec104_object point{};
++    point.type = 11;
++    point.ioa = 100;
++    ASSERT_EQ(iec104_server_add_point(server, 1, &point, 1), IEC104_OK);
++    ASSERT_EQ(iec104_server_listen(server, "127.0.0.1", 0), IEC104_OK);
++
++    ASSERT_EQ(iec104_client_create(nullptr, nullptr, &client), IEC104_OK);
++    iec104_client_set_log(client, IEC104_LOG_TRACE, Log::fn, &client_log);
++    iec104_link_stats cs{};
++    EXPECT_EQ(iec104_client_get_stats(client, &cs), IEC104_ERR_WRONG_STATE); // never connected
++    ASSERT_EQ(iec104_client_connect(client, "127.0.0.1", iec104_server_port(server)), IEC104_OK);
++    ASSERT_TRUE(run_until(server, client,
++                          [&] { return iec104_client_state(client) == IEC104_LINK_STOPPED; }));
++    ASSERT_EQ(iec104_client_start(client), IEC104_OK);
++    ASSERT_TRUE(run_until(server, client,
++                          [&] { return iec104_client_state(client) == IEC104_LINK_STARTED; }));
++    ASSERT_EQ(iec104_client_interrogation(client, 1, 20), IEC104_OK);
++    iec104_object cmd{};
++    cmd.type = 45; // no on_command callback: the server rejects it
++    cmd.ioa = 1;
++    cmd.value = 1;
++    ASSERT_EQ(iec104_client_send_command(client, 1, &cmd), IEC104_OK);
++    ASSERT_TRUE(run_until(server, client, [&] {
++        return iec104_client_get_stats(client, &cs) == IEC104_OK && cs.commands_rejected == 1U;
++    }));
++
++    iec104_link_stats ss{};
++    ASSERT_EQ(iec104_server_get_stats(server, 1, &ss), IEC104_OK);
++    EXPECT_EQ(ss.requests, 1U);
++    EXPECT_EQ(ss.commands_rejected, 1U);
++    EXPECT_EQ(ss.negative_answers, 1U);
++    EXPECT_GE(ss.i_frames_received, 2U);
++    EXPECT_GE(ss.i_frames_sent, 4U);     // end of init, ACTCON, data, ACTTERM, negative ACTCON
++    EXPECT_EQ(ss.u_frames_received, 1U); // STARTDT act
++    EXPECT_EQ(ss.bytes_sent, cs.bytes_received);
++    EXPECT_EQ(cs.negative_answers, 1U);
++    EXPECT_EQ(iec104_server_get_stats(server, 99, &ss), IEC104_ERR_WRONG_STATE);
++
++    EXPECT_TRUE(server_log.contains("info 1 connection accepted from 127.0.0.1:"));
++    EXPECT_TRUE(server_log.contains("info 1 state started"));
++    EXPECT_TRUE(server_log.contains("warning 1 negative answer to type 45, cause 7"));
++    EXPECT_TRUE(client_log.contains("trace 1 sent 68 04 07 00 00 00")); // STARTDT act
++    EXPECT_TRUE(client_log.contains("info 1 command type 45 ioa 1: rejected"));
++
++    // After close the client still reports the counters of the last connection.
++    iec104_client_close(client);
++    // The state is CLOSED at once; the close is reported on the next poll.
++    ASSERT_TRUE(run_until(server, client,
++                          [&] { return client_log.contains("info 1 closed: closed locally"); }));
++    iec104_link_stats after{};
++    ASSERT_EQ(iec104_client_get_stats(client, &after), IEC104_OK);
++    EXPECT_EQ(after.u_frames_sent, cs.u_frames_sent);
++
++    iec104_client_destroy(client);
++    iec104_server_destroy(server);
++}
++
++// Rule: violated recommendations of the configuration are reported as
++// warnings when the log is switched on (E2: warning, not error).
++TEST(Operation, ConfigWarningsAreLogged) {
++    iec104_link_config c{};
++    iec104_link_config_init(&c);
++    c.t2_ms = c.t1_ms;
++    iec104_server* server = nullptr;
++    ASSERT_EQ(iec104_server_create(&c, nullptr, &server), IEC104_OK);
++    Log log;
++    iec104_server_set_log(server, IEC104_LOG_WARNING, Log::fn, &log);
++    EXPECT_TRUE(log.contains("warning 0 configuration: t2 is not below t1"));
++    iec104_server_destroy(server);
++}
+diff --git a/tools/check_install.sh b/tools/check_install.sh
+new file mode 100755
+index 0000000..3eabd72
+--- /dev/null
++++ b/tools/check_install.sh
+@@ -0,0 +1,40 @@
++#!/usr/bin/env bash
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++# check_install.sh – installiert einen Build, baut examples/ dagegen
++# (find_package) und lässt hello_server und hello_client gegeneinander laufen.
++#
++# Aufruf: tools/check_install.sh BUILD_ORDNER QUELL_ORDNER
++# Rückgabe: 0 = Installation, Build und Lauf erfolgreich.
++
++set -u
++
++BUILD="$1"
++SRC="$2"
++WORK="$(mktemp -d)"
++SPID=""
++trap '[ -n "$SPID" ] && kill "$SPID" 2>/dev/null; rm -rf "$WORK"' EXIT
++
++fail() { echo "check_install: $1" >&2; [ -f "$WORK/log" ] && cat "$WORK/log" >&2; exit 1; }
++
++cmake --install "$BUILD" --prefix "$WORK/prefix" > "$WORK/log" 2>&1 || fail "install"
++cmake -S "$SRC/examples" -B "$WORK/build" -DCMAKE_PREFIX_PATH="$WORK/prefix" \
++    > "$WORK/log" 2>&1 || fail "configure examples"
++cmake --build "$WORK/build" > "$WORK/log" 2>&1 || fail "build examples"
++
++"$WORK/build/hello_server" 0 > "$WORK/server.log" 2>&1 &
++SPID=$!
++PORT=""
++for _ in $(seq 1 100); do
++    PORT="$(sed -n 's/^listening on port \([0-9]*\)$/\1/p' "$WORK/server.log")"
++    [ -n "$PORT" ] && break
++    sleep 0.05
++done
++[ -n "$PORT" ] || fail "hello_server did not start"
++
++timeout 30 "$WORK/build/hello_client" 127.0.0.1 "$PORT"
++RC=$?
++[ "$RC" -eq 0 ] || fail "hello_client exit code $RC"
++echo "check_install: ok (installed, built with find_package, examples ran)"
+diff --git a/tools/selftest/selftest_client.cpp b/tools/selftest/selftest_client.cpp
+index fc39551..79f70ed 100644
+--- a/tools/selftest/selftest_client.cpp
++++ b/tools/selftest/selftest_client.cpp
+@@ -272,7 +272,7 @@ void print_help() {
+ int main(int argc, char** argv) {
+     Client c;
+     c.opt.common.host = "127.0.0.1";
+-    iec104_link_config_init(&c.opt.common.link);
++    selftest::load_config_option(argc, argv, c.opt.common);
+     for (int i = 1; i < argc; ++i) {
+         const std::string arg = argv[i];
+         if (selftest::parse_common(argc, argv, i, c.opt.common)) {
+@@ -310,6 +310,11 @@ int main(int argc, char** argv) {
+         std::fprintf(stderr, "invalid configuration: %s\n", iec104_status_string(st));
+         return 2;
+     }
++    (void)iec104_client_set_options(c.handle, &c.opt.common.client);
++    if (c.opt.common.log_level >= 0) {
++        iec104_client_set_log(c.handle, static_cast<iec104_log_level>(c.opt.common.log_level),
++                              selftest::print_log, nullptr);
++    }
+     const auto ca = static_cast<std::uint16_t>(c.opt.ca);
+     const std::uint64_t step_ms = c.opt.timeout_s * 1000U;
+     std::printf("iec104_selftest_client: %s:%u, station %u%s\n", c.opt.common.host.c_str(),
+@@ -483,6 +488,10 @@ int main(int argc, char** argv) {
+ 
+     iec104_client_close(c.handle);
+     (void)wait_for(c, 1000, [&] { return c.state == IEC104_LINK_CLOSED; });
++    iec104_link_stats stats{};
++    if (c.opt.common.stats && iec104_client_get_stats(c.handle, &stats) == IEC104_OK) {
++        selftest::print_stats(stats);
++    }
+     iec104_client_destroy(c.handle);
+     std::printf("result: %s\n", passed ? "PASSED" : "FAILED");
+     return passed ? 0 : 1;
+diff --git a/tools/selftest/selftest_common.hpp b/tools/selftest/selftest_common.hpp
+index e85e9b1..681292d 100644
+--- a/tools/selftest/selftest_common.hpp
++++ b/tools/selftest/selftest_common.hpp
+@@ -61,9 +61,76 @@ struct CommonOptions {
+     std::string host;
+     std::uint16_t port{IEC104_DEFAULT_PORT};
+     iec104_link_config link{};
++    iec104_server_options server{};
++    iec104_client_options client{};
+     bool verbose{false};
++    bool stats{false};
++    int log_level{-1}; ///< -1 = no log output, else iec104_log_level
++
++    CommonOptions() {
++        iec104_link_config_init(&link);
++        iec104_server_options_init(&server);
++        iec104_client_options_init(&client);
++    }
+ };
+ 
++/**
++ * @brief Applies --config FILE before all other options, so that options on
++ *        the command line override the file. Exits with code 2 on errors.
++ */
++inline void load_config_option(int argc, char** argv, CommonOptions& o) {
++    for (int i = 1; i + 1 < argc; ++i) {
++        if (std::string(argv[i]) != "--config") {
++            continue;
++        }
++        iec104_config c{};
++        iec104_config_init(&c);
++        c.link = o.link;
++        c.server = o.server;
++        c.client = o.client;
++        c.port = o.port;
++        std::snprintf(c.host, sizeof c.host, "%s", o.host.c_str());
++        int line = 0;
++        const iec104_status st = iec104_config_load(argv[i + 1], &c, &line);
++        if (st != IEC104_OK) {
++            std::fprintf(stderr, "%s: %s (line %d)\n", argv[i + 1], iec104_status_string(st), line);
++            std::exit(2);
++        }
++        o.link = c.link;
++        o.server = c.server;
++        o.client = c.client;
++        o.port = c.port;
++        o.host = c.host;
++    }
++}
++
++/** @brief Log callback of the programs: one line per message on stdout. */
++inline void print_log(void* /*user*/, iec104_log_level level, uint32_t connection,
++                      const char* message) {
++    std::printf("[%s] %u: %s\n", iec104_log_level_string(level), connection, message);
++}
++
++/** @brief Prints the counters of one connection. */
++inline void print_stats(const iec104_link_stats& s) {
++    std::printf("  frames sent / received: I %llu / %llu, S %llu / %llu, U %llu / %llu\n"
++                "  octets sent / received: %llu / %llu\n"
++                "  requests %llu, commands accepted %llu, rejected %llu, discarded %llu,"
++                " negative answers %llu\n",
++                static_cast<unsigned long long>(s.i_frames_sent),
++                static_cast<unsigned long long>(s.i_frames_received),
++                static_cast<unsigned long long>(s.s_frames_sent),
++                static_cast<unsigned long long>(s.s_frames_received),
++                static_cast<unsigned long long>(s.u_frames_sent),
++                static_cast<unsigned long long>(s.u_frames_received),
++                static_cast<unsigned long long>(s.bytes_sent),
++                static_cast<unsigned long long>(s.bytes_received),
++                static_cast<unsigned long long>(s.requests),
++                static_cast<unsigned long long>(s.commands_accepted),
++                static_cast<unsigned long long>(s.commands_rejected),
++                static_cast<unsigned long long>(s.commands_discarded),
++                static_cast<unsigned long long>(s.negative_answers));
++}
++
+ /** @brief Prints the options both programs understand (part of --help). */
+ inline void print_common_help() {
+     std::printf("  --port N         TCP port (default %d; server: 0 = any free port)\n"
+@@ -72,6 +139,10 @@ inline void print_common_help() {
+                 "--tolerant)\n"
+                 "  --k N --w N      window sizes (default 12 and 8)\n"
+                 "  --tolerant       accept known deviations of peers (default: strict)\n"
++                "  --config FILE    read parameters from FILE (key = value, see docs/06);\n"
++                "                   options on the command line override the file\n"
++                "  --log LEVEL      library log: error, warning, info, debug, trace\n"
++                "  --stats          print the counters of each connection at the end\n"
+                 "  --verbose        print every state change and object\n"
+                 "  --help           this text\n",
+                 IEC104_DEFAULT_PORT);
+@@ -96,7 +167,24 @@ inline bool parse_common(int argc, char** argv, int& i, CommonOptions& o) {
+     const std::string arg = argv[i];
+     auto value = [&]() -> const char* { return i + 1 < argc ? argv[++i] : nullptr; };
+     constexpr unsigned long kMaxSeconds = 48UL * 3600UL;
+-    if (arg == "--host") {
++    if (arg == "--config") {
++        (void)value(); // applied before by load_config_option()
++    } else if (arg == "--stats") {
++        o.stats = true;
++    } else if (arg == "--log") {
++        const std::string level = value() != nullptr ? argv[i] : "";
++        const char* names[] = {"error", "warning", "info", "debug", "trace"};
++        o.log_level = -1;
++        for (int n = 0; n < 5; ++n) {
++            if (level == names[n]) {
++                o.log_level = n;
++            }
++        }
++        if (o.log_level < 0) {
++            std::fprintf(stderr, "invalid value for --log: %s\n", level.c_str());
++            std::exit(2);
++        }
++    } else if (arg == "--host") {
+         const char* v = value();
+         o.host = v != nullptr ? v : "";
+     } else if (arg == "--port") {
+diff --git a/tools/selftest/selftest_server.cpp b/tools/selftest/selftest_server.cpp
+index 57471d8..576211f 100644
+--- a/tools/selftest/selftest_server.cpp
++++ b/tools/selftest/selftest_server.cpp
+@@ -92,6 +92,12 @@ void on_state(void* user, std::uint32_t id, iec104_link_state state, iec104_clos
+         selftest::report_line("clock synchronizations", std::to_string(p.clock_syncs));
+         const bool passed =
+             p.sent == s->opt.count && (reason == IEC104_CLOSE_PEER || reason == IEC104_CLOSE_LOCAL);
++        if (s->opt.common.stats) {
++            iec104_link_stats st{};
++            if (iec104_server_get_stats(s->handle, id, &st) == IEC104_OK) {
++                selftest::print_stats(st);
++            }
++        }
+         std::printf("connection %u result: %s\n", id, passed ? "PASSED" : "FAILED");
+         if (s->opt.once && !s->finished_once) {
+             s->finished_once = true;
+@@ -196,7 +202,9 @@ void print_help() {
+ 
+ int main(int argc, char** argv) {
+     Server s;
+-    iec104_link_config_init(&s.opt.common.link);
++    // Self-test default; a configuration file or later options may change it.
++    s.opt.common.server.max_command_delay_ms = selftest::kMaxCommandDelayMs;
++    selftest::load_config_option(argc, argv, s.opt.common);
+     for (int i = 1; i < argc; ++i) {
+         const std::string arg = argv[i];
+         if (selftest::parse_common(argc, argv, i, s.opt.common)) {
+@@ -241,10 +249,11 @@ int main(int argc, char** argv) {
+                                     IEC104_COMMAND_SELECT_EXECUTE, selftest::kSelectTimeoutMs);
+     (void)iec104_server_add_command(s.handle, selftest::kStation, selftest::kTimedIoa, 58,
+                                     IEC104_COMMAND_DIRECT, 0);
+-    iec104_server_options options;
+-    iec104_server_options_init(&options);
+-    options.max_command_delay_ms = selftest::kMaxCommandDelayMs;
+-    (void)iec104_server_set_options(s.handle, &options);
++    (void)iec104_server_set_options(s.handle, &s.opt.common.server);
++    if (s.opt.common.log_level >= 0) {
++        iec104_server_set_log(s.handle, static_cast<iec104_log_level>(s.opt.common.log_level),
++                              selftest::print_log, nullptr);
++    }
+     st = iec104_server_listen(s.handle, s.opt.common.host.c_str(), s.opt.common.port);
+     if (st != IEC104_OK) {
+         std::fprintf(stderr, "cannot listen on port %u: %s\n", s.opt.common.port,
