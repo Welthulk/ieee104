@@ -9,7 +9,7 @@
 # every second and is sent spontaneously; the library answers a general
 # interrogation by itself. Commands are printed and accepted.
 #
-#   julia server.jl [port] [seconds]
+#   julia server.jl [port] [seconds] [address]      address default: all
 
 include(joinpath(@__DIR__, "IEC104.jl"))
 using .IEC104
@@ -25,7 +25,7 @@ function on_command(user::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd::Pt
     return Cint(1)   # 1 = accept (positive confirmation), 0 = reject
 end
 
-function main(port = IEC104.DEFAULT_PORT, seconds = 0)
+function main(port = IEC104.DEFAULT_PORT, seconds = 0, address = nothing)
     st = ServerState(Tuple{UInt32,AsduInfo,Object}[])
     cb = Callbacks(st;
         on_command = @cfunction(on_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})))
@@ -34,8 +34,10 @@ function main(port = IEC104.DEFAULT_PORT, seconds = 0)
         try
             value = 0.0
             server_add_point(server, 1, Object(13, 100, value))   # M_ME_NC_1, group 1
-            server_listen(server, port)
+            address === nothing ? server_listen(server, port) :
+                                  server_listen(server, port; address = address)
             println("listening on port ", server_port(server))
+            flush(stdout)   # stdout to a file is buffered; scripts wait for this line
             t_end = seconds > 0 ? time() + seconds : Inf
             next = time() + 1
             while time() < t_end
@@ -44,6 +46,7 @@ function main(port = IEC104.DEFAULT_PORT, seconds = 0)
                     println("connection $conn: command type $(i.type), IOA $(c.ioa), value $(c.value)")
                 end
                 empty!(st.commands)
+                flush(stdout)
                 if time() >= next                                # once per second
                     value += 1
                     server_update(server, 1, Object(13, 100, value))
@@ -59,5 +62,5 @@ end
 if abspath(PROGRAM_FILE) == @__FILE__
     port = parse(Int, get(ARGS, 1, string(IEC104.DEFAULT_PORT)))
     seconds = parse(Int, get(ARGS, 2, "0"))
-    main(port, seconds)
+    main(port, seconds, get(ARGS, 3, nothing))
 end

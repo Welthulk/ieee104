@@ -13,7 +13,7 @@ cd "$(dirname "$0")" || exit 1
 PORT="${1:-2404}"
 command -v julia > /dev/null 2>&1 || { echo "Julia fehlt (bash pruefen.sh)"; exit 1; }
 LOG="$(mktemp)"
-julia --startup-file=no julia/server.jl "$PORT" 120 < /dev/null > "$LOG" 2>&1 &
+julia --startup-file=no julia/server.jl "$PORT" 120 127.0.0.1 < /dev/null > "$LOG" 2>&1 &
 SERVER=$!
 trap 'kill "$SERVER" 2>/dev/null; rm -f "$LOG"' EXIT
 echo "Station startet (beim ersten Start nach einer Julia-Installation bis zu einigen Minuten) ..."
@@ -26,5 +26,12 @@ grep -q listening "$LOG" || { echo "Station nach 5 Minuten nicht bereit:"; cat "
 echo "Station läuft auf Port $PORT, Leitstelle verbindet sich:"
 julia --startup-file=no julia/client.jl 127.0.0.1 "$PORT"
 RC=$?
+if [ "$RC" != 0 ]; then
+    echo "--- Log der Station:"
+    cat "$LOG"
+    echo "--- Station läuft noch: $(kill -0 "$SERVER" 2>/dev/null && echo ja || echo nein)"
+    echo "--- Port $PORT:"
+    ss -ltn 2>/dev/null | grep -E "[:.]$PORT[[:space:]]" || echo "(niemand lauscht)"
+fi
 [ "$RC" = 0 ] && echo "Ergebnis: ok" || echo "Ergebnis: FEHLER ($RC)"
 exit "$RC"

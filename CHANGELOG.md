@@ -1,5 +1,12 @@
 # Änderungen
 
+## 0.6.2 (25.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| Lieferung | `beispiel.sh` konnte „connection closed, reason 3“ melden: Julia puffert die Ausgabe in eine Datei, „listening“ kam erst beim Ende der Station an, die Leitstelle verband sich zu spät. `server.jl` leert die Ausgabe jetzt sofort |
+| Julia | `server.jl [port] [sekunden] [adresse]`: optionale Adresse; `beispiel.sh` startet die Station nur auf `127.0.0.1` und zeigt bei Fehlern Log und Portzustand der Station |
+
 ## 0.6.1 (25.11.2026)
 
 | Bereich | Änderung |
