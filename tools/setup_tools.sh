@@ -8,7 +8,7 @@
 #   ./setup_tools.sh --with-aflpp     zusätzlich AFL++ aus den Quellen bauen
 #                                     (für RHEL/AlmaLinux 9, dort gibt es kein Paket)
 #
-# Unterstützt: apt (Debian/Ubuntu/Tuxedo), dnf (Fedora/RHEL), zypper (openSUSE).
+# Unterstützt: apt (Debian/Ubuntu und Ableger), dnf (Fedora/RHEL), zypper (openSUSE).
 # Pakete werden einzeln installiert. Fehlt ein Paket, läuft das Skript weiter
 # und listet es am Ende auf.
 
@@ -57,7 +57,7 @@ if command -v apt-get >/dev/null 2>&1; then
     )
 elif command -v dnf >/dev/null 2>&1; then
     PM="dnf"
-    # Nicht erreichbare Fremd-Repos (z. B. almalinux-nvidia) überspringen statt abbrechen
+    # Nicht erreichbare Zusatz-Paketquellen überspringen statt abbrechen
     UPDATE="$SUDO dnf -y --setopt=skip_if_unavailable=True makecache"
     INSTALL="$SUDO dnf install -y --setopt=skip_if_unavailable=True"
     PACKAGES=(

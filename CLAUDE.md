@@ -1,9 +1,10 @@
 # CLAUDE.md – Regeln für Claude Code in diesem Repo
 
-IEC-60870-5-104-Library für die SpPS (SOPTIM). Kern C++17, stabile C-API, TLS über externe Library.
+Exemplarische IEC-60870-5-104-Library: Client und Server, Kern C++17, stabile C-API, TLS über externe Library (OpenSSL 3.x).
 
 ## Verbindliche Unterlagen
 
+- `tasks/TASK-000_Auftrag.md` ist der Gesamtauftrag und hat Vorrang vor den übrigen Aufgaben.
 - `docs/02_Konzept_IEC104_Library.md` ist maßgeblich (Sprache, Architektur, Parameter, Tests).
 - `docs/03_Recherchebericht_IEC104_im_Detail.md` liefert Belege und Werte. Seine Rust-Aussagen (rustls, `Strictness::…`, cargo-fuzz) sind überholt; Sprache ist C++17, TLS-Backend OpenSSL 3.x.
 - `docs/01_IEC104_verstehen.md` ist die Einführung.
@@ -34,6 +35,9 @@ Werkzeuge installiert `tools/setup_tools.sh`.
 
 ## Code-Regeln
 
+- Exemplarische Library: Lesbarkeit und Nachvollziehbarkeit vor Performance.
+- Kommentarstandard nach `tasks/TASK-000_Auftrag.md`, Abschnitt 5.
+- Neutralitätsregel nach `tasks/TASK-000_Auftrag.md`, Abschnitt 4; `tools/check_neutral.sh` vor jedem Commit.
 - C++17, keine Exceptions, kein RTTI im Library-Code (`-fno-exceptions -fno-rtti`). Fehler als `iec104_status`.
 - Öffentliche Header: nur C, keine STL-Typen, alles mit `IEC104_API` exportiert.
 - Normverhalten ist Default. Jede bekannte Abweichung einer Gegenstelle wird ein Parameter, nie ein Code-Zweig für einen Hersteller.
@@ -46,4 +50,5 @@ Werkzeuge installiert `tools/setup_tools.sh`.
 ## Git
 
 - Kleine Commits, Nachricht auf Deutsch, Präfix nach Modul (`codec: …`, `apci: …`, `build: …`).
+- Vor jedem Commit: `tools/check_neutral.sh --message <Datei mit Commit-Nachricht>`.
 - Nicht pushen, ohne zu fragen.
