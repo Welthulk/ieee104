@@ -1,6 +1,6 @@
 # Normfragen und Festlegungen
 
-Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stellen zu N1–N13 sind mit `TODO(norm)` markiert; E1–E8 sind technische Festlegungen. Belege: `docs/02_Technik_und_Quellen.md`, `docs/03_Quellen_APCI.md`.
+Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stellen zu N1–N13 sind mit `TODO(norm)` markiert; E1–E9 sind technische Festlegungen. Belege: `docs/02_Technik_und_Quellen.md`, `docs/03_Quellen_APCI.md`.
 
 ## Normfragen
 
@@ -17,7 +17,7 @@ Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stell
 | N9 | ASDU mit 0 Objekten (VSQ = 0) | codec | Dekodieren | Strikt: `IEC104_ERR_MALFORMED`. Tolerant: angenommen, wenn keine Objektoktette folgen. Kodieren mit 0 Objekten ist nie möglich |
 | N10 | Gemeinsame Adresse 0 und 65535 (Broadcast) | session | Annahme von Generalabfrage und Uhrzeit als Broadcast | 65535 (bei 1-Oktett-CA 255) nur bei 100, 101, 103, 105, beantwortet je Station mit deren Adresse; andere unbekannte Adressen negativ mit Ursache 46 |
 | N11 | Inhalt von COR1:2023 | alle | Unbekannte Korrekturen | Keine Annahme |
-| N12 | TLS nach IEC 62351-3 Ed. 2: Cipher-Suites, Renegotiation, Key Update | transport | Defaults der TLS-Konfiguration | TLS 1.3 bevorzugt, für TLS 1.2 nur ECDHE mit AEAD, sichere Renegotiation (RFC 5746) |
+| N12 | TLS nach IEC 62351-3 Ed. 2: Cipher-Suites (Tabelle 1), Resumption und Renegotiation (7.4.4, 7.4.5), Key Update (8.4) | transport | Defaults der TLS-Konfiguration | TLS 1.2 und 1.3; für 1.2 nur ECDHE mit AEAD (GCM, ChaCha20-Poly1305), für 1.3 die Suites ohne CCM; gegenseitige Authentifizierung mit X.509; Renegotiation nur nach RFC 5746, in beide Richtungen erlaubt, abschaltbar; Schlüsselerneuerung nach Zeit, Default aus; Session Resumption an, Lebensdauer 1 h. Alles je Handle einstellbar (`iec104_tls_config`) |
 | N13 | Zeitbasis UTC oder Ortszeit | session | Bewertung von Zeitmarken | Nicht genormt; Zeitbasis wird Parameter (UTC / fester Offset / Ortszeit mit SU). CP56Time2a im Codec ohne Zeitzone |
 
 ## Technische Festlegungen
@@ -32,3 +32,4 @@ Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stell
 | E6 | Die Library testet sich selbst: Zustandsmaschinen im Speicher gekoppelt (ohne Netz) und Selbsttest-Programme über TCP | Prüfung ohne fremde Gegenstelle, Grundlage für manuelle Tests (`docs/04_Selbsttest.md`) |
 | E7 | Befehlsmodell je IOA: ohne Befehlspunkte entscheidet die Anwendung allein; mit Befehlspunkten prüft die Library IOA, Typ, Select/Execute und Auswahl-Timeout, bevor die Anwendung gefragt wird. Eine Auswahl gilt je Verbindung | Bekannte Anforderungen von Gegenstellen (Select/Execute je Datenpunkt, nur Befehle mit Zeitmarke) werden Parameter statt Anwendungslogik |
 | E8 | Laufzeitmodell: kein interner Thread; die Anwendung ruft `*_poll()` in ihrem Thread, dort laufen auch alle Callbacks. Ein Handle gehört einem Thread | keine Sperren in der Library, vorhersagbares Verhalten; die Anwendung wählt selbst, ob Poll in einem eigenen Thread läuft |
+| E9 | TLS: Der Handshake fällt unter t0, auf Client und Server. Ein Fehler im Handshake oder in der TLS-Schicht schließt die Verbindung (`IEC104_CLOSE_TLS`) und wird als Sicherheitsereignis gemeldet (`on_security`). Neue TLS-Einstellungen gelten für neue Verbindungen, offene behalten ihre Sitzung | t0 begrenzt den Verbindungsaufbau; ohne Grenze hält eine Gegenstelle, die nur TCP öffnet, Ressourcen des Servers fest. Zertifikate lassen sich so ohne Neustart wechseln |

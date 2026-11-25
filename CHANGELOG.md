@@ -1,5 +1,19 @@
 # Änderungen
 
+## 0.3.0 (25.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| TLS | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3.x: `iec104_tls_config`, `iec104_server_set_tls`, `iec104_client_set_tls` |
+| TLS | gegenseitige Authentifizierung, Sperrliste, Name oder SHA-256-Fingerprint der Gegenstelle, Schlüssel mit Passwort |
+| TLS | Key Update (1.3) und Renegotiation (1.2) nach Zeit, Session Resumption, Zertifikatswechsel zur Laufzeit |
+| TLS | Callback `on_security`, Schließgrund `IEC104_CLOSE_TLS`, `iec104_*_get_tls_info` |
+| Konfiguration | Schlüssel `tls`, `tls_*`; relative Pfade ab dem Verzeichnis der Datei |
+| Selbsttest | Optionen `--tls*`; ctest auch über TLS; Test-PKI `tools/make_test_certs.sh` |
+| Build | Option `IEC104_TLS` (Default an); `find_package(iec104)` zieht OpenSSL nach |
+| Lieferung | zusätzlich fertig gebaute Library `iec104-<version>-linux-x86_64.zip` |
+| Festlegung | E9: TLS-Handshake fällt unter t0 |
+
 ## 0.2.0 (25.11.2026)
 
 | Bereich | Änderung |

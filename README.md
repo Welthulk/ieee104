@@ -1,8 +1,8 @@
 # IEC 60870-5-104 Library
 
-Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`). Jede Protokollregel im Code nennt ihre Quelle.
+Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
 
-Stand: 25.11.2026, Version 0.2.0, Linux x86-64.
+Stand: 25.11.2026, Version 0.3.0, Linux x86-64.
 
 ## Stand
 
@@ -10,13 +10,14 @@ Stand: 25.11.2026, Version 0.2.0, Linux x86-64.
 | --- | --- |
 | `codec` | APCI (I/S/U-Format), ASDU-Kopf mit parametrierbaren Feldlängen, alle Informationselemente, Typtabelle mit 59 Typkennungen, vollständige ASDUs mit SQ = 0 und SQ = 1, Aufteilen langer Objektlisten nach maximaler ASDU-Länge, strikter und toleranter Modus, CP56Time2a |
 | `apci` | Zustandsmaschine der Verbindung ohne eigenes I/O: STARTDT/STOPDT/TESTFR, Folgenummern, Quittierung nach k und w, Timer t1–t3 |
-| `transport` | TCP für Linux (nicht blockierend, `poll`), Verbindungsaufbau mit t0 |
+| `transport` | TCP für Linux (nicht blockierend, `poll`), Verbindungsaufbau mit t0; TLS 1.2/1.3 mit OpenSSL 3.x |
 | `session` | Abläufe der gesteuerten Station: Prozessabbild, Generalabfrage (Station und Gruppen), Zählerabfrage, Lesebefehl, Testbefehl, Uhrzeit, Befehle mit Bestätigung und Beendigung, Ende der Initialisierung, negative Bestätigungen (Ursachen 44–47) |
 | C-API | Server und Client mit Handles, konfigurierbaren Ports, Timern und ASDU-Profil; Werte statt Oktette (`iec104_object`), Callbacks für Objekte, Befehle und Zustandswechsel |
 | Selbsttest | `iec104_selftest_server` und `iec104_selftest_client` für automatische und manuelle Tests |
 | Befehle | Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung am Client mit Ergebnis je Befehl und getrennten Timeouts |
 | Betrieb | Log-Callback mit Stufen und APDU-Trace, Statistik je Verbindung, Konfigurationsdatei, `find_package(iec104)`, statisch oder geteilt |
-| in Arbeit | Pufferung, TLS (OpenSSL 3.x), Redundanzgruppen |
+| TLS | IEC 62351-3: gegenseitige Authentifizierung mit X.509, Sperrlisten, Name oder Fingerprint der Gegenstelle, Key Update und Renegotiation nach Zeit, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse |
+| in Arbeit | Pufferung, Redundanzgruppen |
 
 ## Unterlagen
 
@@ -26,8 +27,8 @@ Stand: 25.11.2026, Version 0.2.0, Linux x86-64.
 | `docs/02_Technik_und_Quellen.md` | Architektur, Protokollaufbau, Parameter, Typkennungen, Elemente, Quellen |
 | `docs/03_Quellen_APCI.md` | Öffentliche Belege für die Regeln der Verbindungssteuerung |
 | `docs/04_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
-| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E8), auf die der Code verweist |
-| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Regeln |
+| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E9), auf die der Code verweist |
+| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, TLS, Regeln |
 
 ## Verzeichnisse
 
@@ -37,17 +38,17 @@ Stand: 25.11.2026, Version 0.2.0, Linux x86-64.
 | `src/codec/` | reine Funktionen auf Byte-Puffern, kein I/O, keine Allokation |
 | `src/apci/` | Zustandsmaschine: Bytes und Zeit rein, Bytes und Ereignisse raus |
 | `src/session/` | Anwendungsabläufe der gesteuerten Station, Prozessabbild |
-| `src/transport/` | Sockets, Verbindungsaufbau, Zeitbasis |
+| `src/transport/` | Sockets, Verbindungsaufbau, Zeitbasis, TLS-Backend |
 | `src/api/` | Implementierung der C-Schnittstelle |
 | `tests/` | Unit-Tests (GoogleTest), Referenzdaten unter `tests/data/` |
 | `fuzz/` | libFuzzer-Ziele für Codec und Zustandsmaschine |
 | `examples/` | Hello World: kleinster Server und Client |
 | `tools/selftest/` | Selbsttest-Programme und Testskript |
-| `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer |
+| `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer, Test-PKI für TLS |
 
 ## Bauen und testen
 
-Werkzeuge einmalig installieren (AlmaLinux 9): `./tools/setup_tools.sh`
+Werkzeuge einmalig installieren (AlmaLinux 9): `./tools/setup_tools.sh`. TLS braucht OpenSSL 3 mit Headern (`openssl-devel`); ohne OpenSSL: `-DIEC104_TLS=OFF`.
 
 ```bash
 cmake --preset debug && cmake --build --preset debug && ctest --preset debug    # Build und alle Tests
@@ -73,6 +74,8 @@ Die Library baut mit `-Werror`, ohne Exceptions und ohne RTTI. Formatierung nach
 build/debug/iec104_selftest_server --port 2404 --count 100
 build/debug/iec104_selftest_client --host 127.0.0.1 --port 2404 --idle 25
 build/debug/iec104_selftest_client --host <Gerät> --foreign --ca <Adresse> --idle 60     # fremder Server
+tools/selftest/run_selftest.sh build/debug/iec104_selftest_server \
+    build/debug/iec104_selftest_client --tls build/debug/tls                            # über TLS
 ```
 
 Der Client meldet jeden Schritt mit `ok` oder `FAILED` und endet mit `result: PASSED` (Exit-Code 0) oder `result: FAILED` (Exit-Code 1). `ctest` lässt beide Programme automatisch über Loopback gegeneinander laufen. Testfälle gegen fremde Geräte, Fehlerfälle und alle Optionen: `docs/04_Selbsttest.md`.
@@ -121,6 +124,8 @@ int main(void) {
 Befehlspunkte legt der Server mit `iec104_server_add_command` fest (direkt oder Select/Execute); die maximale Befehlsverzögerung steht in `iec104_server_options`.
 
 Der Client funktioniert entsprechend: `iec104_client_create`, `iec104_client_connect(client, host, port)`, nach dem Zustand `IEC104_LINK_STOPPED` `iec104_client_start`, danach zum Beispiel `iec104_client_interrogation(client, 1, 20)`; die Antworten kommen als Objekte über `on_object`. Befehle sendet `iec104_client_send_command` oder, zweistufig, `iec104_client_select_execute`; das Ergebnis jedes Befehls (ausgeführt, abgelehnt, keine Bestätigung, …) meldet `on_command_result`. Alle Funktionen liefern einen `iec104_status`; `iec104_status_string()` gibt einen lesbaren Text dazu.
+
+TLS: `iec104_server_set_tls` bzw. `iec104_client_set_tls` mit CA, Zertifikat und Schlüssel vor `listen`/`connect`, sonst ändert sich nichts (`docs/06_Anleitung.md`, Abschnitt 6).
 
 ## Lizenz
 

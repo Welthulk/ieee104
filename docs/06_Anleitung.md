@@ -15,15 +15,18 @@ cmake --install build/release --prefix /opt/iec104
 | --- | --- |
 | statisch (Default) | – |
 | geteilt (`libiec104.so`) | `-DBUILD_SHARED_LIBS=ON` oder Preset `shared` |
+| ohne TLS (ohne OpenSSL) | `-DIEC104_TLS=OFF`; `*_set_tls()` liefert dann `IEC104_ERR_UNSUPPORTED` |
+
+Fertig gebaut: `iec104-<version>-linux-x86_64.zip` enthält dieselbe Struktur wie `/opt/iec104` (geteilte Library, Header, CMake-Dateien, Selbsttest). Läuft auf Linux x86-64 mit glibc ab 2.34 und OpenSSL 3, z. B. AlmaLinux 9, Ubuntu ab 22.04, auch unter WSL2.
 
 Eigenes CMake-Projekt:
 
 ```cmake
-find_package(iec104 0.2 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
+find_package(iec104 0.3 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
 target_link_libraries(meine_app PRIVATE iec104::iec104)
 ```
 
-Ohne CMake: `-I/opt/iec104/include -L/opt/iec104/lib -liec104 -lstdc++ -lm`.
+Ohne CMake: `-I/opt/iec104/include -L/opt/iec104/lib -liec104`; statisch zusätzlich `-lssl -lcrypto -lstdc++ -lm`.
 
 ## 2. Hello World
 
@@ -192,7 +195,63 @@ iec104_client_connect(client, cfg.host, cfg.port);
 
 Alle Schlüssel: Kommentar zu `iec104_config_load()` im Header. Zeiten in Sekunden.
 
-## 6. Regeln
+## 6. TLS
+
+IEC 104 selbst ist ungeschützt. Mit TLS nach IEC 62351-3 laufen dieselben APDUs verschlüsselt und beide Seiten weisen sich mit Zertifikat aus. Standardport mit TLS: 19998 (`IEC104_DEFAULT_TLS_PORT`).
+
+```c
+iec104_tls_config tls;
+iec104_tls_config_init(&tls);                       /* Profil N12: TLS 1.2/1.3, gegenseitige Prüfung */
+strcpy(tls.ca_file, "/etc/iec104/ca.pem");          /* wem vertraut wird */
+strcpy(tls.certificate_file, "/etc/iec104/station.pem");
+strcpy(tls.private_key_file, "/etc/iec104/station.key");
+strcpy(tls.crl_file, "/etc/iec104/crl.pem");        /* optional */
+
+iec104_server_set_tls(server, &tls);                /* vor listen; Client: iec104_client_set_tls vor connect */
+iec104_server_listen(server, NULL, IEC104_DEFAULT_TLS_PORT);
+```
+
+Alles Weitere bleibt gleich: Callbacks, Senden, Poll.
+
+| Einstellung | Feld | Default |
+| --- | --- | --- |
+| CA, eigenes Zertifikat, Schlüssel | `ca_file`, `certificate_file`, `private_key_file` | – (CA immer, Zertifikat am Server Pflicht) |
+| verschlüsselter Schlüssel | `key_password` | – |
+| Sperrliste | `crl_file` | keine Prüfung |
+| Name der Gegenstelle | `peer_name` (DNS-Name oder Adresse) | keine Namensprüfung |
+| Zertifikat festnageln | `peer_fingerprint` (SHA-256, hex) | aus |
+| Versionen | `min_version`, `max_version` | 1.2 bis 1.3 |
+| Suites | `cipher_list` (1.2), `cipher_suites` (1.3), OpenSSL-Schreibweise | ECDHE mit AEAD |
+| Schlüsselerneuerung | `renewal_interval_s` | aus |
+| Renegotiation (1.2) | `renegotiation` | erlaubt (nur RFC 5746) |
+| Session Resumption | `session_resumption`, `session_lifetime_s` | an, 3600 s |
+| Gegenstelle prüfen | `verify_peer` | 1; 0 nur für Tests |
+
+| Thema | Verhalten |
+| --- | --- |
+| Fehler in den Einstellungen | `*_set_tls()` meldet ihn sofort (`IEC104_ERR_IO`: Datei, `IEC104_ERR_INVALID_ARGUMENT`: Inhalt), Grund im Log |
+| Handshake | gehört zum Verbindungsaufbau und muss innerhalb von t0 fertig sein (E9) |
+| Abgelehnte Gegenstelle | Verbindung zu, Grund `IEC104_CLOSE_TLS`; `on_security` nennt die Ursache, z. B. `certificate has expired` |
+| Zertifikatswechsel | `*_set_tls()` erneut aufrufen; gilt für neue Verbindungen, offene laufen weiter |
+| Details einer Verbindung | `iec104_server_get_tls_info()` / `iec104_client_get_tls_info()`: Version, Suite, Zertifikat der Gegenstelle |
+
+In der Konfigurationsdatei (relative Pfade gelten ab dem Verzeichnis der Datei):
+
+```ini
+port = 19998
+tls = 1
+tls_ca = pki/ca.pem
+tls_certificate = pki/station.pem
+tls_key = pki/station.key
+tls_crl = pki/crl.pem
+tls_peer_name = leitstelle.example
+```
+
+```c
+if (cfg.use_tls) iec104_client_set_tls(client, &cfg.tls);
+```
+
+## 7. Regeln
 
 | Regel | Grund |
 | --- | --- |
@@ -201,3 +260,4 @@ Alle Schlüssel: Kommentar zu `iec104_config_load()` im Header. Zeiten in Sekund
 | `IEC104_ERR_WOULD_BLOCK` beim Senden: pollen und erneut senden | Fenster k voll |
 | Zeiger in Callbacks gelten nur während des Aufrufs | Puffer der Library |
 | Zeitmarken: UTC | `iec104_time` hat keine Zeitzone (N13) |
+| TLS: `peer_name` oder `peer_fingerprint` setzen, wenn die CA auch andere Stationen ausstellt | sonst wird jedes gültige Zertifikat der CA angenommen |

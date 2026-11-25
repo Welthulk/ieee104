@@ -133,7 +133,10 @@ UTC oder Ortszeit ist nicht genormt, sondern Teil der Interoperabilitätsliste. 
 | Punkt | Stand |
 | --- | --- |
 | IEC 104 | keine Integrität, Authentifizierung oder Verschlüsselung |
-| TLS | IEC 62351-3 Ed. 2 (2023), TLS 1.2/1.3 [62351]; Umsetzung über OpenSSL 3.x geplant |
+| TLS | IEC 62351-3 Ed. 2 (2023), TLS 1.2/1.3 [62351]; umgesetzt mit OpenSSL 3.x hinter einer Backend-Schnittstelle (`src/transport/tls.hpp`), Profil siehe docs/05, N12 |
+| Authentifizierung | gegenseitig mit X.509: CA, eigenes Zertifikat mit Kette, Sperrlisten (CRL), optional Name oder SHA-256-Fingerprint der Gegenstelle |
+| Schlüsselerneuerung | Key Update (TLS 1.3, RFC 8446), Renegotiation (TLS 1.2, RFC 5746), nach Zeit |
+| Ereignisse | Callback `on_security`: Handshake, abgelehntes Zertifikat, TLS-Fehler, Schlüsselerneuerung |
 | Port | 2404 ohne TLS, 19998 mit TLS („iec-104-sec“) [IANA] |
 
 ## Designfolgerungen

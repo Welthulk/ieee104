@@ -75,13 +75,15 @@ Exit-Code: `0` = bestanden, `1` = ein Schritt fehlgeschlagen, `2` = falscher Auf
 
 ## 2. Bauen
 
-Voraussetzungen: Linux x86-64, CMake ab 3.21, GCC oder Clang mit C++17, GoogleTest (`tools/setup_tools.sh` installiert alles unter AlmaLinux 9).
+Voraussetzungen: Linux x86-64, CMake ab 3.21, GCC oder Clang mit C++17, GoogleTest, OpenSSL 3 mit Headern und dem Programm `openssl` (`tools/setup_tools.sh` installiert alles unter AlmaLinux 9).
 
 ```bash
 cmake --preset debug
 cmake --build --preset debug
-ctest --preset debug          # alle automatischen Tests, darunter der Selbsttest über TCP
+ctest --preset debug          # alle automatischen Tests, darunter der Selbsttest über TCP und TLS
 ```
+
+Der Build legt unter `build/debug/tls/` eine Test-PKI an (`tools/make_test_certs.sh`): CA, Server- und Client-Zertifikat, dazu gesperrte, abgelaufene und fremde Zertifikate für Negativtests. Nur für Tests.
 
 Die Programme liegen danach unter `build/debug/iec104_selftest_server` und `build/debug/iec104_selftest_client`. Mit `cmake --install build/debug --prefix /opt/iec104` landen sie in `/opt/iec104/bin`.
 
@@ -93,10 +95,14 @@ Die Programme liegen danach unter `build/debug/iec104_selftest_server` und `buil
 2. startet den Client gegen diesen Port mit kurzem t3 (1 s) und 3 s Ruhe, damit auch der Verbindungstest mit TESTFR läuft,
 3. wertet die Exit-Codes beider Programme aus.
 
+Ein zweiter Lauf macht dasselbe über TLS mit gegenseitiger Authentifizierung, Sperrliste, Namensprüfung und Schlüsselerneuerung alle 2 s.
+
 Von Hand:
 
 ```bash
 tools/selftest/run_selftest.sh build/debug/iec104_selftest_server build/debug/iec104_selftest_client
+tools/selftest/run_selftest.sh build/debug/iec104_selftest_server build/debug/iec104_selftest_client \
+    --tls build/debug/tls
 ```
 
 ## 4. Manuelle Tests
@@ -156,14 +162,54 @@ iec104_selftest_client --host <Gerät> --foreign --t1 250 --t2 240 --t3 255 --k 
 | Test | Vorgehen | Erwartung |
 | --- | --- | --- |
 | Port falsch | Client gegen einen Port ohne Server | `connect … FAILED (connect failed)`, Exit-Code 1 |
-| Server nicht erreichbar | Client gegen eine Adresse, die nicht antwortet, `--t0 5` | nach 5 s `FAILED (t0 timeout (connect))` |
+| Server nicht erreichbar | Client gegen eine Adresse, die nicht antwortet, `--t0 5` | nach 5 s `FAILED (t0 timeout (connect or TLS handshake))` |
 | Gegenstelle antwortet nicht mehr | Server mit `kill -STOP <pid>` anhalten, während der Client in der Ruhephase ist (`--idle 60 --t3 5`) | nach t3 + t1 (5 s + 15 s) `idle period … FAILED (t1 timeout (no acknowledgement))` |
 | Verbindungsabbruch | Server während der Übertragung mit Strg-C beenden | Client: `FAILED (closed by peer)` |
 | Port belegt | zweiten Server auf demselben Port starten | `cannot listen on port 2404: i/o error`, Exit-Code 2 |
 
 Nach `kill -STOP` den Server mit `kill -CONT <pid>` wieder fortsetzen oder beenden.
 
-### 4.6 Mitschnitt mit Wireshark
+### 4.6 TLS
+
+Mit eigenen Zertifikaten oder der Test-PKI (`P=build/debug/tls`):
+
+```bash
+iec104_selftest_server --port 19998 --tls-ca $P/ca.pem --tls-cert $P/server.pem --tls-key $P/server.key \
+    --tls-crl $P/crl.pem --log info
+iec104_selftest_client --host <Adresse> --port 19998 --tls-ca $P/ca.pem --tls-cert $P/client.pem \
+    --tls-key $P/client.key --tls-peer-name localhost
+```
+
+Der Client zeigt nach dem Verbindungsaufbau Version, Suite und Zertifikat der Gegenstelle:
+
+```
+  1: TLS established: TLSv1.3, TLS_AES_128_GCM_SHA256, peer CN=localhost
+  connect .............................. ok
+  TLS .................................. TLSv1.3, TLS_AES_128_GCM_SHA256, peer CN=localhost
+```
+
+| Test | Client-Optionen statt `client.pem`/`client.key` | Erwartung am Server |
+| --- | --- | --- |
+| gesperrtes Zertifikat | `--tls-cert $P/revoked.pem --tls-key $P/revoked.key` | `peer certificate rejected: certificate revoked` |
+| abgelaufenes Zertifikat | `--tls-cert $P/expired.pem --tls-key $P/expired.key` | `peer certificate rejected: certificate has expired` |
+| fremde CA | `--tls-cert $P/foreign.pem --tls-key $P/foreign.key` | `peer certificate rejected: unable to get local issuer certificate` |
+| ohne Zertifikat | `--tls` ohne `--tls-cert`/`--tls-key` | `TLS handshake failed: peer did not return a certificate` |
+| ohne TLS | keine `--tls`-Option | `TLS handshake failed: …`, Client `FAILED (closed by peer)` |
+| falscher Name | `--tls-peer-name other.test` | Client: `peer certificate rejected: hostname mismatch` |
+| TLS 1.2 | `--tls-version 1.2` | `TLS established: TLSv1.2, ECDHE-…` |
+
+Mit TLS 1.3 prüft der Server das Client-Zertifikat erst, wenn der Client seinen Teil des Handshakes schon abgeschlossen hat. Der Client meldet deshalb zunächst `connect … ok` und scheitert im nächsten Schritt (`TLS failure` oder `closed by peer`).
+
+Gegenprobe ohne eigene Software, mit OpenSSL als Client (sendet STARTDT act und zeigt die Antwort als Hexdump, beginnend mit `6804 0b00 0000` = STARTDT con):
+
+```bash
+( printf '\x68\x04\x07\x00\x00\x00'; sleep 2 ) | openssl s_client -connect <Adresse>:19998 \
+    -CAfile $P/ca.pem -cert $P/client.pem -key $P/client.key -quiet | xxd | head
+```
+
+`openssl s_client … -tls1_2 -msg` zeigt bei `--tls-renewal 1` am Server jede Sekunde HelloRequest und den neuen Handshake.
+
+### 4.7 Mitschnitt mit Wireshark
 
 Wireshark dekodiert IEC 104 auf Port 2404 von selbst. Für einen anderen Port: *Analyze → Decode As… → TCP port → IEC 60870-5-104*. Mitschnitt ohne Oberfläche:
 
@@ -210,10 +256,27 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
 | `--log STUFE` | Log der Library: error, warning, info, debug, trace (trace = jede APDU als Hexdump) | aus |
 | `--stats` | Zähler je Verbindung am Ende ausgeben | aus |
 
+### TLS (beide)
+
+Jede dieser Optionen schaltet TLS ein.
+
+| Option | Bedeutung | Default |
+| --- | --- | --- |
+| `--tls` | TLS ohne weitere Angaben (nur zusammen mit `--config`) | aus |
+| `--tls-ca F` | vertrauenswürdige CA (PEM) | – |
+| `--tls-cert F`, `--tls-key F` | eigenes Zertifikat und Schlüssel | – |
+| `--tls-crl F` | Sperrliste | keine |
+| `--tls-peer-name N` | erwarteter Name oder Adresse im Zertifikat der Gegenstelle | keine Prüfung |
+| `--tls-fingerprint H` | erwarteter SHA-256-Fingerprint der Gegenstelle | keine Prüfung |
+| `--tls-version V` | höchste Version, 1.2 oder 1.3 | 1.3 |
+| `--tls-renewal S` | Key Update bzw. Renegotiation alle S Sekunden | aus |
+
 ## 6. Was der Selbsttest abdeckt und was nicht
 
 Abgedeckt: TCP-Verbindungsaufbau und -abbau, STARTDT/STOPDT, Folgenummern und Quittierung über viele Rahmen (mehr als k), Verbindungstest nach t3, Zeitüberwachung t1, Ende der Initialisierung, Generalabfrage (Station und Gruppe), Zählerabfrage, Uhrzeitsynchronisation, Befehle mit Bestätigung und Beendigung, Rückmeldung eines Befehls, negative Bestätigungen (abgelehnter Befehl, unbekannte IOA, unbekannte Station).
 
 Ebenfalls abgedeckt: Befehlsmodelle je IOA (direkt, Select/Execute mit Zeitüberwachung der Auswahl), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung des Clients mit Ergebnis je Befehl.
 
-Noch nicht abgedeckt: Pufferung bei unterbrochener Verbindung, TLS, Redundanzgruppen.
+Ebenfalls abgedeckt: TLS mit gegenseitiger Authentifizierung, Sperrliste, Namensprüfung und Schlüsselerneuerung. Negativfälle (fremde CA, abgelaufen, gesperrt, Fingerprint, Handshake-Timeout, Klartext gegen TLS) prüfen die Unit-Tests `Tls.*`.
+
+Noch nicht abgedeckt: Pufferung bei unterbrochener Verbindung, Redundanzgruppen.
