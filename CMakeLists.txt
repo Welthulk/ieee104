@@ -91,7 +91,7 @@ target_include_directories(iec104
 target_compile_definitions(iec104 PRIVATE IEC104_BUILDING_LIBRARY
     IEC104_VERSION_STRING="${PROJECT_VERSION}")
 
-# Core rules: no exceptions, no RTTI (see docs/02_Konzept, Sprachwahl)
+# Core rules: no exceptions, no RTTI (see docs/02_Technik_und_Quellen.md, "Sprache und Architektur")
 target_compile_options(iec104 PRIVATE -fno-exceptions -fno-rtti)
 set_target_properties(iec104 PROPERTIES
     CXX_VISIBILITY_PRESET hidden

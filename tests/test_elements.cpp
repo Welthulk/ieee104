@@ -220,7 +220,7 @@ TEST(Elements, R32) {
 
 // Rule: element lengths as listed in elements.hpp (sum check against the
 // reference ASDUs is done in test_asdu_reference.cpp).
-// Source: docs/03 (element lengths citing Wireshark).
+// Source: docs/02_Technik_und_Quellen.md (element lengths citing Wireshark).
 TEST(Elements, Lengths) {
     EXPECT_EQ(element_length(ElementKind::Siq), 1U);
     EXPECT_EQ(element_length(ElementKind::Nva), 2U);

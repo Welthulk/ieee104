@@ -32,7 +32,7 @@
  *     object before calling them, so they take no size argument.
  *
  * Sources: bit masks of the quality descriptors and value meanings from
- * docs/03 (section on information elements, citing the Wireshark IEC 104
+ * docs/02_Technik_und_Quellen.md (section "Informationselemente", citing the Wireshark IEC 104
  * dissector). Every bit position is also confirmed by
  * tests/data/lib60870_asdu_reference.txt (encoded by lib60870, decoded by
  * Wireshark 3.4.10); where Wireshark shows a type only as raw data, the
@@ -166,7 +166,7 @@ struct Siq {
 /**
  * @brief State of a double point (DPI of DIQ).
  *
- * Source: docs/03 ("0 und 3 unbestimmt, 1 AUS, 2 EIN"); Wireshark names 0
+ * Source: docs/02_Technik_und_Quellen.md ("0 und 3 unbestimmt, 1 AUS, 2 EIN"); Wireshark names 0
  * "indeterminate or intermediate".
  */
 enum class DoublePoint : std::uint8_t {
@@ -413,7 +413,8 @@ struct Qpm {
  * milliseconds).
  */
 
-/** @brief QOI value for a station (general) interrogation; 21..36 = group 1..16 (docs/03). */
+/** @brief QOI value for a station (general) interrogation; 21..36 = group 1..16
+ * (docs/02_Technik_und_Quellen.md). */
 inline constexpr std::uint8_t kQoiStation = 20U;
 /**
  * @brief Fixed test bit pattern of C_TS_NA_1: octets AA 55, read little endian.
@@ -432,7 +433,7 @@ inline constexpr std::uint16_t kFixedTestBitPattern = 0x55AAU;
  *   octet 3:     bit 7 IV | bit 6 RES1 | bits 0..5 minute 0..59
  *
  * Only used by the IEC 101 types 2..19 (even) and 17..19, which the
- * strict IEC 104 profile rejects (docs/07_Normfragen_und_Festlegungen.md, N4).
+ * strict IEC 104 profile rejects (docs/05_Normfragen_und_Festlegungen.md, N4).
  *
  * Example: 2B 17 01 = 5.931 s, minute 1 (reference data, M_SP_TA_1).
  */

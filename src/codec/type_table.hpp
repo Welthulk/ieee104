@@ -18,11 +18,11 @@
  * 58-64, 70, 100-107, 110-113, and the IEC 101 types with CP24Time2a
  * (2-16 even, 17-19), which only the tolerant profile accepts.
  * Not in scope: file transfer 120-127, security types of IEC TS 60870-5-7.
- * Types 136-255 are private (docs/03); they are not interpreted but handed
+ * Types 136-255 are private (docs/02_Technik_und_Quellen.md); they are not interpreted but handed
  * to the caller as raw octets.
  *
- * Sources: type groups and element lists from docs/03 (table of type
- * identifications, element lengths citing the Wireshark dissector); names and
+ * Sources: type groups and element lists from docs/02_Technik_und_Quellen.md ("Typkennungen",
+ * element lengths citing the Wireshark dissector); names and
  * element order confirmed by tests/data/lib60870_asdu_reference.txt.
  * TODO(norm): type identification table, clause unknown.
  *
@@ -98,7 +98,8 @@ const TypeInfo* all_types(std::size_t& count) noexcept;
  */
 std::size_t object_length(const TypeInfo& type) noexcept;
 
-/** @brief First type identification of the private range (docs/03: 136-255). */
+/** @brief First type identification of the private range (docs/02_Technik_und_Quellen.md: 136-255).
+ */
 inline constexpr std::uint8_t kFirstPrivateType = 136U;
 
 /**
@@ -118,7 +119,7 @@ constexpr bool is_private_type(std::uint8_t type_id) noexcept {
  * @brief Tells whether a cause of transmission is allowed for a type.
  *
  * The standard defines this matrix in clause 9.5; its text is not available
- * in this repository (docs/07_Normfragen_und_Festlegungen.md, N3). The table behind this function
+ * in this repository (docs/05_Normfragen_und_Festlegungen.md, N3). The table behind this function
  * is therefore empty and every combination is allowed. When the matrix is
  * filled in, only this function and its table change.
  * TODO(norm): 9.5, matrix of type identification and cause of transmission.

@@ -13,7 +13,7 @@ Wir bauen eine **exemplarische Library für IEC 60870-5-104**: Client (Controlli
 - **Vollständig getestet.** Unit-Tests mit Referenz-Hexdumps, Zustandsmaschine mit simulierter Zeit, Fuzzing, Interop gegen eine fremde Gegenstelle.
 - **Neutral.** Die Library ist an kein Projekt, keinen Kunden und keine Firma gebunden (siehe Abschnitt 4).
 - **Vorführbar.** Am Ende gibt es zwei kleine Beispielprogramme (Client und Server), die gegeneinander laufen, und eine mit Doxygen erzeugte API-Doku.
-- **Selbsttestfähig** (Nachtrag 25.11.2026, F10 in `docs/04_Analyse.md`): Die Library testet sich selbst, bis der integrierte Test gegen die Gegenstelle des Auftraggebers folgt. Dazu gehören ein Selbsttest ohne Netz (Client- und Server-Stack im selben Prozess, simulierte Zeit) und Selbsttest-Programme für Server und Client über TCP. Alle Ports sind konfigurierbar (Kommandozeile und Konfiguration; Port 0 = vom System gewählt, für parallele ctest-Läufe).
+- **Selbsttestfähig** (Nachtrag 25.11.2026, F10 in `intern/04_Analyse.md`): Die Library testet sich selbst, bis der integrierte Test gegen die Gegenstelle des Auftraggebers folgt. Dazu gehören ein Selbsttest ohne Netz (Client- und Server-Stack im selben Prozess, simulierte Zeit) und Selbsttest-Programme für Server und Client über TCP. Alle Ports sind konfigurierbar (Kommandozeile und Konfiguration; Port 0 = vom System gewählt, für parallele ctest-Läufe).
 
 ## 2. Was zu lesen ist (in dieser Reihenfolge)
 
@@ -21,15 +21,15 @@ Wir bauen eine **exemplarische Library für IEC 60870-5-104**: Client (Controlli
 | --- | --- | --- |
 | 1 | `CLAUDE.md` | Build, Architektur, Code-Regeln |
 | 2 | `docs/01_IEC104_verstehen.md` | Protokollgrundlagen |
-| 3 | `docs/02_Konzept_IEC104_Library.md` | **maßgeblich**: Sprache, Schichten, Parameter, TLS, Laufzeit, Tests |
-| 4 | `docs/03_Recherchebericht_IEC104_im_Detail.md` | Belege, Werte, Interop-Fallstricke. Rust-Aussagen sind überholt |
-| 5 | `folien/Konzept_IEC104_Library_Folien.html` | Kurzfassung des Konzepts |
+| 3 | `intern/02_Konzept_IEC104_Library.md` | **maßgeblich**: Sprache, Schichten, Parameter, TLS, Laufzeit, Tests |
+| 4 | `intern/03_Recherchebericht_IEC104_im_Detail.md` | Belege, Werte, Interop-Fallstricke. Rust-Aussagen sind überholt |
+| 5 | `intern/folien/Konzept_IEC104_Library_Folien.html` | Kurzfassung des Konzepts |
 | 6 | `include/`, `src/`, `tests/`, `fuzz/` | vorhandener Code |
 | 7 | `tasks/TASK-001_codec.md` | nächste Umsetzungsaufgabe |
 
 ## 3. Was zu analysieren ist
 
-Vor dem ersten neuen Code eine Analyse schreiben: `docs/04_Analyse.md` (Deutsch, knapp, Tabellen statt Fließtext). Inhalt:
+Vor dem ersten neuen Code eine Analyse schreiben: `intern/04_Analyse.md` (Deutsch, knapp, Tabellen statt Fließtext). Inhalt:
 
 1. **Widersprüche zwischen den Unterlagen.** Mindestens: Rust (Recherchebericht) gegenüber C++17 (Konzept), rustls gegenüber OpenSSL, Parameter mit abweichenden Defaults oder Bereichen. Je Punkt: Fundstelle, Widerspruch, Vorschlag.
 2. **Offene Normfragen.** Alles, was laut Unterlagen nur aus Sekundärquellen belegt oder ausdrücklich offen ist (z. B. Zustandsverhalten Abschnitt 5, COT/Typ-Matrix 9.5, Redundanz Abschnitt 10, Cipher-Tabelle IEC 62351-3). Je Punkt: betroffenes Modul, Auswirkung, vorläufige Annahme im Code.
@@ -53,11 +53,11 @@ Konkret:
 - Keine Namen von Netzbetreibern, Herstellern, Auftraggebern, Personen, internen Produkten oder Projekten, auch nicht als Beispiel oder in Kommentaren wie „Wert von XY“.
 - Abweichungen von Gegenstellen werden **allgemein** beschrieben: „some peers use t1 = 250 s“, „field devices that send local time with the SU bit“. Testprofile heißen neutral nach ihrer Eigenschaft (`long_timeout_profile`, `local_time_su_profile`, `select_before_operate_profile`), nicht nach Firmen.
 - Erlaubt sind Normen und Gremien (IEC, IANA, RFC) sowie die technisch genutzten Werkzeuge und Bibliotheken (OpenSSL, GoogleTest, libFuzzer, Wireshark als Quelle für Referenz-Hexdumps, lib60870 nur als externe Testgegenstelle).
-- `docs/` und `folien/` sind ausgenommen. Aus ihnen werden aber keine Namen in Code oder Kommentare übernommen.
-- **Ausnahme Lizenzkopf** (Entscheidung F9, `docs/04_Analyse.md`): Jede Quelldatei beginnt mit einem festen SPDX-Kopfblock, der den Rechteinhaber und den Autor nennt. Nur diese Zeilen in den ersten 10 Zeilen einer Datei sind erlaubt, ebenso die Lizenztexte unter `LICENSES/`. Überall sonst (Code, Kommentare, Doxygen, Tests, Commit-Nachrichten) gilt die Regel unverändert. Der öffentliche Header `include/iec104/iec104.h` steht unter Apache-2.0, alle übrigen Dateien unter `LicenseRef-Proprietary`.
+- `intern/` (interne Unterlagen: Konzept, Recherche, Analyse, Folien, Projektbezug) ist ausgenommen. `docs/` wird weitergegeben und unterliegt der Regel voll (Entscheidung F11, 25.11.2026). Aus `intern/` werden keine Namen in Code, Kommentare oder `docs/` übernommen.
+- **Ausnahme Lizenzkopf** (Entscheidung F9, `intern/04_Analyse.md`): Jede Quelldatei beginnt mit einem festen SPDX-Kopfblock, der den Rechteinhaber und den Autor nennt. Nur diese Zeilen in den ersten 10 Zeilen einer Datei sind erlaubt, ebenso die Lizenztexte unter `LICENSES/`. Überall sonst (Code, Kommentare, Doxygen, Tests, Commit-Nachrichten) gilt die Regel unverändert. Der öffentliche Header `include/iec104/iec104.h` steht unter Apache-2.0, alle übrigen Dateien unter `LicenseRef-Proprietary`.
 - `CLAUDE.md` und `README.md` enthalten noch Bezüge auf Projekt und Firma. Beide neutral umformulieren.
 
-**Prüfung:** Lege `tools/check_neutral.sh` an. Erlaubte Kopfzeilen stehen als `allow:`-Zeilen in der Begriffsdatei, nicht im Repo. Das Skript liest Suchbegriffe zeilenweise aus `${IEC104_FORBIDDEN_TERMS:-$HOME/.config/iec104/forbidden_terms.txt}` (liegt **außerhalb** des Repos, wird nicht committet), durchsucht alle Dateien außer `docs/`, `folien/`, `build/` und `.git/` ohne Beachtung der Groß-/Kleinschreibung und endet mit Fehlercode, wenn etwas gefunden wird. Fehlt die Begriffsdatei, Hinweis ausgeben und mit Fehlercode enden. Vor jedem Commit ausführen. Die Begriffsdatei pflegt der Auftraggeber.
+**Prüfung:** Lege `tools/check_neutral.sh` an. Erlaubte Kopfzeilen stehen als `allow:`-Zeilen in der Begriffsdatei, nicht im Repo. Das Skript liest Suchbegriffe zeilenweise aus `${IEC104_FORBIDDEN_TERMS:-$HOME/.config/iec104/forbidden_terms.txt}` (liegt **außerhalb** des Repos, wird nicht committet), durchsucht alle Dateien außer `docs/`, `intern/folien/`, `build/` und `.git/` ohne Beachtung der Groß-/Kleinschreibung und endet mit Fehlercode, wenn etwas gefunden wird. Fehlt die Begriffsdatei, Hinweis ausgeben und mit Fehlercode enden. Vor jedem Commit ausführen. Die Begriffsdatei pflegt der Auftraggeber.
 
 ## 5. Kommentarstandard (Englisch, ausführlich)
 
@@ -117,7 +117,7 @@ Folgende Regeln in `CLAUDE.md` aufnehmen (Abschnitt „Code-Regeln“):
 
 ## Definition of Done
 
-- [x] `docs/04_Analyse.md` liegt vor, mit allen fünf Punkten aus Abschnitt 3.
+- [x] `intern/04_Analyse.md` liegt vor, mit allen fünf Punkten aus Abschnitt 3.
 - [x] Freigabe der Analyse durch den Auftraggeber.
 - [x] `tools/check_neutral.sh` vorhanden und läuft ohne Treffer.
 - [x] `CLAUDE.md` und `README.md` neutral und um Abschnitt 6 ergänzt.

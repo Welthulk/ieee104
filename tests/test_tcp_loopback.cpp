@@ -92,7 +92,7 @@ std::array<std::uint8_t, 12> asdu_with(std::uint16_t value) {
 
 // Rule: a client connects, starts data transfer, ASDUs flow in both
 // directions in order, STOPDT and close are reported on both sides.
-// Source: iec104.h contracts; APCI rules see docs/05_Quellen_APCI.md.
+// Source: iec104.h contracts; APCI rules see docs/03_Quellen_APCI.md.
 TEST(TcpLoopback, ConnectStartExchangeStopClose) {
     Recorder srv;
     Recorder cli;
@@ -177,7 +177,7 @@ TEST(TcpLoopback, ConnectRefused) {
 }
 
 // Rule: invalid arguments and configurations are rejected.
-// Source: iec104.h contracts; t3 = 0 needs tolerant mode (docs/07_Normfragen_und_Festlegungen.md,
+// Source: iec104.h contracts; t3 = 0 needs tolerant mode (docs/05_Normfragen_und_Festlegungen.md,
 // E3).
 TEST(TcpLoopback, ArgumentChecks) {
     iec104_link_config c{};

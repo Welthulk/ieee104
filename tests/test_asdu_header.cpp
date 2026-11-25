@@ -13,7 +13,8 @@
  *   - "capture": tests/data/lib60870_capture.txt, produced by an independent
  *     implementation (lib60870-C v2.4.1, used only as external test peer);
  *   - "layout": derived by hand from the bit layouts documented in
- *     asdu_header.hpp, which follow docs/03 (citing the Wireshark dissector).
+ *     asdu_header.hpp, which follow docs/02_Technik_und_Quellen.md (citing the Wireshark
+ * dissector).
  */
 #include "codec/apci.hpp"
 #include "codec/asdu_header.hpp"
@@ -158,7 +159,7 @@ TEST(AsduHeader, EncodeRoundTripAllFlags) {
 // Rule: with a non-IEC-104 profile (COT 1, CA 1, IOA 2) the header shrinks to
 // 4 octets, there is no originator octet, and values that do not fit the
 // shorter fields are rejected.
-// Source: layout; profile option from docs/02 ("ASDU-Profil").
+// Source: layout; profile option from docs/02_Technik_und_Quellen.md ("ASDU-Kopf und ASDU-Profil").
 TEST(AsduHeader, ShortProfile) {
     const AsduProfile p{1, 1, 2};
     EXPECT_TRUE(is_valid(p));

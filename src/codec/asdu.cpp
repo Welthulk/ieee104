@@ -39,7 +39,7 @@ iec104_status resolve_type(std::uint8_t type_id, const AsduProfile& profile,
         return IEC104_ERR_UNSUPPORTED;
     }
     // The IEC 101 types with CP24Time2a are not part of the IEC 104 type set
-    // according to docs/03 (no verbatim proof from the norm text, N4).
+    // according to docs/02_Technik_und_Quellen.md (no verbatim proof from the norm text, N4).
     if (profile.strict && t->time_tag == TimeTag::Cp24) {
         return IEC104_ERR_UNSUPPORTED;
     }
@@ -304,7 +304,7 @@ iec104_status decode_asdu(const std::uint8_t* data, std::size_t size, const Asdu
     const TypeInfo& type = *result.type;
     const std::size_t count = result.header.num_objects;
     if (count == 0U) {
-        // TODO(norm): ASDU without objects, clause unknown (docs/07_Normfragen_und_Festlegungen.md,
+        // TODO(norm): ASDU without objects, clause unknown (docs/05_Normfragen_und_Festlegungen.md,
         // N9).
         if (profile.strict || result.object_data_size != 0U) {
             return IEC104_ERR_MALFORMED;

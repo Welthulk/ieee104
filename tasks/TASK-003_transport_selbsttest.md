@@ -1,6 +1,6 @@
 # TASK-003: TCP-Transport, C-API und Selbsttest-Programme
 
-Status: erledigt (25.11.2026) · Module: `src/transport`, `src/api`, `include/iec104/iec104.h`, `tools/selftest` · Grundlage: `docs/02_Konzept` (Laufzeitmodell, Konfiguration), `docs/04_Analyse.md` (F7, F10), TASK-002
+Status: erledigt (25.11.2026) · Module: `src/transport`, `src/api`, `include/iec104/iec104.h`, `tools/selftest` · Grundlage: `intern/02_Konzept` (Laufzeitmodell, Konfiguration), `intern/04_Analyse.md` (F7, F10), TASK-002
 
 ## Ausgangslage
 
@@ -41,7 +41,7 @@ Zwei Programme, ein Server und ein Client, verbinden sich über TCP und tauschen
 | `include/iec104/iec104.h` | `iec104_link_config`, Zustände, Schließgründe, Callbacks, Server- und Client-Funktionen; Statuscodes `IEC104_ERR_IO`, `IEC104_ERR_CLOSED` |
 | `tools/selftest/` | `iec104_selftest_server`, `iec104_selftest_client`, `run_selftest.sh` |
 | `tests/test_tcp_loopback.cpp` | C-API über echtes TCP: Verbindung, 200 ASDUs, STOPDT, Schließen, Connect abgewiesen, Argumentprüfung |
-| `docs/06_Selbsttest.md` | Anleitung für den Selbsttest und manuelle Tests |
+| `docs/04_Selbsttest.md` | Anleitung für den Selbsttest und manuelle Tests |
 
 Gegenprobe mit lib60870-C 2.4.1 (Beispielprogramme, nur als externe Gegenstelle):
 

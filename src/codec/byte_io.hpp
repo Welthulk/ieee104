@@ -9,8 +9,8 @@
  * @brief Little-endian read and write helpers for the codec layer.
  *
  * IEC 60870-5-104 transmits every multi-octet value least significant octet
- * first (called "mode 1" in interoperability lists; source: docs/03, ASDU
- * section). These helpers are the only place in the codec that assembles or
+ * first (called "mode 1" in interoperability lists; source: docs/02_Technik_und_Quellen.md, section
+ * "ASDU-Kopf und ASDU-Profil"). These helpers are the only place in the codec that assembles or
  * splits integers, so byte order is handled in exactly one spot.
  *
  * Layer: codec (pure functions, no I/O, no allocation). Internal header, not

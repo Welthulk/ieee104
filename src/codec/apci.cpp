@@ -53,7 +53,7 @@ std::uint16_t get_sequence(const std::uint8_t* p) noexcept {
  *
  * Comparing against the enumerators (instead of testing single bits) rejects
  * octets with two or more function bits set, which the standard does not
- * allow in one frame (docs/03, design consequences: never tolerated).
+ * allow in one frame (docs/02_Technik_und_Quellen.md, "Designfolgerungen": never tolerated).
  */
 bool is_valid_u_function(std::uint8_t octet) noexcept {
     switch (static_cast<UFunction>(octet)) {

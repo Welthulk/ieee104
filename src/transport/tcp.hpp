@@ -17,7 +17,7 @@
  * All sockets are non-blocking. Address resolution uses getaddrinfo(), so
  * host names, IPv4 and IPv6 addresses work.
  *
- * Layer: transport (I/O, Linux only in version 1, docs/07_Normfragen_und_Festlegungen.md, E4).
+ * Layer: transport (I/O, Linux only in version 1, docs/05_Normfragen_und_Festlegungen.md, E4).
  */
 #pragma once
 

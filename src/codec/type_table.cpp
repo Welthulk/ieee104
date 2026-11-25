@@ -8,7 +8,7 @@
  * @file type_table.cpp
  * @brief The table of type identifications and its lookups.
  *
- * One line per type. The element lists follow docs/03 and are checked
+ * One line per type. The element lists follow docs/02_Technik_und_Quellen.md and are checked
  * against tests/data/lib60870_asdu_reference.txt by the unit tests (every
  * reference ASDU must decode with exactly the length this table predicts).
  *
@@ -91,7 +91,7 @@ constexpr std::array<TypeInfo, 59> kTypes{{
     // The CP56Time2a of the clock synchronization is the value to set, not a
     // time tag of the object, hence TimeTag::None.
     {103, "C_CS_NA_1", kC, TimeTag::None, 1, {E::Cp56}},
-    // TODO(norm): whether 104 and 106 are used in IEC 104 (docs/07_Normfragen_und_Festlegungen.md,
+    // TODO(norm): whether 104 and 106 are used in IEC 104 (docs/05_Normfragen_und_Festlegungen.md,
     // N5).
     {104, "C_TS_NA_1", kC, TimeTag::None, 1, {E::Fbp}},
     {105, "C_RP_NA_1", kC, TimeTag::None, 1, {E::Qrp}},

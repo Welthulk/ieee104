@@ -5,18 +5,19 @@ Exemplarische IEC-60870-5-104-Library: Client und Server, Kern C++17, stabile C-
 ## Verbindliche Unterlagen
 
 - `tasks/TASK-000_Auftrag.md` ist der Gesamtauftrag und hat Vorrang vor den übrigen Aufgaben.
-- `docs/02_Konzept_IEC104_Library.md` ist maßgeblich (Sprache, Architektur, Parameter, Tests).
-- `docs/03_Recherchebericht_IEC104_im_Detail.md` liefert Belege und Werte. Seine Rust-Aussagen (rustls, `Strictness::…`, cargo-fuzz) sind überholt; Sprache ist C++17, TLS-Backend OpenSSL 3.x.
+- `intern/02_Konzept_IEC104_Library.md` ist maßgeblich (Sprache, Architektur, Parameter, Tests).
+- `intern/03_Recherchebericht_IEC104_im_Detail.md` liefert Belege und Werte. Seine Rust-Aussagen (rustls, `Strictness::…`, cargo-fuzz) sind überholt; Sprache ist C++17, TLS-Backend OpenSSL 3.x.
 - `docs/01_IEC104_verstehen.md` ist die Einführung.
-- `docs/05_Quellen_APCI.md` belegt die Regeln der Zustandsmaschine aus öffentlichen Quellen (Normtexte liegen nicht vor, F4).
-- `docs/07_Normfragen_und_Festlegungen.md` ist die weitergabefähige Fassung der offenen Normfragen (N1–N13) und Festlegungen (E1–E6). Code und Tests verweisen nur darauf, nie auf `docs/04_Analyse.md` oder `tasks/`.
+- `docs/02_Technik_und_Quellen.md` ist die namensfreie Fassung von Konzept und Recherche; Code zitiert nur diese.
+- `docs/03_Quellen_APCI.md` belegt die Regeln der Zustandsmaschine aus öffentlichen Quellen (Normtexte liegen nicht vor, F4).
+- `docs/05_Normfragen_und_Festlegungen.md` ist die weitergabefähige Fassung der offenen Normfragen (N1–N13) und Festlegungen (E1–E6). Code und Tests verweisen nur darauf, nie auf `intern/04_Analyse.md` oder `tasks/`.
 
 ## Weitergabe-Zip
 
-- `tools/make_package.sh` baut `dist/iec104-<version>.zip` aus dem letzten Commit, ohne CLAUDE.md, `tasks/`, `docs/04_Analyse.md`, `.vscode/` und interne Skripte.
-- Das Zip geht in ein firmeninternes Repo und an Kollegen für manuelle Tests. Inhalt ohne Hinweise auf KI-Werkzeuge, Aufgabennummern oder diesen Arbeitsablauf; README und `docs/06_Selbsttest.md` müssen ohne die ausgelassenen Dateien vollständig sein.
-- Vor dem Verpacken die Paketdateien auf solche Verweise prüfen: `unzip -p dist/*.zip | grep -i -E "claude|anthropic|TASK-|tasks/|docs/04"` muss leer sein.
-- Aufgaben stehen in `tasks/`. Immer nur eine Aufgabe bearbeiten, Definition of Done abhaken.
+- `tools/make_package.sh` baut `dist/iec104-<version>.zip` aus dem letzten Commit, ohne `intern/`, `tasks/`, CLAUDE.md, `.vscode/` und interne Skripte, und prüft das Zip selbst (Begriffsliste, Verweise auf interne Unterlagen). Bei einem Treffer wird es gelöscht.
+- Das Zip geht in ein firmeninternes Repo und an Kollegen für manuelle Tests. Keine Kunden-, Projekt- oder Herstellernamen, keine Hinweise auf KI-Werkzeuge, Aufgabennummern oder diesen Arbeitsablauf. Autor und Rechteinhaber stehen nur im SPDX-Kopf und in `LICENSES/`.
+- `docs/` ist Weitergabe-Doku und wird von `check_neutral.sh` voll geprüft; Projektbezug, Recherche mit Kundennamen, Analyse und Folien liegen in `intern/`.
+- Code und Tests verweisen nur auf `docs/`, nie auf `intern/` oder `tasks/`.
 
 ## Build und Test
 

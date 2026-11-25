@@ -3,14 +3,18 @@
 # SPDX-License-Identifier: LicenseRef-Proprietary
 # Author: Udo Schmitz (SOPTIM AG)
 # All rights reserved by SOPTIM AG.
-# make_package.sh – baut das Weitergabe-Zip aus dem letzten Commit.
+# make_package.sh – baut das Weitergabe-Zip aus dem letzten Commit und prüft es.
 #
 # Aufruf: tools/make_package.sh            -> dist/iec104-<version>.zip
 #
 # Inhalt: alle versionierten Dateien des letzten Commits außer den internen
-# Arbeitsunterlagen (CLAUDE.md, tasks/, docs/04_Analyse.md, .vscode/, dist/)
-# und den internen Prüf- und Paketskripten. Ungespeicherte Änderungen
-# landen nicht im Zip; vorher committen.
+# Unterlagen (intern/, tasks/, CLAUDE.md, .vscode/, dist/) und den internen
+# Prüf- und Paketskripten. Ungespeicherte Änderungen landen nicht im Zip.
+#
+# Prüfung des fertigen Zips (bei einem Treffer wird es gelöscht, Rückgabe 1):
+#   1. Begriffsliste mit tools/check_neutral.sh --root (Kunden, Projekte,
+#      Hersteller; erlaubt sind nur die SPDX-Kopfzeilen und LICENSES/);
+#   2. Verweise auf die internen Unterlagen und den Arbeitsablauf.
 
 set -eu
 
@@ -19,16 +23,39 @@ cd "$ROOT"
 
 VERSION="$(sed -n 's/^ *VERSION \([0-9.]*\)$/\1/p' CMakeLists.txt | head -1)"
 [ -n "$VERSION" ] || { echo "Version nicht gefunden" >&2; exit 1; }
-OUT="dist/iec104-$VERSION.zip"
+NAME="iec104-$VERSION"
+OUT="dist/$NAME.zip"
 
 if ! git diff --quiet HEAD -- . ':!dist'; then
     echo "Hinweis: ungespeicherte Änderungen werden nicht verpackt." >&2
 fi
 
 mapfile -t FILES < <(git ls-files | grep -v -E \
-    '^(CLAUDE\.md|tasks/|docs/04_Analyse\.md|\.vscode/|dist/|tools/check_neutral\.sh|tools/make_package\.sh)')
+    '^(intern/|tasks/|CLAUDE\.md|\.vscode/|dist/|tools/check_neutral\.sh|tools/make_package\.sh)')
 
 mkdir -p dist
 rm -f "$OUT"
-git archive --format=zip --prefix="iec104-$VERSION/" -o "$OUT" HEAD -- "${FILES[@]}"
-echo "make_package: $OUT (${#FILES[@]} Dateien)"
+git archive --format=zip --prefix="$NAME/" -o "$OUT" HEAD -- "${FILES[@]}"
+
+# --- Prüfung des Inhalts ------------------------------------------------------
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+unzip -q "$OUT" -d "$WORK"
+
+fail() {
+    echo "make_package: $1 – $OUT wurde gelöscht." >&2
+    rm -f "$OUT"
+    exit 1
+}
+
+"$ROOT/tools/check_neutral.sh" --root "$WORK/$NAME" > "$WORK/neutral.log" 2>&1 \
+    || { cat "$WORK/neutral.log" >&2; fail "verbotene Begriffe im Zip"; }
+
+# Verweise auf ausgelassene Unterlagen oder den Arbeitsablauf.
+if grep -r -I -n -i -E 'intern/|tasks/|TASK-[0-9]|CLAUDE|claude|anthropic|check_neutral|make_package' \
+        "$WORK/$NAME" > "$WORK/refs.log"; then
+    cat "$WORK/refs.log" >&2
+    fail "Verweise auf interne Unterlagen im Zip"
+fi
+
+echo "make_package: $OUT (${#FILES[@]} Dateien, geprüft)"

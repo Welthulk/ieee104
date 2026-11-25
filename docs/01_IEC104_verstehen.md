@@ -1,6 +1,6 @@
 # IEC 60870-5-104 verstehen
 
-Stand: 24.11.2026 · Udo
+Stand: 24.11.2026
 
 ## Kurz gesagt
 
@@ -26,7 +26,7 @@ Es gibt genau zwei Rollen, und die TCP-Richtung ist fest: Die steuernde Seite ba
 
 ## Aufbau eines Telegramms
 
-Jedes Telegramm (APDU) besteht aus einem Steuerteil (APCI, 6 Byte) und optional den Nutzdaten (ASDU). Die APDU ist höchstens 255 Byte lang (Startbyte 0x68 + Länge ≤ 253) ([Beckhoff](https://infosys.beckhoff.com/content/1033/ts650x_tcplc_iec60870-5-10x/11728916875.html)).
+Jedes Telegramm (APDU) besteht aus einem Steuerteil (APCI, 6 Byte) und optional den Nutzdaten (ASDU). Die APDU ist höchstens 255 Byte lang (Startbyte 0x68 + Länge ≤ 253) ([Wireshark-Dissector](https://raw.githubusercontent.com/wireshark/wireshark/master/epan/dissectors/packet-iec104.c)).
 
 **APCI: drei Rahmenformate**
 
@@ -47,7 +47,7 @@ Jedes Telegramm (APDU) besteht aus einem Steuerteil (APCI, 6 Byte) und optional 
 | Objektadresse (IOA) | 3 Byte | der einzelne Datenpunkt |
 | Informationselemente | je Typ | Wert + Qualität (+ Zeitstempel) |
 
-Ein Datenpunkt ist also eindeutig durch **CA + IOA** bestimmt. Ein Telegramm kann mehrere Objekte desselben Typs bündeln. Die Feldlängen sind bei 104 fest, bei 101 dagegen konfigurierbar ([ABB-Handbuch](https://manualslib.com/manual/1657686/Abb-Eds500-Series.html?page=75)).
+Ein Datenpunkt ist also eindeutig durch **CA + IOA** bestimmt. Ein Telegramm kann mehrere Objekte desselben Typs bündeln. Die Feldlängen sind bei 104 fest, bei 101 dagegen konfigurierbar.
 
 ## Was man damit machen kann
 
@@ -101,21 +101,17 @@ Die Sequenzzähler N(S)/N(R) laufen 15 Bit modulo 32768. Wird ein Telegramm nich
 IEC 104 transportiert Datenpunkte zuverlässig, aber Semantik und Sicherheit muss man selbst organisieren.
 
 - **Kein Datenmodell:** Was IOA 4711 bedeutet, steht nur in einer Signalliste. Diese Liste ist das eigentliche Schnittstellendokument und muss von beiden Seiten gepflegt werden.
-- **Interoperabilitätsliste:** Jede Implementierung legt fest, welche Typen, COTs und Optionen sie unterstützt. Die Liste ist in der Norm vorgegeben und wird zum Abgleich ausgefüllt ([Kepware-Beispiel](https://support.ptc.com/help/kepware/drivers/en/kepware/drivers/IEC608705104/IEC_60870-5-104_Interoperability_Guide.html)). Hier entscheidet sich, ob zwei Geräte zusammen funktionieren.
+- **Interoperabilitätsliste:** Jede Implementierung legt fest, welche Typen, COTs und Optionen sie unterstützt. Die Liste ist in der Norm vorgegeben und wird zum Abgleich ausgefüllt (Abschnitt 9 der Norm). Hier entscheidet sich, ob zwei Geräte zusammen funktionieren.
 - **Keine Massendaten:** Ausgelegt für Signale im Bereich von Tausenden Punkten, nicht für Modelle, Fahrpläne oder große Zeitreihen.
 - **Ungesichert im Grundprotokoll:** Klartext, keine Authentifizierung. Abhilfe: TLS nach IEC 62351-3 und Secure Authentication nach IEC 62351-5 bzw. IEC TS 60870-5-7 ([TU Brno](https://www.fit.vut.cz/research/publication-file/11570/TR-IEC104.pdf)). In der Praxis läuft 104 oft ungesichert in abgeschotteten Netzen, geschützt durch Firewalls oder VPN.
 - **Interpretationsspielraum:** Hersteller nutzen Optionen unterschiedlich (z. B. Zeitstempel in Lokalzeit oder UTC, Verhalten bei Pufferung). Interop-Tests mit der echten Gegenseite sind Pflicht.
 
-## Bezug zur Prozessabkopplung (Aucoteam)
+## Fragen an eine Gegenstelle
 
-Öffentlich ist zu Aucoteams Komponente nichts Konkretes zu finden. Die Fragen unten muss Aucoteam beantworten. AUCOTEAM GmbH ist ein Berliner Automatisierungsdienstleister (gegründet 1991, 50 bis 249 Mitarbeiter) mit Kunden unter anderem im Energiesektor ([Clutch](https://clutch.co/profile/aucoteam-gmbh), [all about automation](https://www.berlin.allaboutautomation.de/en/exhibitors/aucoteam-gmbh-228204/)).
+Vor der ersten Kopplung mit einem fremden System sollten diese Punkte geklärt sein:
 
-Typisch für eine Prozessabkopplung ist ein Gateway zwischen Prozessnetz und IT-System. Es spricht nach außen IEC 104 und entkoppelt die Systeme sicherheitstechnisch. Für uns hieße das: Wir sind wahrscheinlich 104-Client, das Gateway ist Server. Das ist eine Annahme und muss bestätigt werden.
-
-**Offene Fragen an Aucoteam**
-
-- [ ] Rolle: Ist das Gateway Server, Client oder beides? Wer baut die Verbindung auf?
-- [ ] Interoperabilitätsliste der Komponente anfordern (Typen, COTs, Optionen).
+- [ ] Rolle: Ist die Gegenstelle Server, Client oder beides? Wer baut die Verbindung auf, welcher Port?
+- [ ] Interoperabilitätsliste anfordern (Typen, COTs, Optionen, Timer, k und w).
 - [ ] Richtung: Nur Daten lesen, oder auch Befehle und Sollwerte senden?
 - [ ] Mengen: Anzahl Datenpunkte, erwartete Änderungsrate, Zeitstempel ja/nein.
 - [ ] Redundanz: Wie viele Verbindungen, Redundanzgruppen nach Edition 2?

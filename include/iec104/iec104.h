@@ -11,7 +11,7 @@
  * that the library can be used from C, C++ and any language with a C foreign
  * function interface (for example Rust via bindgen).
  *
- * Rules for this header (see docs/02_Konzept_IEC104_Library.md, "Sprachwahl"):
+ * Rules for this header (see docs/02_Technik_und_Quellen.md, "Sprache und Architektur"):
  *   - no C++ types, no STL types, no exceptions crossing this boundary;
  *   - every error is reported as an ::iec104_status return code;
  *   - every exported symbol carries ::IEC104_API.
@@ -66,8 +66,8 @@ extern "C" {
  * @brief Default TCP port of an IEC 60870-5-104 connection without TLS.
  *
  * The controlled station (server) listens on this port, the controlling
- * station (client) connects to it. Source: docs/03, section on the APCI
- * defaults (port 2404).
+ * station (client) connects to it. Source: docs/02_Technik_und_Quellen.md, section "APCI"
+ * (port 2404).
  * TODO(norm): port definition, clause unknown.
  */
 #define IEC104_DEFAULT_PORT 2404
@@ -76,7 +76,7 @@ extern "C" {
  * @brief Default TCP port of an IEC 60870-5-104 connection secured with TLS.
  *
  * IANA registers TCP 19998 as service "iec-104-sec". IEC 62351-3 leaves the
- * port to the application protocol. Source: docs/03, section "Sicherheit".
+ * port to the application protocol. Source: docs/02_Technik_und_Quellen.md, section "Sicherheit".
  */
 #define IEC104_DEFAULT_TLS_PORT 19998
 

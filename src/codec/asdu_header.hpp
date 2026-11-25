@@ -18,13 +18,13 @@
  * COT 2, CA 2, IOA 3 octets (6-octet header). IEC 60870-5-101 allows other
  * lengths, and some peers use them over TCP as well; the lengths are therefore
  * parameters (AsduProfile), with the IEC 104 values as default
- * (docs/02, "ASDU-Profil").
+ * (docs/02_Technik_und_Quellen.md, "ASDU-Kopf und ASDU-Profil").
  *
  * This file only converts the header fields. The information objects are in
  * asdu.hpp, the per-type structure in type_table.hpp.
  *
- * Sources: docs/03, ASDU section (field layout and bit masks, citing the
- * Wireshark IEC 104 dissector); reference bytes in
+ * Sources: docs/02_Technik_und_Quellen.md, section "ASDU-Kopf und ASDU-Profil" (field layout and
+ * bit masks, citing the Wireshark IEC 104 dissector); reference bytes in
  * tests/data/lib60870_capture.txt.
  * TODO(norm): data unit identifier layout, clause unknown.
  *
@@ -45,7 +45,7 @@ namespace iec104::codec {
  *
  * Default-constructed, the profile has the IEC 104 values (2, 2, 3, 249,
  * strict). Other values only exist for peers outside the standard and must be
- * configured explicitly (docs/02, "ASDU-Profil").
+ * configured explicitly (docs/02_Technik_und_Quellen.md, "ASDU-Kopf und ASDU-Profil").
  *
  * The header functions in this file only use the three lengths; max_asdu_length
  * and strict are used by the ASDU codec (asdu.hpp).
@@ -57,7 +57,7 @@ struct AsduProfile {
     /**
      * @brief Largest ASDU this side sends, 1..249 octets.
      *
-     * 249 = 253 (largest APDU length field) - 4 control octets (docs/03).
+     * 249 = 253 (largest APDU length field) - 4 control octets (docs/02_Technik_und_Quellen.md).
      * Some peers accept less; the encoder then splits object lists into
      * several ASDUs (encode_asdu_fitting()). Received ASDUs are not checked
      * against this value: what the APCI framing accepts is decoded.
@@ -68,7 +68,7 @@ struct AsduProfile {
      *
      * Strict: the IEC 101 types with CP24Time2a are rejected with
      * IEC104_ERR_UNSUPPORTED, an ASDU with 0 objects is IEC104_ERR_MALFORMED.
-     * Tolerant: both are accepted (docs/07_Normfragen_und_Festlegungen.md, N4 and N9).
+     * Tolerant: both are accepted (docs/05_Normfragen_und_Festlegungen.md, N4 and N9).
      */
     bool strict{true};
 };
@@ -114,7 +114,7 @@ inline constexpr std::uint8_t kCotTestBit = 0x80U;
  * @brief Broadcast common address with a 2-octet CA (all stations).
  *
  * Not used by the codec yet. Which types may be sent to the broadcast address
- * is open (docs/07_Normfragen_und_Festlegungen.md, N10).
+ * is open (docs/05_Normfragen_und_Festlegungen.md, N10).
  * TODO(norm): broadcast common address, clause unknown.
  */
 inline constexpr std::uint16_t kBroadcastCa = 0xFFFFU;
@@ -175,7 +175,7 @@ iec104_status encode_asdu_header(const AsduHeader& header, const AsduProfile& pr
  *
  * Only the header is decoded; the information objects are not interpreted.
  * Type id and cause are not checked against tables here (see asdu.hpp), and
- * a VSQ with 0 objects is accepted (docs/07_Normfragen_und_Festlegungen.md, N9).
+ * a VSQ with 0 objects is accepted (docs/05_Normfragen_und_Festlegungen.md, N9).
  *
  * @param data     Start of the ASDU. Must not be NULL.
  * @param size     Number of octets available at @p data.
@@ -204,7 +204,7 @@ std::uint32_t max_ioa(const AsduProfile& profile) noexcept;
  * @brief Encodes an information object address (IOA).
  *
  * IOA 0 is a valid value; it addresses the station as a whole, e.g. for the
- * general interrogation (docs/03).
+ * general interrogation (docs/02_Technik_und_Quellen.md).
  *
  * Example (3 octets): 4711 -> 67 12 00
  *

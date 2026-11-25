@@ -1,6 +1,6 @@
 # TASK-002: APCI-Zustandsmaschine (sans-I/O) mit Selbsttest ohne Netz
 
-Status: erledigt (25.11.2026) · Modul: `src/apci` · Grundlage: `docs/02_Konzept` (Timer, k/w, Testkonzept Ebene 2), `docs/03_Recherchebericht` (APCI, Timer), `docs/04_Analyse.md` (N1, N2, W4, W6, F4, F10)
+Status: erledigt (25.11.2026) · Modul: `src/apci` · Grundlage: `intern/02_Konzept` (Timer, k/w, Testkonzept Ebene 2), `intern/03_Recherchebericht` (APCI, Timer), `intern/04_Analyse.md` (N1, N2, W4, W6, F4, F10)
 
 ## Ausgangslage
 
@@ -12,7 +12,7 @@ Eine Verbindung (Client- oder Server-Rolle) als reine Zustandsmaschine: Bytes un
 
 ## Umfang
 
-1. **Konfiguration** (`src/apci/apci_config.hpp/.cpp`): t0–t3 in Millisekunden, k, w, strikt/tolerant, Plausibilitätsprüfung t2 < t1 und w ≤ 2/3 k (Warnung / Fehler / aus, Default Warnung, W4). Bereiche nach `docs/02`, t3 = 0 (aus) nur tolerant (W6).
+1. **Konfiguration** (`src/apci/apci_config.hpp/.cpp`): t0–t3 in Millisekunden, k, w, strikt/tolerant, Plausibilitätsprüfung t2 < t1 und w ≤ 2/3 k (Warnung / Fehler / aus, Default Warnung, W4). Bereiche nach `intern/02_Konzept_IEC104_Library.md`, t3 = 0 (aus) nur tolerant (W6).
 2. **Verbindung** (`src/apci/connection.hpp/.cpp`): Rolle (steuernde / gesteuerte Station), Zustände gestoppt / Start angefordert / gestartet / Stopp angefordert / geschlossen. STARTDT, STOPDT, TESTFR act/con, I-Rahmen mit N(S)/N(R) modulo 32768, S-Rahmen nach w empfangenen I-Rahmen oder Ablauf t2, Senden gesperrt bei k unquittierten I-Rahmen, t1 für unquittierte I-Rahmen und U-Rahmen act, t3 Testrahmen bei Ruhe, Abbruch bei falscher Folgenummer oder N(R) außerhalb des Fensters.
 3. **Schnittstelle ohne Allokation im Betrieb**: Eingabe `receive(bytes, now)`, `tick(now)`, `start()`, `stop()`, `send_asdu()`; Ausgabe `take_output()` (zu sendende Bytes) und `next_event()` (ASDU empfangen, Zustand geändert, quittiert, Verbindung schließen mit Grund). `next_deadline()` für die spätere Event-Loop.
 4. **Neue Statuscodes** in `iec104.h`, nur angehängt: Senden derzeit nicht möglich (Fenster k voll oder Ausgabepuffer voll), Aufruf im aktuellen Zustand nicht erlaubt.
@@ -40,7 +40,7 @@ Eine Verbindung (Client- oder Server-Rolle) als reine Zustandsmaschine: Bytes un
 | --- | --- |
 | `src/apci/apci_config.hpp/.cpp` | Timer in ms, k, w, Rolle, strikt/tolerant, Plausibilitätsprüfung Warnung/Fehler/aus |
 | `src/apci/connection.hpp/.cpp` | Zustandsmaschine mit Regeln R1–R12, Ereigniswarteschlange, Ausgabepuffer, `next_deadline()` |
-| `docs/05_Quellen_APCI.md` | öffentliche Belege je Regel, Liste des Unbelegten |
+| `docs/03_Quellen_APCI.md` | öffentliche Belege je Regel, Liste des Unbelegten |
 | `include/iec104/iec104.h` | neue Statuscodes `IEC104_ERR_WOULD_BLOCK` (-7), `IEC104_ERR_WRONG_STATE` (-8) |
 | `tests/apci_pair.hpp` | zwei Verbindungen im Speicher gekoppelt, simulierte Zeit |
 | `tests/test_apci_connection.cpp` | 23 Tests: Konfiguration und jede Regel R1–R12 |
@@ -56,7 +56,7 @@ Entwurfsentscheidungen:
 
 ## Offen
 
-Siehe `docs/05_Quellen_APCI.md`, Abschnitt „Offen“. Zusammengefasst:
+Siehe `docs/03_Quellen_APCI.md`, Abschnitt „Offen“. Zusammengefasst:
 
 | Nr. | Thema | Annahme im Code |
 | --- | --- | --- |

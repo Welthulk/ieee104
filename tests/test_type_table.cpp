@@ -80,7 +80,7 @@ TEST(TypeTable, Consistency) {
 }
 
 // Rule: object lengths for some types, derived from the element lengths.
-// Source: docs/03 element lengths; e.g. M_ME_TF_1 = R32 4 + QDS 1 + CP56 7.
+// Source: docs/02_Technik_und_Quellen.md element lengths; e.g. M_ME_TF_1 = R32 4 + QDS 1 + CP56 7.
 TEST(TypeTable, ObjectLength) {
     EXPECT_EQ(object_length(*find_type(1)), 1U);
     EXPECT_EQ(object_length(*find_type(36)), 12U);
@@ -90,7 +90,7 @@ TEST(TypeTable, ObjectLength) {
 }
 
 // Rule: 136..255 is the private range; unassigned ids are not in the table.
-// Source: docs/03 (table of type identifications).
+// Source: docs/02_Technik_und_Quellen.md ("Typkennungen").
 TEST(TypeTable, PrivateAndUnknown) {
     EXPECT_FALSE(is_private_type(135));
     EXPECT_TRUE(is_private_type(136));
@@ -103,7 +103,7 @@ TEST(TypeTable, PrivateAndUnknown) {
 
 // Rule: the cause matrix (clause 9.5) is not filled in yet; every combination
 // is allowed until it is (TODO(norm): 9.5).
-// Source: type_table.hpp (N3 in docs/07_Normfragen_und_Festlegungen.md).
+// Source: type_table.hpp (N3 in docs/05_Normfragen_und_Festlegungen.md).
 TEST(TypeTable, CauseMatrixIsOpen) {
     EXPECT_TRUE(is_cause_allowed(1, 3));
     EXPECT_TRUE(is_cause_allowed(100, 6));

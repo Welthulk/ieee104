@@ -1,6 +1,6 @@
 # TASK-001: Codec vervollständigen (Informationselemente und ASDUs)
 
-Status: erledigt (25.11.2026) · Modul: `src/codec` · Grundlage: `docs/02_Konzept` (Architektur, ASDU-Profil), `docs/03_Recherchebericht` (Typkennungen, COT, Elemente)
+Status: erledigt (25.11.2026) · Modul: `src/codec` · Grundlage: `intern/02_Konzept` (Architektur, ASDU-Profil), `intern/03_Recherchebericht` (Typkennungen, COT, Elemente)
 
 ## Ausgangslage
 

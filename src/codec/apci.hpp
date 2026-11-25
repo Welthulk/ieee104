@@ -24,7 +24,7 @@
  * state: sequence number checks against the window, k/w and the timers belong to
  * the apci state machine (src/apci).
  *
- * Sources: docs/03 (research report), section on the APCI, which cites the
+ * Sources: docs/02_Technik_und_Quellen.md, section "APCI", which cites the
  * Wireshark IEC 104 dissector; reference bytes in tests/data/lib60870_capture.txt.
  * TODO(norm): APCI frame formats, clause unknown.
  *
@@ -48,7 +48,8 @@ inline constexpr std::size_t kApciLength = 6U;
 /** @brief Length of the control field, also the minimum value of the length octet. */
 inline constexpr std::size_t kControlFieldLength = 4U;
 
-/** @brief Maximum value of the length octet (control field + ASDU). Source: docs/03. */
+/** @brief Maximum value of the length octet (control field + ASDU). Source:
+ * docs/02_Technik_und_Quellen.md. */
 inline constexpr std::size_t kMaxLengthField = 253U;
 
 /** @brief Maximum length of a complete APDU on the wire: 2 + 253 = 255 octets. */
@@ -210,7 +211,7 @@ iec104_status encode_u_frame(UFunction function, std::uint8_t* out, std::size_t 
  *
  * The check is strict on purpose: a malformed APCI means the peer and this
  * library disagree on the frame structure, and continuing would risk
- * misinterpreting data (docs/03, design consequences: a length above 253 and
+ * misinterpreting data (docs/02_Technik_und_Quellen.md, "Designfolgerungen": a length above 253 and
  * more than one U-function bit are never tolerated). Checked are:
  *   - start octet 0x68 and length octet 4..253;
  *   - I-format: bit 0 of octet 5 is 0 and an ASDU is present (length > 4);

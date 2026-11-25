@@ -19,13 +19,11 @@ Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
 
 | Datei | Inhalt |
 | --- | --- |
-| `docs/01_IEC104_verstehen.md` | Einführung in das Protokoll |
-| `docs/02_Konzept_IEC104_Library.md` | Konzept: Architektur, Parameter, TLS, Laufzeitmodell, Testkonzept |
-| `docs/03_Recherchebericht_IEC104_im_Detail.md` | Recherche mit Quellen: Norm, Praxis, Interop-Fallstricke, Sicherheit |
-| `docs/05_Quellen_APCI.md` | Öffentliche Belege für die Regeln der Verbindungssteuerung |
-| `docs/06_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
-| `docs/07_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E6), auf die der Code verweist |
-| `folien/Konzept_IEC104_Library_Folien.html` | Folien zum Konzept, im Browser öffnen |
+| `docs/01_IEC104_verstehen.md` | Einführung in das Protokoll, Fragen an eine Gegenstelle |
+| `docs/02_Technik_und_Quellen.md` | Architektur, Protokollaufbau, Parameter, Typkennungen, Elemente, Quellen |
+| `docs/03_Quellen_APCI.md` | Öffentliche Belege für die Regeln der Verbindungssteuerung |
+| `docs/04_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
+| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E6), auf die der Code verweist |
 
 ## Verzeichnisse
 
@@ -69,7 +67,7 @@ build/debug/iec104_selftest_server --port 2404 --count 100
 build/debug/iec104_selftest_client --host 127.0.0.1 --port 2404 --expect 100 --count 10 --idle 25
 ```
 
-Der Client meldet jeden Schritt mit `ok` oder `FAILED` und endet mit `result: PASSED` (Exit-Code 0) oder `result: FAILED` (Exit-Code 1). `ctest` lässt beide Programme automatisch über Loopback gegeneinander laufen. Testfälle gegen fremde Geräte, Fehlerfälle und alle Optionen: `docs/06_Selbsttest.md`.
+Der Client meldet jeden Schritt mit `ok` oder `FAILED` und endet mit `result: PASSED` (Exit-Code 0) oder `result: FAILED` (Exit-Code 1). `ctest` lässt beide Programme automatisch über Loopback gegeneinander laufen. Testfälle gegen fremde Geräte, Fehlerfälle und alle Optionen: `docs/04_Selbsttest.md`.
 
 ## Verwendung der C-API
 

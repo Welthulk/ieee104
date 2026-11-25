@@ -1,6 +1,6 @@
 # Öffentliche Belege für die APCI-Regeln
 
-Stand: 25.11.2026 · Anlass: Der Normtext lag bei der Entwicklung nicht vor (siehe `docs/07_Normfragen_und_Festlegungen.md`). Jede Regel der Zustandsmaschine (`src/apci/connection.cpp`, R1–R12) wird hier mit öffentlicher Quelle belegt oder als offen markiert.
+Stand: 25.11.2026 · Anlass: Der Normtext lag bei der Entwicklung nicht vor (siehe `docs/05_Normfragen_und_Festlegungen.md`). Jede Regel der Zustandsmaschine (`src/apci/connection.cpp`, R1–R12) wird hier mit öffentlicher Quelle belegt oder als offen markiert.
 
 ## Quellen
 
@@ -10,8 +10,7 @@ Stand: 25.11.2026 · Anlass: Der Normtext lag bei der Entwicklung nicht vor (sie
 | CON | Inhaltsverzeichnis der konsolidierten Ed. 2.1 (Vorschau): https://vde-verlag.de/iec-normen/preview-pdf/info_iec60870-5-104{ed2.1}b.pdf | normativ (nur Gliederung) |
 | FIG17 | Bild 17 „Zustände der gesteuerten Station“ aus IEC 60870-5-104/FDIS, wiedergegeben in Kerkers, MSc-Arbeit, Universität Twente, S. 34–36: https://essay.utwente.nl/fileshare/file/72277/Kerkers_MA_EEMCS.pdf | Normentwurf, sekundär wiedergegeben |
 | VUT | Matoušek, „Description and analysis of IEC 104 Protocol“, FIT VUT Brno 2017, Abschnitt 2.1: https://www.fit.vut.cz/research/publication-file/11570/TR-IEC104.pdf | sekundär, normnah |
-| IOL | Interoperabilitätsliste Abschnitt 9.6, Herstellerkopie: https://support.ptc.com/help/kepware/drivers/en/kepware/drivers/IEC608705104/IEC_60870-5-104_Interoperability_Guide.html | Normtabelle, sekundär wiedergegeben |
-| TR02 | Technische Richtlinie eines Übertragungsnetzbetreibers, Abschnitte 9 und 10.6.16–18: https://www.svk.se/4ab5fb/siteassets/aktorsportalen/entreprenorer-i-elnatet/tekniska-riktlinjer/tr02/tr02-04-04e-2-2022-10-25.pdf | Anwenderrichtlinie |
+| ORA | Interoperabilitätsliste der Norm (Abschnitt 9.6), wiedergegeben im Oracle Network Management System User's Guide, „IEC60870-5-104 Options“: https://docs.oracle.com/en/industries/energy-water/network-management-system/26000/nms-users-guide/NMS_USER_26000/10_SCADA_Extensions.10.27.html | Normtabelle, sekundär wiedergegeben |
 | PRO | Protokollhandbuch eines Gateway-Herstellers: https://www.prosoft-technology.com/prosoft/download/14015/317164/file/PLX32_104S_Protocol_UM.pdf | Herstellerdoku |
 | LIB | lib60870 User Guide (nur Verhaltenshinweis, kein Code übernommen): https://github.com/mz-automation/lib60870/blob/master/user_guide.adoc | sekundär |
 
@@ -29,12 +28,12 @@ Gliederung laut CON: 5.1 Schutz gegen Verlust und Verdopplung, 5.2 Testprozedure
 | R5 | Falsche N(S) → Verbindung schließen | PRO | „does not match the expected sequence number, the connection is closed“ |
 | R6 | N(R) quittiert alle Nummern kleiner als N(R) (AMD1 ersetzt „kleiner gleich“) | AMD1, 5.1 | „valid acknowledge for all numbers < the received number“ |
 | R6 | N(R) außerhalb des Fensters → schließen | **keine öffentliche Quelle** | offen, `TODO(norm): 5.1` |
-| R7 | Höchstens k unquittierte I-Rahmen; Default 12, 1–32767 | IOL, CON 5.5 | „Maximum difference receive sequence number to send state variable“ |
+| R7 | Höchstens k unquittierte I-Rahmen; Default 12, 1–32767 | ORA, CON 5.5 | „Maximum outstanding APDUs (I-Frame) without an acknowledge (S-Frame) being received., default 12“ |
 | R7 | Verhalten bei Erreichen von k: Senden anhalten | LIB (sekundär); ein Hersteller schreibt „schließen“ | offen, `TODO(norm): 5.5` |
-| R8 | Quittung spätestens nach w I-Rahmen; Default 8; w ≤ 2/3 k empfohlen | IOL | „Latest acknowledge after receiving w I format APDUs“ |
-| R9 | Ohne eigene Daten Quittung per S-Rahmen spätestens nach t2; t2 < t1 | IOL, VUT S. 11 | „Time-out for acknowledges in case of no data messages t2 < t1“ |
-| R10 | t1 überwacht gesendete U- und I-Rahmen; Ablauf → schließen | FIG17 Anm. 2, IOL | „t1 is the timeout of a sent U-frame or I-frame“; „Time-out of send or test APDUs“ |
-| R11 | t3: Testrahmen nach langer Ruhe; Bereich 1 s–48 h, t3 = 0 schaltet ab | IOL, TR02 10.6.16 | „Time-out for sending test frames in case of a long idle state“ |
+| R8 | Quittung spätestens nach w I-Rahmen; Default 8; w ≤ 2/3 k empfohlen | ORA | „Maximum received APDUs (I Frames) before an acknowledge (S-Frame) must be transmitted, default 8“; „W should not exceed two-thirds of K“ |
+| R9 | Ohne eigene Daten Quittung per S-Rahmen spätestens nach t2; t2 < t1 | ORA, VUT S. 11 | „default 10 seconds, must be less than t1“ |
+| R10 | t1 überwacht gesendete U- und I-Rahmen; Ablauf → schließen | FIG17 Anm. 2, ORA | „t1 is the timeout of a sent U-frame or I-frame“; „Timeout of an acknowledge (S‑Frame) must be received for any sent APDUs“ |
+| R11 | t3: Testrahmen nach langer Ruhe; Bereich 1 s–48 h. t3 = 0 (abgeschaltet) verlangen einzelne Anwenderrichtlinien; nur im toleranten Modus | ORA | „Time-out for sending test frames in case of a long idle state. Range 1 s to 48 h“ |
 | R12 | STOPDT act: ohne offene I-Rahmen sofort bestätigen, sonst Zustand „Pending unconfirmed stopped“, Bestätigung nach S-Rahmen, der alles quittiert; dort I-Rahmen oder t1 → schließen | FIG17 | „STOPDT act[unconfirmed I-frames]“ → „S-frame [no unconfirmed I-frames] /Send STOPDT con“ |
 
 ## Offen (keine öffentliche Quelle)

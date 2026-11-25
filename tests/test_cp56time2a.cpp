@@ -12,7 +12,8 @@
  *   - "capture": tests/data/lib60870_capture.txt, produced by an independent
  *     implementation (lib60870-C v2.4.1, used only as external test peer);
  *   - "layout": derived by hand from the bit layout documented in
- *     cp56time2a.hpp, which follows docs/03 (citing the Wireshark dissector).
+ *     cp56time2a.hpp, which follows docs/02_Technik_und_Quellen.md (citing the Wireshark
+ * dissector).
  */
 #include "codec/cp56time2a.hpp"
 
@@ -119,7 +120,7 @@ TEST(Cp56Time2a, ReservedBitsRoundTrip) {
 
 // Rule: validate() rejects each field just above (or below) its range, and
 // encoding refuses an invalid value instead of truncating it.
-// Source: ranges from cp56time2a.hpp (docs/03).
+// Source: ranges from cp56time2a.hpp (docs/02_Technik_und_Quellen.md).
 TEST(Cp56Time2a, ValidateRanges) {
     EXPECT_EQ(validate(sample()), IEC104_OK);
 

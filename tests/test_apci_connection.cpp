@@ -79,9 +79,9 @@ std::vector<std::uint8_t> s_frame(std::uint16_t nr) {
 // Configuration
 // ---------------------------------------------------------------------------
 
-// Rule: defaults and ranges of t0..t3, k, w (docs/03 timer table), t3 = 0
-// only tolerant (docs/07_Normfragen_und_Festlegungen.md, E3), plausibility as warning/error/off
-// (E2).
+// Rule: defaults and ranges of t0..t3, k, w (docs/02_Technik_und_Quellen.md "Verbindung und
+// Timer"), t3 = 0 only tolerant (docs/05_Normfragen_und_Festlegungen.md, E3), plausibility as
+// warning/error/off (E2).
 TEST(ApciConfig, RangesAndPlausibility) {
     ConfigWarnings w{};
     ApciConfig c{};
@@ -394,7 +394,7 @@ TEST(ApciConnection, MalformedStreamCloses) {
 }
 
 // ---------------------------------------------------------------------------
-// Rules from public evidence (docs/05_Quellen_APCI.md)
+// Rules from public evidence (docs/03_Quellen_APCI.md)
 // ---------------------------------------------------------------------------
 
 // Rule R6 (amendment 1, 5.1): N(R) acknowledges all frames with N(S) < N(R).

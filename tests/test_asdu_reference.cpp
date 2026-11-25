@@ -147,7 +147,7 @@ TEST(AsduReference, EveryReferenceAsduRoundTrips) {
 }
 
 // Rule: in the strict profile the IEC 101 CP24Time2a types are rejected,
-// every other reference ASDU is accepted (docs/07_Normfragen_und_Festlegungen.md, N4).
+// every other reference ASDU is accepted (docs/05_Normfragen_und_Festlegungen.md, N4).
 // Source: reference file; CP24 types are the lines with type ids 2..19 (even) and 17..19.
 TEST(AsduReference, StrictProfileRejectsOnlyCp24Types) {
     for (const ReferenceAsdu& r : load_reference()) {

@@ -19,16 +19,16 @@
  *   k   maximum number of sent, unacknowledged I-frames; the sender stops at k
  *   w   the receiver acknowledges at the latest after w received I-frames
  *
- * Defaults and ranges (source: docs/03, timer table, citing the
- * interoperability templates of several vendors, which reproduce the values
- * of the standard): t0 30 s, t1 15 s, t2 10 s, t3 20 s, each 1..255 s
+ * Defaults and ranges (source: docs/02_Technik_und_Quellen.md, section "Verbindung und Timer",
+ * citing the interoperability list of the standard as reproduced in public
+ * documentation): t0 30 s, t1 15 s, t2 10 s, t3 20 s, each 1..255 s
  * (t3 recommended 1 s .. 48 h); k 12, w 8, each 1..32767; t2 < t1 and
  * w <= 2/3 k are recommendations.
  * TODO(norm): timer and k/w definitions, clause unknown (IEC 60870-5-104 clause 5/9).
  *
- * Deviations accepted on purpose (docs/02, "Verbindung und Timer"):
+ * Deviations accepted on purpose (docs/02_Technik_und_Quellen.md, "Verbindung und Timer"):
  *   - t3 = 0 switches the idle test off; some peers require it. Only allowed
- *     with strict = false (docs/07_Normfragen_und_Festlegungen.md, E3).
+ *     with strict = false (docs/05_Normfragen_und_Festlegungen.md, E3).
  *   - violations of t2 < t1 and w <= 2/3 k are reported as warnings by
  *     default, because some peers use e.g. t1 = 250 s, t2 = 240 s (allowed)
  *     or other combinations; whether they are errors is configurable (E2).
@@ -54,7 +54,7 @@ enum class Role : std::uint8_t {
 
 /** @brief How violations of the recommendations t2 < t1 and w <= 2/3 k are handled. */
 enum class PlausibilityCheck : std::uint8_t {
-    Warn,  ///< Accepted, reported in ConfigWarnings (default, docs/02).
+    Warn,  ///< Accepted, reported in ConfigWarnings (default, docs/02_Technik_und_Quellen.md).
     Error, ///< Rejected with IEC104_ERR_INVALID_ARGUMENT.
     Off,   ///< Not checked, not reported.
 };

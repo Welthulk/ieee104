@@ -10,7 +10,7 @@
  *
  * Rules implemented here (R1..R12 are referenced in the code and in the
  * tests, tests/test_apci_connection.cpp). The normative text of clause 5 is
- * not available; docs/05_Quellen_APCI.md lists the public evidence per rule
+ * not available; docs/03_Quellen_APCI.md lists the public evidence per rule
  * (amendment 1 sample, figure 17 of the draft standard, interoperability
  * list 9.6, technical reports). Clause numbers follow the public table of
  * contents of edition 2.1 (5.1 loss/duplication, 5.2 test, 5.3 start/stop,
@@ -167,7 +167,7 @@ std::size_t Connection::receive(const std::uint8_t* data, std::size_t size, Time
 void Connection::handle_frame(const std::uint8_t* frame, const codec::Apci& apci,
                               TimeMs now) noexcept {
     // R11: t3 measures the time since the last received frame of any format.
-    // TODO(norm): exact start condition of t3, clause 5 (docs/07_Normfragen_und_Festlegungen.md,
+    // TODO(norm): exact start condition of t3, clause 5 (docs/05_Normfragen_und_Festlegungen.md,
     // N1).
     if (config_.t3_ms != 0U) {
         t3_deadline_ = now + config_.t3_ms;

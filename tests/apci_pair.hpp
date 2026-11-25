@@ -8,7 +8,7 @@
  * @file apci_pair.hpp
  * @brief Test helper: two APCI connections coupled back to back in memory.
  *
- * This is the self-test without network (docs/07_Normfragen_und_Festlegungen.md, E6): a
+ * This is the self-test without network (docs/05_Normfragen_und_Festlegungen.md, E6): a
  * controlling and a controlled station exchange their output bytes directly,
  * with a simulated clock. The helper also records every event per side, so
  * tests can check what each side saw.

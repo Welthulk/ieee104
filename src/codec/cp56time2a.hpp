@@ -11,7 +11,7 @@
  * CP56Time2a carries date and time with millisecond resolution. The IEC 104
  * time-tagged types (30-40, 58-64, 107) use it. Whether the 3-octet CP24Time2a
  * types of IEC 101 are excluded from IEC 104 is not proven by the standard text
- * yet (docs/07_Normfragen_und_Festlegungen.md, N4).
+ * yet (docs/05_Normfragen_und_Festlegungen.md, N4).
  *
  * Layout (octets 1..7, little endian where a field spans two octets):
  *
@@ -29,9 +29,9 @@
  * The standard does NOT define whether the time is UTC or local time; that is
  * an item of the interoperability list. This type therefore carries no time
  * zone. Interpretation belongs to the connection profile (time base, see
- * docs/02, "Zeit").
+ * docs/02_Technik_und_Quellen.md, "Zeit").
  *
- * Sources: docs/03, section on information elements (citing the Wireshark
+ * Sources: docs/02_Technik_und_Quellen.md, section "Informationselemente" (citing the Wireshark
  * IEC 104 dissector).
  * TODO(norm): CP56Time2a definition, clause unknown (defined in the
  * IEC 60870-5 series, not in the documents of this repository).

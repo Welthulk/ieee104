@@ -8,6 +8,7 @@
 # Aufruf:
 #   tools/check_neutral.sh                    Repo prüfen
 #   tools/check_neutral.sh --message DATEI    zusätzlich eine Commit-Nachricht prüfen
+#   tools/check_neutral.sh --root ORDNER      einen anderen Ordner prüfen (z. B. ein entpacktes Zip)
 #
 # Begriffsdatei: ${IEC104_FORBIDDEN_TERMS:-$HOME/.config/iec104/forbidden_terms.txt}
 #   ein Begriff pro Zeile, Leerzeilen und Zeilen mit # werden übersprungen.
@@ -18,7 +19,8 @@
 #   einer Datei. Sonst bleibt jeder Treffer ein Fehler (TASK-000, Abschnitt 4).
 #   Die Datei liegt außerhalb des Repos und wird nicht committet.
 #
-# Geprüft werden Inhalt und Name aller Dateien außer docs/, folien/, build/ und .git/.
+# Geprüft werden Inhalt und Name aller Dateien außer intern/ (interne Unterlagen),
+# build/, dist/ und .git/. docs/ wird geprüft, weil es weitergegeben wird.
 # Von LICENSES/ (Lizenztexte) werden nur die Dateinamen geprüft.
 # Vergleich ohne Beachtung der Groß-/Kleinschreibung.
 #
@@ -32,10 +34,13 @@ MESSAGE_FILE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --root)
+            [ $# -ge 2 ] || { echo "--root braucht einen Ordner" >&2; exit 2; }
+            ROOT="$(cd "$2" && pwd)" || exit 2; shift 2 ;;
         --message)
             [ $# -ge 2 ] || { echo "--message braucht eine Datei" >&2; exit 2; }
             MESSAGE_FILE="$2"; shift 2 ;;
-        -h|--help) sed -n '6,25p' "$0"; exit 0 ;;
+        -h|--help) sed -n '6,27p' "$0"; exit 0 ;;
         *) echo "Unbekannte Option: $1" >&2; exit 2 ;;
     esac
 done
@@ -99,7 +104,7 @@ FOUND=0
 FILES=()
 while IFS= read -r -d '' f; do
     FILES+=("$f")
-done < <(find . \( -path ./docs -o -path ./folien -o -path ./build -o -path ./.git \) -prune \
+done < <(find . \( -path ./intern -o -path ./build -o -path ./dist -o -path ./.git \) -prune \
              -o -type f -print0)
 
 # Dateiinhalte (Binärdateien werden übersprungen; -H nennt immer den Dateinamen).

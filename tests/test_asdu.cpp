@@ -214,7 +214,7 @@ TEST(Asdu, DecodeCapacityTooSmall) {
 }
 
 // Rule: a type that is neither in the table nor private is unsupported
-// (the session answers with cause 44, docs/03). Types 22..29 are unassigned.
+// (the session answers with cause 44, docs/02_Technik_und_Quellen.md). Types 22..29 are unassigned.
 // Source: type table; header bytes derived by hand.
 TEST(Asdu, UnknownTypeIsUnsupported) {
     const std::vector<std::uint8_t> asdu{0x16, 0x01, 0x03, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00};
@@ -233,7 +233,7 @@ TEST(Asdu, UnknownTypeIsUnsupported) {
 }
 
 // Rule: strict mode rejects CP24Time2a types on encoding too
-// (docs/07_Normfragen_und_Festlegungen.md, N4). Source: type table (M_SP_TA_1 = 2).
+// (docs/05_Normfragen_und_Festlegungen.md, N4). Source: type table (M_SP_TA_1 = 2).
 TEST(Asdu, StrictRejectsCp24OnEncode) {
     const InformationObject o = sample_object(1, 1);
     Buffer out{};
@@ -245,7 +245,7 @@ TEST(Asdu, StrictRejectsCp24OnEncode) {
 }
 
 // Rule: an ASDU with 0 objects is malformed in strict mode and accepted in
-// tolerant mode if nothing follows the header (docs/07_Normfragen_und_Festlegungen.md, N9).
+// tolerant mode if nothing follows the header (docs/05_Normfragen_und_Festlegungen.md, N9).
 // Source: header bytes derived by hand (M_SP_NA_1, VSQ 0).
 TEST(Asdu, ZeroObjects) {
     const std::vector<std::uint8_t> empty{0x01, 0x00, 0x03, 0x00, 0x01, 0x00};
@@ -273,7 +273,7 @@ TEST(Asdu, ZeroObjects) {
 }
 
 // Rule: private types 136..255 are passed through as raw octets (asdu.hpp).
-// Source: private range from docs/03; bytes chosen for the test.
+// Source: private range from docs/02_Technik_und_Quellen.md; bytes chosen for the test.
 TEST(Asdu, PrivateTypeIsRaw) {
     const std::vector<std::uint8_t> asdu{0xC9, 0x01, 0x03, 0x00, 0x01, 0x00, 0xAA, 0xBB, 0xCC};
     DecodedAsdu d{};

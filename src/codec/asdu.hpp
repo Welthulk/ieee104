@@ -27,11 +27,12 @@
  * file has no per-type code. Decoding writes into an array the caller
  * provides, encoding reads from one; nothing is allocated.
  *
- * Strict and tolerant profile (AsduProfile::strict, docs/02 "ASDU-Profil"):
+ * Strict and tolerant profile (AsduProfile::strict, docs/02_Technik_und_Quellen.md, "ASDU-Kopf und
+ * ASDU-Profil"):
  *   - IEC 101 types with CP24Time2a: strict -> IEC104_ERR_UNSUPPORTED,
  *     tolerant -> decoded and encoded like any other type;
  *   - ASDU with 0 objects: strict -> IEC104_ERR_MALFORMED, tolerant ->
- *     accepted if no object octets follow (docs/07_Normfragen_und_Festlegungen.md, N9).
+ *     accepted if no object octets follow (docs/05_Normfragen_und_Festlegungen.md, N9).
  * Types 136..255 are private: decode_asdu() hands their object octets to the
  * caller unchanged (DecodedAsdu::object_data) and does not interpret them.
  *
@@ -66,7 +67,7 @@ namespace iec104::codec {
  * ioa, sva, qds and cp56 are used.
  *
  * NVA is kept as its raw signed 16-bit value; the represented fraction is
- * nva / 32768 (docs/03), e.g. 0x4000 = 0.5.
+ * nva / 32768 (docs/02_Technik_und_Quellen.md), e.g. 0x4000 = 0.5.
  */
 struct InformationObject {
     std::uint32_t ioa{0}; ///< Information object address, width per AsduProfile::ioa_length.

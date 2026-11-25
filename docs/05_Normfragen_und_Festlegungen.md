@@ -2,7 +2,7 @@
 
 Stand: 25.11.2026
 
-Die Library folgt IEC 60870-5-104 Ed. 2.1 einschließlich AMD1:2016. Der Normtext lag bei der Entwicklung nicht vor. Alle Regeln stützen sich auf öffentliche Quellen: Leseproben der Norm, die Interoperabilitätsliste (Abschnitt 9), den Wireshark-Dissector, Fachberichte und Herstellerdokumentation (siehe `docs/03_Recherchebericht_IEC104_im_Detail.md` und `docs/05_Quellen_APCI.md`).
+Die Library folgt IEC 60870-5-104 Ed. 2.1 einschließlich AMD1:2016. Der Normtext lag bei der Entwicklung nicht vor. Alle Regeln stützen sich auf öffentliche Quellen: Leseproben der Norm, die Interoperabilitätsliste (Abschnitt 9), den Wireshark-Dissector, Fachberichte und Herstellerdokumentation (siehe `docs/02_Technik_und_Quellen.md` und `docs/03_Quellen_APCI.md`).
 
 Stellen im Code, die nur aus Sekundärquellen belegt sind, tragen den Kommentar `TODO(norm): …`. Dieses Dokument fasst die offenen Fragen zusammen (N1–N13) und hält die technischen Festlegungen fest, auf die der Code verweist (E1–E6). Sobald der Normtext verfügbar ist, werden die Punkte dagegen geprüft.
 
@@ -10,7 +10,7 @@ Stellen im Code, die nur aus Sekundärquellen belegt sind, tragen den Kommentar 
 
 | Nr. | Thema (Normabschnitt) | Modul | Auswirkung | Umsetzung bis zur Klärung |
 | --- | --- | --- | --- | --- |
-| N1 | Zustandsverhalten der Verbindung (104, Abschnitt 5) | apci | Wann I-Rahmen erlaubt sind, wann geschlossen wird | Regeln R1–R12 nach öffentlichen Belegen, siehe `docs/05_Quellen_APCI.md`; unbelegte Punkte (N(R) außerhalb des Fensters, Verhalten bei Erreichen von k, Startbedingung von t3) mit `TODO(norm)` |
+| N1 | Zustandsverhalten der Verbindung (104, Abschnitt 5) | apci | Wann I-Rahmen erlaubt sind, wann geschlossen wird | Regeln R1–R12 nach öffentlichen Belegen, siehe `docs/03_Quellen_APCI.md`; unbelegte Punkte (N(R) außerhalb des Fensters, Verhalten bei Erreichen von k, Startbedingung von t3) mit `TODO(norm)` |
 | N2 | Bedeutung von t1 | apci | Einige Geräte überwachen mit t1 nur U-Rahmen | t1 überwacht I-Rahmen und U-Rahmen act (Bild 17 des Normentwurfs, Interoperabilitätsliste) |
 | N3 | Zulässige Kombinationen Typkennung/Übertragungsursache (9.5) | codec, session | Prüfung eingehender ASDUs, negative Quittung | Tabelle angelegt, aber leer; jede Kombination ist erlaubt (`is_cause_allowed()`) |
 | N4 | Typen mit CP24Time2a (2–16 gerade, 17–19) in IEC 104 | codec | Ablehnen oder dekodieren | Strikt: `IEC104_ERR_UNSUPPORTED`. Tolerant: dekodieren und kodieren |
@@ -33,4 +33,4 @@ Stellen im Code, die nur aus Sekundärquellen belegt sind, tragen den Kommentar 
 | E3 | t3 = 0 (Verbindungstest abgeschaltet) nur im toleranten Modus | Die Interoperabilitätsliste empfiehlt 1 s bis 48 h; einige Geräte verlangen 0 |
 | E4 | Version 1 nur für Linux x86-64 | Zielplattform; der Transport nutzt POSIX-Sockets und `poll` |
 | E5 | Dekodieren ist verlustfrei: auch reservierte Bits bleiben erhalten (z. B. RES1–RES4 der CP56Time2a). Kodieren prüft Wertebereiche und schneidet nie ab | Eine dekodierte ASDU ergibt beim erneuten Kodieren dieselben Oktette (wichtig für Gateways, Mitschnitte und den Fuzzer); Programmierfehler werden nicht zu falschen Daten auf der Leitung |
-| E6 | Die Library testet sich selbst: Zustandsmaschinen im Speicher gekoppelt (ohne Netz) und Selbsttest-Programme über TCP | Prüfung ohne fremde Gegenstelle, Grundlage für manuelle Tests (`docs/06_Selbsttest.md`) |
+| E6 | Die Library testet sich selbst: Zustandsmaschinen im Speicher gekoppelt (ohne Netz) und Selbsttest-Programme über TCP | Prüfung ohne fremde Gegenstelle, Grundlage für manuelle Tests (`docs/04_Selbsttest.md`) |

@@ -12,7 +12,7 @@
  *   - "capture": tests/data/lib60870_capture.txt, produced by an independent
  *     implementation (lib60870-C v2.4.1, used only as external test peer);
  *   - "layout": derived by hand from the bit layouts documented in apci.hpp,
- *     which follow docs/03 (citing the Wireshark IEC 104 dissector).
+ *     which follow docs/02_Technik_und_Quellen.md (citing the Wireshark IEC 104 dissector).
  */
 #include "codec/apci.hpp"
 
@@ -27,7 +27,7 @@ using Bytes6 = std::array<std::uint8_t, 6>;
 // control octets are zero, and decoding returns the same function.
 // Source: STARTDT act/con from the capture (lines "SEND: 68 04 07 ..." and
 // "RCVD: 68 04 0b ..."); STOPDT and TESTFR from the function octets listed in
-// docs/03 (Wireshark dissector masks).
+// docs/02_Technik_und_Quellen.md (Wireshark dissector masks).
 TEST(Apci, EncodeUFrames) {
     struct Case {
         UFunction f;
@@ -131,7 +131,7 @@ TEST(Apci, IFrameHeaderFromCapture) {
 // Rule: values outside the 15-bit sequence range and ASDU lengths outside
 // 1..249 are rejected, never truncated; 249 is the largest allowed ASDU
 // (length octet 253). Also covers buffer and NULL checks of encode_s_frame.
-// Source: limits from docs/03 (APDU at most 255 octets).
+// Source: limits from docs/02_Technik_und_Quellen.md (APDU at most 255 octets).
 TEST(Apci, EncodeRejectsOutOfRange) {
     Bytes6 out{};
     EXPECT_EQ(encode_i_header(32768, 0, 1, out.data(), out.size()), IEC104_ERR_OUT_OF_RANGE);
@@ -148,7 +148,7 @@ TEST(Apci, EncodeRejectsOutOfRange) {
 
 // Rule: stream framing needs two octets; the start octet must be 0x68 and the
 // length octet 4..253; total length = 2 + length octet.
-// Source: docs/03 (APCI section).
+// Source: docs/02_Technik_und_Quellen.md ("APCI").
 TEST(Apci, PeekLength) {
     std::size_t len = 0;
     const std::uint8_t ok[] = {0x68, 0x0E};

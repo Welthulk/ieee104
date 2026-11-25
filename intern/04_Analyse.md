@@ -71,7 +71,7 @@ Abschnittsnummern stammen aus `03`. Wo sie dort nicht belegt sind, steht „unbe
 | Nr. | Stelle | Befund | Maßnahme |
 | --- | --- | --- | --- |
 | A1 | alle Dateien in `src/`, `include/`, `tests/`, `fuzz/` | Kommentarstandard (TASK-000, Abschnitt 5) nicht erfüllt: keine `@file`-Kopfblöcke, kein `@brief`/`@param`/`@return` mit allen Statuscodes, Bit-Layout nur bei CP56Time2a, nicht bei Steuerfeld, VSQ und COT | Erster Schritt nach Freigabe |
-| A2 | Tests (`test_apci`, `test_asdu_header`, `test_cp56time2a`) | Referenzbytes sind von Hand hergeleitet, die Quelle steht nur pauschal da („docs/03 … and the Wireshark dissector“). TASK-001 verlangt belegte Referenzen. | Je Testfall die Quelle nennen. Vorschlag F5: Referenz-Hexdumps aus Mitschnitten gegen lib60870 (tshark) |
+| A2 | Tests (`test_apci`, `test_asdu_header`, `test_cp56time2a`) | Referenzbytes sind von Hand hergeleitet, die Quelle steht nur pauschal da („intern/03_Recherchebericht_IEC104_im_Detail.md … and the Wireshark dissector“). TASK-001 verlangt belegte Referenzen. | Je Testfall die Quelle nennen. Vorschlag F5: Referenz-Hexdumps aus Mitschnitten gegen lib60870 (tshark) |
 | A3 | Code-Kommentare | Verweise auf deutsche Abschnittstitel, z. B. „section ‚Sechs Oktette APCI‘“ | Durch Dateiverweis plus englische Beschreibung ersetzen |
 | A4 | `asdu_header.hpp` | `kBroadcastCa` definiert, aber nicht genutzt; CA 0 nicht geprüft | In TASK-001/003 nach N10 klären |
 | A5 | `asdu_header.cpp` | VSQ mit Anzahl 0 wird ohne Prüfung angenommen | Nach N9 in TASK-001 |
@@ -128,5 +128,6 @@ Die Analyse ist freigegeben. Zu F1–F8 gelten die Vorschläge aus Abschnitt 5.
 | F8 | Kein C++-Wrapper in Version 1 | – |
 | F9 | Lizenz (Nachtrag 25.11.2026): Rechte liegen ausschließlich beim Rechteinhaber; was für den Zugriff gebraucht wird (öffentlicher Header), ist offen unter Apache-2.0 | SPDX-Kopfblock in jeder Quelldatei, `LICENSES/Apache-2.0.txt` und `LICENSES/LicenseRef-Proprietary.txt`; Ausnahme von der Neutralitätsregel nur für diese Kopfzeilen (`allow:` in der Begriffsdatei) und `LICENSES/` |
 | F10 | Selbsttest (Nachtrag 25.11.2026): Die Library muss sich selbst testen können, bis der integrierte Test gegen die Gegenstelle des Auftraggebers folgt; Programme für den Selbsttest, Ports konfigurierbar | TASK-000 Abschnitt 1, Aufgabenreihe TASK-002 (ohne Netz), TASK-003 (TCP, Ports, Programme, ctest); Reihenfolge am 25.11.2026 für frühe Testbarkeit umgestellt |
+| F11 | Weitergabe (Nachtrag 25.11.2026): Ein Zip ohne Commit-Historie geht in ein firmeninternes Repo und an Kollegen für manuelle Tests; keine Projekt- oder Kundennamen, keine Hinweise auf KI; Autor und Rechteinhaber bleiben im SPDX-Kopf | Projekt- und kundenbezogene Unterlagen nach `intern/`; neue namensfreie `docs/02_Technik_und_Quellen.md`; `docs/` voll von `check_neutral.sh` geprüft; `tools/make_package.sh` prüft das Zip selbst |
 
 Umgesetzt aus Abschnitt 1: W1 (Hinweis in `03`), W3, W6, W7, W8 (in `02`), W10 (Catch2 aus dem Setup), W11 (Fuzz-Dauern in `CLAUDE.md`). In `02` zusätzlich die CP24-Typen korrigiert: 2, 4, …, 16 und 17–19 (vorher „2–19 gerade“).
