@@ -28,10 +28,10 @@
  *
  * Deviations accepted on purpose (docs/02, "Verbindung und Timer"):
  *   - t3 = 0 switches the idle test off; some peers require it. Only allowed
- *     with strict = false (docs/04_Analyse.md, W6).
+ *     with strict = false (docs/07_Normfragen_und_Festlegungen.md, E3).
  *   - violations of t2 < t1 and w <= 2/3 k are reported as warnings by
  *     default, because some peers use e.g. t1 = 250 s, t2 = 240 s (allowed)
- *     or other combinations; whether they are errors is configurable (W4).
+ *     or other combinations; whether they are errors is configurable (E2).
  *
  * Times are milliseconds so that tests with simulated time can use any
  * value; the allowed range is still whole seconds as above.

@@ -80,7 +80,8 @@ std::vector<std::uint8_t> s_frame(std::uint16_t nr) {
 // ---------------------------------------------------------------------------
 
 // Rule: defaults and ranges of t0..t3, k, w (docs/03 timer table), t3 = 0
-// only tolerant (docs/04 W6), plausibility as warning/error/off (W4).
+// only tolerant (docs/07_Normfragen_und_Festlegungen.md, E3), plausibility as warning/error/off
+// (E2).
 TEST(ApciConfig, RangesAndPlausibility) {
     ConfigWarnings w{};
     ApciConfig c{};

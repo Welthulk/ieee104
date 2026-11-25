@@ -232,8 +232,8 @@ TEST(Asdu, UnknownTypeIsUnsupported) {
         IEC104_ERR_UNSUPPORTED);
 }
 
-// Rule: strict mode rejects CP24Time2a types on encoding too (TASK-001, item 5).
-// Source: type table (M_SP_TA_1 = 2).
+// Rule: strict mode rejects CP24Time2a types on encoding too
+// (docs/07_Normfragen_und_Festlegungen.md, N4). Source: type table (M_SP_TA_1 = 2).
 TEST(Asdu, StrictRejectsCp24OnEncode) {
     const InformationObject o = sample_object(1, 1);
     Buffer out{};
@@ -245,7 +245,7 @@ TEST(Asdu, StrictRejectsCp24OnEncode) {
 }
 
 // Rule: an ASDU with 0 objects is malformed in strict mode and accepted in
-// tolerant mode if nothing follows the header (docs/04_Analyse.md, N9).
+// tolerant mode if nothing follows the header (docs/07_Normfragen_und_Festlegungen.md, N9).
 // Source: header bytes derived by hand (M_SP_NA_1, VSQ 0).
 TEST(Asdu, ZeroObjects) {
     const std::vector<std::uint8_t> empty{0x01, 0x00, 0x03, 0x00, 0x01, 0x00};
@@ -272,7 +272,7 @@ TEST(Asdu, ZeroObjects) {
               IEC104_ERR_INVALID_ARGUMENT);
 }
 
-// Rule: private types 136..255 are passed through as raw octets (TASK-001, item 5).
+// Rule: private types 136..255 are passed through as raw octets (asdu.hpp).
 // Source: private range from docs/03; bytes chosen for the test.
 TEST(Asdu, PrivateTypeIsRaw) {
     const std::vector<std::uint8_t> asdu{0xC9, 0x01, 0x03, 0x00, 0x01, 0x00, 0xAA, 0xBB, 0xCC};
@@ -374,7 +374,7 @@ TEST(Asdu, OutputAndProfileLimits) {
 // Rule: encode_asdu_fitting() splits a long list so that every ASDU stays
 // within max_asdu_length and 127 objects; together the parts contain every
 // object exactly once, in order.
-// Source: TASK-001, item 4. M_ME_NC_1 SQ = 0: 6 + n * 8 octets, so 249
+// Source: encode_asdu_fitting() contract. M_ME_NC_1 SQ = 0: 6 + n * 8 octets, so 249
 // allows 30 objects per ASDU; SQ = 1: 6 + 3 + n * 5, so 48 objects.
 TEST(Asdu, SplitByMaxAsduLength) {
     std::vector<InformationObject> list;
@@ -417,7 +417,7 @@ TEST(Asdu, SplitByMaxAsduLength) {
 
 // Rule: a smaller profile maximum gives smaller parts; if not even one object
 // fits, the encoder reports it instead of looping forever.
-// Source: TASK-001, item 4; M_ME_NC_1 SQ = 0 needs 14 octets for one object.
+// Source: encode_asdu_fitting() contract; M_ME_NC_1 SQ = 0 needs 14 octets for one object.
 TEST(Asdu, SplitSmallMaximum) {
     const std::vector<InformationObject> list = three_objects();
     AsduProfile p{};

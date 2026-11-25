@@ -167,7 +167,8 @@ std::size_t Connection::receive(const std::uint8_t* data, std::size_t size, Time
 void Connection::handle_frame(const std::uint8_t* frame, const codec::Apci& apci,
                               TimeMs now) noexcept {
     // R11: t3 measures the time since the last received frame of any format.
-    // TODO(norm): exact start condition of t3, clause 5 (docs/04, N1).
+    // TODO(norm): exact start condition of t3, clause 5 (docs/07_Normfragen_und_Festlegungen.md,
+    // N1).
     if (config_.t3_ms != 0U) {
         t3_deadline_ = now + config_.t3_ms;
     }

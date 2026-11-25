@@ -14,7 +14,7 @@
  * and the direction. The ASDU codec (asdu.hpp) is driven entirely by this
  * table; it contains no per-type code.
  *
- * Scope (TASK-001): the IEC 104 types 1-21 (odd), 20, 21, 30-40, 45-51,
+ * Scope of version 1: the IEC 104 types 1-21 (odd), 20, 21, 30-40, 45-51,
  * 58-64, 70, 100-107, 110-113, and the IEC 101 types with CP24Time2a
  * (2-16 even, 17-19), which only the tolerant profile accepts.
  * Not in scope: file transfer 120-127, security types of IEC TS 60870-5-7.
@@ -105,7 +105,7 @@ inline constexpr std::uint8_t kFirstPrivateType = 136U;
  * @brief Tells whether a type identification is in the private range 136..255.
  *
  * Private types are defined by the parties of a project, not by the
- * standard. The codec does not interpret them (TASK-001, item 5).
+ * standard. The codec does not interpret them.
  *
  * @param type_id Type identification octet.
  * @return true for 136..255.
@@ -118,7 +118,7 @@ constexpr bool is_private_type(std::uint8_t type_id) noexcept {
  * @brief Tells whether a cause of transmission is allowed for a type.
  *
  * The standard defines this matrix in clause 9.5; its text is not available
- * in this repository (docs/04_Analyse.md, N3). The table behind this function
+ * in this repository (docs/07_Normfragen_und_Festlegungen.md, N3). The table behind this function
  * is therefore empty and every combination is allowed. When the matrix is
  * filled in, only this function and its table change.
  * TODO(norm): 9.5, matrix of type identification and cause of transmission.

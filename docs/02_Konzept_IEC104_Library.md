@@ -154,7 +154,7 @@ Getestet wird in sechs Ebenen, von reinen Funktionen bis zur echten Gegenstelle.
 **Zusätzlich:**
 
 - **Langlauf:** 72 h unter Last mit 10.000 Datenpunkten und erzwungenen Verbindungsabbrüchen. Gemessen werden Speicher, Latenz und Ereignisverlust (Soll: 0 innerhalb der Puffergröße).
-- **Profiltests:** Die Konfigurationen aus der Recherche werden als Testprofile hinterlegt, benannt nach ihrer Eigenschaft, nicht nach Netzbetreibern (Neutralitätsregel, `tasks/TASK-000_Auftrag.md`), z. B. `long_timeout_profile`, `local_time_su_profile`, `fixed_offset_time_profile`, `select_before_operate_profile`. So ist jede Abweichung einmal abgedeckt.
+- **Profiltests:** Die Konfigurationen aus der Recherche werden als Testprofile hinterlegt, benannt nach ihrer Eigenschaft, nicht nach Netzbetreibern, z. B. `long_timeout_profile`, `local_time_su_profile`, `fixed_offset_time_profile`, `select_before_operate_profile`. So ist jede Abweichung einmal abgedeckt.
 - **Statische Analyse:** clang-tidy, cppcheck, Compiler-Warnungen als Fehler.
 - **TLS-Prüfung:** Handshake gegen `openssl s_server`/`s_client` und lib60870 mit TLS. Zusätzlich Negativtests: falsches Zertifikat, gesperrtes Zertifikat, abgelaufenes Zertifikat, falsche Suite.
 
@@ -162,13 +162,13 @@ Hinweis: IEC TS 60870-5-604 prüft Normkonformität, garantiert aber nach eigene
 
 ## Offene Entscheidungen
 
-- [x] Sprache: C++17-Kern mit C-API (entschieden, siehe `docs/04_Analyse.md`).
+- [x] Sprache: C++17-Kern mit C-API (entschieden).
 - [x] TLS-Backend: OpenSSL 3.x als erstes Backend (entschieden).
 - [ ] Normtexte beschaffen: IEC 60870-5-104 Ed. 2.1, IEC 62351-3 Ed. 2 (Cipher-Tabelle, Renegotiation-Regeln), IEC TS 60870-5-604.
 - [ ] Interoperabilitätsliste und Testzugang vom Aucoteam-Gateway anfordern.
 - [ ] Rolle in der SpPS klären: nur Client, oder auch Server?
 - [ ] Zielplattformen und Threading-Modell der SpPS festlegen.
-- [x] Lizenzmodell und Rechte am Code: Rechte bei SOPTIM AG, öffentlicher Header unter Apache-2.0, Rest proprietär (entschieden, F9 in `docs/04_Analyse.md`).
+- [x] Lizenzmodell und Rechte am Code: Rechte bei SOPTIM AG, öffentlicher Header unter Apache-2.0, Rest proprietär (entschieden).
 - [ ] Testgegenstelle Triangle MicroWorks Test Harness: Lizenz beschaffen oder nicht?
 
 Grundlage der Werte und Abweichungen ist der Recherchebericht "IEC 104 im Detail" vom 24.11.2026.

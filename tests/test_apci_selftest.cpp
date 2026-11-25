@@ -8,9 +8,8 @@
  * @file test_apci_selftest.cpp
  * @brief Self-test without network: client and server state machines run against each other.
  *
- * Requirement F10 (docs/04_Analyse.md): the library tests itself until the
- * integrated test against the peer of the customer takes place. This file is
- * the network-free part: complete ASDUs built by the codec travel through
+ * The library tests itself without a foreign peer (docs/07_Normfragen_und_Festlegungen.md, E6).
+ * This file is the network-free part: complete ASDUs built by the codec travel through
  * two APCI connections coupled in memory (tests/apci_pair.hpp), with
  * simulated time, through a whole connection life cycle.
  */

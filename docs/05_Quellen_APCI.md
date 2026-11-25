@@ -1,6 +1,6 @@
-# Öffentliche Belege für die APCI-Regeln (TASK-002)
+# Öffentliche Belege für die APCI-Regeln
 
-Stand: 25.11.2026 · Anlass: Normtexte stehen nicht zur Verfügung (Entscheidung F4 in `docs/04_Analyse.md`). Jede Regel der Zustandsmaschine (`src/apci/connection.cpp`, R1–R12) wird hier mit öffentlicher Quelle belegt oder als offen markiert.
+Stand: 25.11.2026 · Anlass: Der Normtext lag bei der Entwicklung nicht vor (siehe `docs/07_Normfragen_und_Festlegungen.md`). Jede Regel der Zustandsmaschine (`src/apci/connection.cpp`, R1–R12) wird hier mit öffentlicher Quelle belegt oder als offen markiert.
 
 ## Quellen
 

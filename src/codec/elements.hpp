@@ -432,7 +432,7 @@ inline constexpr std::uint16_t kFixedTestBitPattern = 0x55AAU;
  *   octet 3:     bit 7 IV | bit 6 RES1 | bits 0..5 minute 0..59
  *
  * Only used by the IEC 101 types 2..19 (even) and 17..19, which the
- * strict IEC 104 profile rejects (docs/04_Analyse.md, N4).
+ * strict IEC 104 profile rejects (docs/07_Normfragen_und_Festlegungen.md, N4).
  *
  * Example: 2B 17 01 = 5.931 s, minute 1 (reference data, M_SP_TA_1).
  */

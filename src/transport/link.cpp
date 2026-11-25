@@ -139,7 +139,7 @@ void Link::dispatch_events(LinkSink& sink) noexcept {
             sink.on_state(id_, e.state);
             break;
         case apci::EventKind::Acknowledged:
-            break; // used by the redundancy buffer later (TASK-008)
+            break; // will feed the event buffer of redundancy groups
         case apci::EventKind::CloseRequested:
             protocol_reason_ = e.reason;
             break;

@@ -11,7 +11,7 @@
  * CP56Time2a carries date and time with millisecond resolution. The IEC 104
  * time-tagged types (30-40, 58-64, 107) use it. Whether the 3-octet CP24Time2a
  * types of IEC 101 are excluded from IEC 104 is not proven by the standard text
- * yet (docs/04_Analyse.md, N4).
+ * yet (docs/07_Normfragen_und_Festlegungen.md, N4).
  *
  * Layout (octets 1..7, little endian where a field spans two octets):
  *

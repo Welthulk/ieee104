@@ -9,6 +9,13 @@ Exemplarische IEC-60870-5-104-Library: Client und Server, Kern C++17, stabile C-
 - `docs/03_Recherchebericht_IEC104_im_Detail.md` liefert Belege und Werte. Seine Rust-Aussagen (rustls, `Strictness::…`, cargo-fuzz) sind überholt; Sprache ist C++17, TLS-Backend OpenSSL 3.x.
 - `docs/01_IEC104_verstehen.md` ist die Einführung.
 - `docs/05_Quellen_APCI.md` belegt die Regeln der Zustandsmaschine aus öffentlichen Quellen (Normtexte liegen nicht vor, F4).
+- `docs/07_Normfragen_und_Festlegungen.md` ist die weitergabefähige Fassung der offenen Normfragen (N1–N13) und Festlegungen (E1–E6). Code und Tests verweisen nur darauf, nie auf `docs/04_Analyse.md` oder `tasks/`.
+
+## Weitergabe-Zip
+
+- `tools/make_package.sh` baut `dist/iec104-<version>.zip` aus dem letzten Commit, ohne CLAUDE.md, `tasks/`, `docs/04_Analyse.md`, `.vscode/` und interne Skripte.
+- Das Zip geht in ein firmeninternes Repo und an Kollegen für manuelle Tests. Inhalt ohne Hinweise auf KI-Werkzeuge, Aufgabennummern oder diesen Arbeitsablauf; README und `docs/06_Selbsttest.md` müssen ohne die ausgelassenen Dateien vollständig sein.
+- Vor dem Verpacken die Paketdateien auf solche Verweise prüfen: `unzip -p dist/*.zip | grep -i -E "claude|anthropic|TASK-|tasks/|docs/04"` muss leer sein.
 - Aufgaben stehen in `tasks/`. Immer nur eine Aufgabe bearbeiten, Definition of Done abhaken.
 
 ## Build und Test
@@ -19,6 +26,7 @@ cmake --preset asan  && cmake --build --preset asan  && ctest --preset asan    #
 cmake --preset clang && cmake --build --preset clang                           # clang-tidy
 cmake --preset fuzz  && cmake --build --preset fuzz
 tools/make_fuzz_seeds.sh   # Startdateien aus tests/data/ nach fuzz/corpus
+tools/make_package.sh      # Weitergabe-Zip nach dist/ (vorher committen)
 ./build/fuzz/fuzz_codec -max_total_time=300 fuzz/corpus
 ./build/fuzz/fuzz_apci  -max_total_time=300 fuzz/corpus_apci
 ```

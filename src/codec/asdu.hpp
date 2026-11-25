@@ -31,7 +31,7 @@
  *   - IEC 101 types with CP24Time2a: strict -> IEC104_ERR_UNSUPPORTED,
  *     tolerant -> decoded and encoded like any other type;
  *   - ASDU with 0 objects: strict -> IEC104_ERR_MALFORMED, tolerant ->
- *     accepted if no object octets follow (docs/04_Analyse.md, N9).
+ *     accepted if no object octets follow (docs/07_Normfragen_und_Festlegungen.md, N9).
  * Types 136..255 are private: decode_asdu() hands their object octets to the
  * caller unchanged (DecodedAsdu::object_data) and does not interpret them.
  *

@@ -9,7 +9,7 @@
  * @brief Consistency of the type table (src/codec/type_table.hpp).
  *
  * The table content itself is checked against a foreign implementation in
- * test_asdu_reference.cpp. These tests check the scope required by TASK-001
+ * test_asdu_reference.cpp. These tests check the scope of version 1
  * and the internal consistency of the table.
  */
 #include "codec/type_table.hpp"
@@ -19,8 +19,8 @@
 
 using namespace iec104::codec;
 
-// Rule: every type of TASK-001 item 2 and every CP24 type of item 5 is in the table.
-// Source: tasks/TASK-001_codec.md.
+// Rule: every IEC 104 type of the scope of version 1 and every CP24 type is in the table.
+// Source: scope in type_table.hpp.
 TEST(TypeTable, ScopeOfTask001) {
     std::set<int> required{1, 3, 5, 7, 9, 11, 13, 15, 20, 21, 45, 46, 47, 48, 49, 50, 51, 70};
     for (int id = 30; id <= 40; ++id) {
@@ -103,7 +103,7 @@ TEST(TypeTable, PrivateAndUnknown) {
 
 // Rule: the cause matrix (clause 9.5) is not filled in yet; every combination
 // is allowed until it is (TODO(norm): 9.5).
-// Source: tasks/TASK-001_codec.md, "Nicht Teil dieser Aufgabe".
+// Source: type_table.hpp (N3 in docs/07_Normfragen_und_Festlegungen.md).
 TEST(TypeTable, CauseMatrixIsOpen) {
     EXPECT_TRUE(is_cause_allowed(1, 3));
     EXPECT_TRUE(is_cause_allowed(100, 6));

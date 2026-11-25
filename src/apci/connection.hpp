@@ -34,7 +34,7 @@
  * through StopPending while own I-frames are still unacknowledged.
  *
  * The rules and their sources are listed at the implementation
- * (connection.cpp); unproven rules carry TODO(norm) (docs/04_Analyse.md, N1).
+ * (connection.cpp); unproven rules carry TODO(norm) (docs/07_Normfragen_und_Festlegungen.md, N1).
  *
  * Memory: the class allocates once, in init() (time stamps for k
  * unacknowledged I-frames); nothing is allocated while the connection runs.

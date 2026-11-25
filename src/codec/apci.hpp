@@ -22,7 +22,7 @@
  *
  * This file only converts between bytes and the Apci struct. It does not keep
  * state: sequence number checks against the window, k/w and the timers belong to
- * the apci state machine (TASK-002).
+ * the apci state machine (src/apci).
  *
  * Sources: docs/03 (research report), section on the APCI, which cites the
  * Wireshark IEC 104 dissector; reference bytes in tests/data/lib60870_capture.txt.

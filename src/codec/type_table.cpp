@@ -91,7 +91,8 @@ constexpr std::array<TypeInfo, 59> kTypes{{
     // The CP56Time2a of the clock synchronization is the value to set, not a
     // time tag of the object, hence TimeTag::None.
     {103, "C_CS_NA_1", kC, TimeTag::None, 1, {E::Cp56}},
-    // TODO(norm): whether 104 and 106 are used in IEC 104 (docs/04, N5).
+    // TODO(norm): whether 104 and 106 are used in IEC 104 (docs/07_Normfragen_und_Festlegungen.md,
+    // N5).
     {104, "C_TS_NA_1", kC, TimeTag::None, 1, {E::Fbp}},
     {105, "C_RP_NA_1", kC, TimeTag::None, 1, {E::Qrp}},
     {106, "C_CD_NA_1", kC, TimeTag::None, 1, {E::Cp16}},

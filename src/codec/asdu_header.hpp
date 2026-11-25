@@ -68,7 +68,7 @@ struct AsduProfile {
      *
      * Strict: the IEC 101 types with CP24Time2a are rejected with
      * IEC104_ERR_UNSUPPORTED, an ASDU with 0 objects is IEC104_ERR_MALFORMED.
-     * Tolerant: both are accepted (docs/04_Analyse.md, N4 and N9).
+     * Tolerant: both are accepted (docs/07_Normfragen_und_Festlegungen.md, N4 and N9).
      */
     bool strict{true};
 };
@@ -114,7 +114,7 @@ inline constexpr std::uint8_t kCotTestBit = 0x80U;
  * @brief Broadcast common address with a 2-octet CA (all stations).
  *
  * Not used by the codec yet. Which types may be sent to the broadcast address
- * is open (docs/04_Analyse.md, N10).
+ * is open (docs/07_Normfragen_und_Festlegungen.md, N10).
  * TODO(norm): broadcast common address, clause unknown.
  */
 inline constexpr std::uint16_t kBroadcastCa = 0xFFFFU;
@@ -174,8 +174,8 @@ iec104_status encode_asdu_header(const AsduHeader& header, const AsduProfile& pr
  * @brief Decodes the data unit identifier.
  *
  * Only the header is decoded; the information objects are not interpreted.
- * Type id and cause are not checked against tables here (TASK-001), and a VSQ
- * with 0 objects is accepted (docs/04_Analyse.md, N9).
+ * Type id and cause are not checked against tables here (see asdu.hpp), and
+ * a VSQ with 0 objects is accepted (docs/07_Normfragen_und_Festlegungen.md, N9).
  *
  * @param data     Start of the ASDU. Must not be NULL.
  * @param size     Number of octets available at @p data.
