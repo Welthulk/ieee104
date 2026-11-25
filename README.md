@@ -29,6 +29,7 @@ Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
 | `docs/04_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
 | `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E10), auf die der Code verweist |
 | `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Redundanz, TLS, Regeln |
+| `docs/07_Julia.md` | Library aus Julia verwenden: Schnellstart, Typen, Callbacks, Beispiele |
 
 ## Verzeichnisse
 
@@ -42,7 +43,7 @@ Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
 | `src/api/` | Implementierung der C-Schnittstelle |
 | `tests/` | Unit-Tests (GoogleTest), Referenzdaten unter `tests/data/` |
 | `fuzz/` | libFuzzer-Ziele für Codec und Zustandsmaschine |
-| `examples/` | Hello World: kleinster Server und Client |
+| `examples/` | Hello World: kleinster Server und Client; `examples/julia/` für Julia |
 | `tools/selftest/` | Selbsttest-Programme und Testskript |
 | `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer, Test-PKI für TLS |
 

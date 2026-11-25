@@ -26,8 +26,8 @@
 #
 # Fertig gebaute Library: aus dem geprüften Quell-Zip gebaut (Release,
 # geteilt, mit TLS). Ins Zip kommt nur das Nötigste: lib/libiec104.so.0
-# (eine Datei, keine Symlinks), include/, LICENSES/ und eine Kurzanleitung
-# (packaging/README-binary.md). Geprüft werden die Zeichenketten der Library
+# (eine Datei, keine Symlinks), include/, LICENSES/, julia/ (Anbindung für
+# Julia) und eine Kurzanleitung (packaging/README-binary.md). Geprüft werden die Zeichenketten der Library
 # (Begriffsliste, interne Verweise, Pfade des Bau-Rechners) und die
 # benötigten Symbolversionen, damit die Library auch auf älteren Systemen
 # läuft (glibc 2.34, OpenSSL 3.0, z. B. AlmaLinux 9, Ubuntu 22.04, WSL2).
@@ -117,12 +117,14 @@ cp -L "$WORK/full/lib/libiec104.so" "$P/lib/$SONAME"
 cp "$WORK/full/include/iec104/iec104.h" "$P/include/iec104/"
 cp "$WORK/$NAME"/LICENSES/* "$P/LICENSES/"
 sed "s/@VERSION@/$VERSION/g" "$WORK/$NAME/packaging/README-binary.md" > "$P/README.md"
+cp -r "$WORK/$NAME/examples/julia" "$P/julia"   # Julia binding, finds ../lib by itself
 ELF=("$P/lib/$SONAME")
 
 # Zeichenketten der Library und die Kurzanleitung als Text prüfen.
 mkdir -p "$WORK/bincheck"
 for f in "${ELF[@]}"; do strings -a "$f" > "$WORK/bincheck/$(basename "$f").txt"; done
 cp "$P/README.md" "$WORK/bincheck/"
+cp -r "$P/julia" "$WORK/bincheck/"
 "$ROOT/tools/check_neutral.sh" --root "$WORK/bincheck" > "$WORK/neutral_bin.log" 2>&1 \
     || { cat "$WORK/neutral_bin.log" >&2; fail "verbotene Begriffe in den Binärdateien"; }
 if grep -r -n -i -E "intern/|tasks/|TASK-[0-9]|claude|anthropic|$HOME|$ROOT" \

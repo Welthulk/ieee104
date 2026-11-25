@@ -7,6 +7,7 @@ Geteilte Library für Linux x86-64 (Release, mit TLS).
 | `lib/libiec104.so.0` | Library |
 | `include/iec104/iec104.h` | C-Schnittstelle mit Beschreibung jeder Funktion |
 | `LICENSES/` | Lizenzen: Header Apache-2.0, Library proprietär |
+| `julia/` | Anbindung für Julia (`IEC104.jl`) mit Client- und Server-Beispiel |
 
 ## Voraussetzungen
 
@@ -40,5 +41,14 @@ int main(void) {
     return 0;
 }
 ```
+
+## Julia
+
+```bash
+julia julia/server.jl 2404 &          # Station 1, Messwert IOA 100, steigt jede Sekunde
+julia julia/client.jl 127.0.0.1 2404  # Generalabfrage, drei spontane Werte
+```
+
+`IEC104.jl` findet die Library in `lib/` von selbst. Anleitung: `docs/07_Julia.md` im Quellpaket.
 
 Server und Client mit Messwerten, Befehlen, Redundanz und TLS: Anleitung `docs/06_Anleitung.md` im Quellpaket `iec104-@VERSION@.zip`.

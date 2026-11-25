@@ -12,7 +12,8 @@
 | Konfiguration | Schlüssel `group`, `event_buffer_size`, `overflow` |
 | Selbsttest | Server `--group`, `--buffer`, `--overflow`, `--broadcast`; Client `--switchover`; ctest `SelfTest.SwitchOver` |
 | Festlegung | E10: Redundanzgruppen |
-| Lieferung | fertig gebaute Library auf das Nötigste reduziert: `lib/libiec104.so.0`, Header, Lizenzen, Kurzanleitung |
+| Lieferung | fertig gebaute Library auf das Nötigste reduziert: `lib/libiec104.so.0`, Header, Lizenzen, Julia-Anbindung, Kurzanleitung |
+| Julia | `examples/julia/IEC104.jl` (Anbindung per `ccall`), Client- und Server-Beispiel; Anleitung `docs/07_Julia.md` |
 
 ## 0.3.0 (25.11.2026)
 

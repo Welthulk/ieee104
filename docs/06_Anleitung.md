@@ -1,6 +1,6 @@
 # Anleitung: Library verwenden
 
-Stand: 25.11.2026 · Schnittstelle: `include/iec104/iec104.h` · Beispiele: `examples/`
+Stand: 25.11.2026 · Schnittstelle: `include/iec104/iec104.h` · Beispiele: `examples/` · Julia: `docs/07_Julia.md`
 
 ## 1. Einbinden
 
