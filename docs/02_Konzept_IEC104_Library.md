@@ -56,7 +56,7 @@ Alle Parameter gelten je Verbindung bzw. Gegenstelle und kommen aus einem Konfig
 | t0 | 30 s | 1–255 s | Weidmüller 15 s |
 | t1 | 15 s | 1–255 s | WEMAG 250 s |
 | t2 | 10 s | 1–255 s, < t1 | WEMAG 240 s |
-| t3 | 20 s | 1 s–48 h | WEMAG 255 s, SvK 30 s |
+| t3 | 20 s | 0 (aus) oder 1 s–48 h | WEMAG 255 s, SvK 30 s; 0 nur im toleranten Modus |
 | k | 12 | 1–32767 | |
 | w | 8 | 1–32767, ≤ 2/3 k | |
 | Prüfung t2 < t1 und w ≤ 2/3 k | Warnung | Warnung / Fehler / aus | |
@@ -68,7 +68,8 @@ Alle Parameter gelten je Verbindung bzw. Gegenstelle und kommen aus einem Konfig
 | Längen COT / CA / IOA | 2 / 2 / 3 | 1–2 / 1–2 / 1–3 | Gegenstellen außerhalb der Norm |
 | Herkunftsadresse (ORG) | 0 | 0–255 | |
 | Gemeinsame Adressen | Liste | eine oder mehrere CA je Verbindung | |
-| Strikter Modus | an | an / tolerant | CP24-Typen (2–19 gerade) annehmen oder ablehnen |
+| Max. ASDU-Länge | 249 | 1–249 | Gegenstellen mit kleinerem Maximum; Sender teilt ASDUs auf |
+| Strikter Modus | an | an / tolerant | CP24-Typen (2, 4, …, 16, 17–19) annehmen oder ablehnen |
 | Unbekannte Typen / COT | negativ quittieren (COT 44/45) | quittieren / ignorieren / trennen | |
 
 **Zeit**
@@ -153,7 +154,7 @@ Getestet wird in sechs Ebenen, von reinen Funktionen bis zur echten Gegenstelle.
 **Zusätzlich:**
 
 - **Langlauf:** 72 h unter Last mit 10.000 Datenpunkten und erzwungenen Verbindungsabbrüchen. Gemessen werden Speicher, Latenz und Ereignisverlust (Soll: 0 innerhalb der Puffergröße).
-- **Profiltests:** Die Konfigurationen WEMAG, Pfalzwerke und SvK aus der Recherche werden als Testprofile hinterlegt. So ist jede Abweichung einmal abgedeckt.
+- **Profiltests:** Die Konfigurationen aus der Recherche werden als Testprofile hinterlegt, benannt nach ihrer Eigenschaft, nicht nach Netzbetreibern (Neutralitätsregel, `tasks/TASK-000_Auftrag.md`), z. B. `long_timeout_profile`, `local_time_su_profile`, `fixed_offset_time_profile`, `select_before_operate_profile`. So ist jede Abweichung einmal abgedeckt.
 - **Statische Analyse:** clang-tidy, cppcheck, Compiler-Warnungen als Fehler.
 - **TLS-Prüfung:** Handshake gegen `openssl s_server`/`s_client` und lib60870 mit TLS. Zusätzlich Negativtests: falsches Zertifikat, gesperrtes Zertifikat, abgelaufenes Zertifikat, falsche Suite.
 
@@ -161,8 +162,8 @@ Hinweis: IEC TS 60870-5-604 prüft Normkonformität, garantiert aber nach eigene
 
 ## Offene Entscheidungen
 
-- [ ] Sprache bestätigen: C++17-Kern mit C-API oder reines C11.
-- [ ] TLS-Backend bestätigen: OpenSSL 3.x als erstes Backend.
+- [x] Sprache: C++17-Kern mit C-API (entschieden, siehe `docs/04_Analyse.md`).
+- [x] TLS-Backend: OpenSSL 3.x als erstes Backend (entschieden).
 - [ ] Normtexte beschaffen: IEC 60870-5-104 Ed. 2.1, IEC 62351-3 Ed. 2 (Cipher-Tabelle, Renegotiation-Regeln), IEC TS 60870-5-604.
 - [ ] Interoperabilitätsliste und Testzugang vom Aucoteam-Gateway anfordern.
 - [ ] Rolle in der SpPS klären: nur Client, oder auch Server?

@@ -17,10 +17,12 @@ cmake --preset debug && cmake --build --preset debug && ctest --preset debug
 cmake --preset asan  && cmake --build --preset asan  && ctest --preset asan    # vor jedem Commit
 cmake --preset clang && cmake --build --preset clang                           # clang-tidy
 cmake --preset fuzz  && cmake --build --preset fuzz
-./build/fuzz/fuzz_codec -max_total_time=300
+./build/fuzz/fuzz_codec -max_total_time=300 fuzz/corpus
 ```
 
-Zielplattform: AlmaLinux 9, GCC 11.5, Clang 22, CMake 3.31, OpenSSL 3.5, GoogleTest aus EPEL.
+Fuzz-Dauer: 5 min bei jeder Änderung am Codec, 10 min zum Abschluss einer Aufgabe, 24 h vor einer Auslieferung.
+
+Zielplattform (Version 1 nur Linux x86-64): AlmaLinux 9, GCC 11.5, Clang 22, CMake 3.31, OpenSSL 3.5, GoogleTest aus EPEL.
 Werkzeuge installiert `tools/setup_tools.sh`.
 
 ## Architektur (Schichten ohne Abhängigkeit nach oben)
@@ -51,4 +53,5 @@ Werkzeuge installiert `tools/setup_tools.sh`.
 
 - Kleine Commits, Nachricht auf Deutsch, Präfix nach Modul (`codec: …`, `apci: …`, `build: …`).
 - Vor jedem Commit: `tools/check_neutral.sh --message <Datei mit Commit-Nachricht>`.
+- Keine Co-Author- oder Sitzungszeilen in Commit-Nachrichten (Neutralitätsregel).
 - Nicht pushen, ohne zu fragen.

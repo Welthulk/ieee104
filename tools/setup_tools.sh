@@ -47,7 +47,7 @@ if command -v apt-get >/dev/null 2>&1; then
         # TLS
         openssl libssl-dev libmbedtls-dev
         # Unit-Tests
-        libgtest-dev libgmock-dev catch2
+        libgtest-dev libgmock-dev
         # Fuzzing
         afl++
         # Trace-Analyse, Netzwerk-Namespaces, Testverbindungen
@@ -65,7 +65,7 @@ elif command -v dnf >/dev/null 2>&1; then
         clang-tools-extra cppcheck
         gdb valgrind libasan libubsan compiler-rt
         openssl openssl-devel mbedtls-devel
-        gtest-devel gmock-devel catch2-devel
+        gtest-devel gmock-devel
         # AFL: kein Paket für RHEL/AlmaLinux 9, dafür --with-aflpp
         wireshark-cli iproute nmap-ncat
         doxygen
@@ -79,7 +79,7 @@ elif command -v zypper >/dev/null 2>&1; then
         clang-tools cppcheck
         gdb valgrind
         openssl libopenssl-devel mbedtls-devel
-        googletest-devel Catch2-devel
+        googletest-devel
         afl
         wireshark iproute2 netcat-openbsd
         doxygen

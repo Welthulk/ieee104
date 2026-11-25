@@ -111,3 +111,20 @@ Abschnittsnummern stammen aus `03`. Wo sie dort nicht belegt sind, steht „unbe
 | F6 | Commit-Nachrichten: Co-Author-Zeile mit Firmen-Mailadresse künftig weglassen? `67f7f99` (lokal) bereinigen? `cbee03d` ist gepusht und ließe sich nur per Force-Push ändern. Gilt die Neutralität auch für die Erweiterungs-ID in `.vscode/extensions.json`? | Zeile weglassen, `67f7f99` bereinigen, `cbee03d` lassen; Erweiterungs-ID als Werkzeug erlauben |
 | F7 | Ist Windows eine Zielplattform? | Nein, nur Linux x86-64 in Version 1 |
 | F8 | Optionaler C++-Wrapper (`02`): in Version 1? | Nein, später |
+
+## 6. Entscheidungen (Freigabe am 25.11.2026)
+
+Die Analyse ist freigegeben. Zu F1–F8 gelten die Vorschläge aus Abschnitt 5.
+
+| Nr. | Entscheidung | Umsetzung |
+| --- | --- | --- |
+| F1 | `IEC104_Repo_Setup.md` löschen | gelöscht, Inhalt in der Git-Historie |
+| F2 | Entwurf der Begriffsliste außerhalb des Repos | `~/.config/iec104/forbidden_terms.txt`, Prüfung durch den Auftraggeber offen; `check_neutral.sh` kennt `word:` für ganze Wörter |
+| F3 | Strikter Modus Default an; Plausibilitätsprüfung eigener Parameter, Default Warnung | in `02` bereits so beschrieben |
+| F4 | Normtexte vor TASK-002 beschaffen | offen beim Auftraggeber |
+| F5 | Referenz-Hexdumps aus Mitschnitten gegen lib60870 | `tests/data/lib60870_capture.txt` |
+| F6 | Keine Co-Author-Zeilen; `67f7f99` bereinigen; `cbee03d` bleibt | Regel in `CLAUDE.md`, lokale Historie bereinigt |
+| F7 | Nur Linux x86-64 in Version 1 | `CLAUDE.md`; A7 (dllimport) entfällt |
+| F8 | Kein C++-Wrapper in Version 1 | – |
+
+Umgesetzt aus Abschnitt 1: W1 (Hinweis in `03`), W3, W6, W7, W8 (in `02`), W10 (Catch2 aus dem Setup), W11 (Fuzz-Dauern in `CLAUDE.md`). In `02` zusätzlich die CP24-Typen korrigiert: 2, 4, …, 16 und 17–19 (vorher „2–19 gerade“).
