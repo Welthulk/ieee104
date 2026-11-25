@@ -18,6 +18,7 @@
 
 #include "apci/apci_config.hpp"
 #include "apci/connection.hpp"
+#include "codec/asdu.hpp"
 #include "iec104/iec104.h"
 #include "transport/link.hpp"
 
@@ -47,6 +48,19 @@ class CallbackSink : public transport::LinkSink {
     void on_state(std::uint32_t id, apci::State state) override;
     void on_closed(std::uint32_t id, transport::LinkCloseReason reason,
                    apci::CloseReason protocol_reason) override;
+
+  protected:
+    /**
+     * @brief Decodes an ASDU and reports every object of a value type via on_object.
+     *
+     * ASDUs that cannot be decoded with @p profile, private types and types
+     * outside the value API are only reported raw (on_asdu).
+     */
+    void deliver_objects(std::uint32_t id, const std::uint8_t* asdu, std::size_t length,
+                         const codec::AsduProfile& profile) const;
+
+    /** @brief The callbacks given at creation. */
+    [[nodiscard]] const iec104_callbacks& callbacks() const noexcept { return callbacks_; }
 
   private:
     iec104_callbacks callbacks_{};

@@ -71,6 +71,7 @@ add_library(iec104
     src/api/iec104.cpp
     src/api/link_common.cpp
     src/api/server.cpp
+    src/api/values.cpp
     src/apci/apci_config.cpp
     src/apci/connection.cpp
     src/codec/apci.cpp
@@ -79,6 +80,8 @@ add_library(iec104
     src/codec/cp56time2a.cpp
     src/codec/elements.cpp
     src/codec/type_table.cpp
+    src/session/process_image.cpp
+    src/session/server_session.cpp
     src/transport/link.cpp
     src/transport/tcp.cpp)
 add_library(iec104::iec104 ALIAS iec104)
@@ -122,8 +125,10 @@ if(IEC104_BUILD_TESTS)
         tests/test_capture.cpp
         tests/test_cp56time2a.cpp
         tests/test_elements.cpp
+        tests/test_session.cpp
         tests/test_tcp_loopback.cpp
-        tests/test_type_table.cpp)
+        tests/test_type_table.cpp
+        tests/test_values.cpp)
     # Tests use the internal C++ headers directly (sans-I/O, no network)
     target_include_directories(iec104_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
     # Reference data (captures of foreign implementations), read at run time
@@ -140,8 +145,7 @@ endif()
 if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
     foreach(role server client)
         add_executable(iec104_selftest_${role} tools/selftest/selftest_${role}.cpp)
-        # The programs build ASDUs with the internal codec (see selftest_common.hpp).
-        target_include_directories(iec104_selftest_${role} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+        # Only the public C API is used, as by any application.
         target_link_libraries(iec104_selftest_${role} PRIVATE iec104::iec104)
         iec104_set_warnings(iec104_selftest_${role} TRUE)
     endforeach()
@@ -164,6 +168,12 @@ if(IEC104_BUILD_FUZZERS)
     target_link_libraries(fuzz_codec PRIVATE iec104::iec104)
     target_link_options(fuzz_codec PRIVATE -fsanitize=fuzzer)
     iec104_set_warnings(fuzz_codec FALSE)
+
+    add_executable(fuzz_session fuzz/fuzz_session.cpp)
+    target_include_directories(fuzz_session PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(fuzz_session PRIVATE iec104::iec104)
+    target_link_options(fuzz_session PRIVATE -fsanitize=fuzzer)
+    iec104_set_warnings(fuzz_session FALSE)
 
     add_executable(fuzz_apci fuzz/fuzz_apci.cpp)
     target_include_directories(fuzz_apci PRIVATE ${PROJECT_SOURCE_DIR}/src)

@@ -75,6 +75,12 @@ void iec104_link_config_init(iec104_link_config* config) {
     config->k = 12;
     config->w = 8;
     config->tolerant = 0;
+    // ASDU profile of IEC 104 (docs/02_Technik_und_Quellen.md, "ASDU-Kopf und ASDU-Profil").
+    config->cot_length = 2;
+    config->ca_length = 2;
+    config->ioa_length = 3;
+    config->max_asdu_length = 249;
+    config->originator = 0;
 }
 
 const char* iec104_link_state_string(iec104_link_state state) {

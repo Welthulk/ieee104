@@ -22,8 +22,11 @@
  *   - server (controlled station) and client (controlling station) handles
  *     that move ASDUs over TCP.
  *
- * ASDUs cross this interface as octets (type id, VSQ, COT, CA, objects).
- * Functions to build and read ASDUs as values follow with the session layer.
+ * Data crosses this interface as values (::iec104_object, table of types
+ * there) or, for every other type, as raw ASDU octets. The server answers
+ * the requests of the standard by itself (interrogation, counter
+ * interrogation, read, test) from its process image and passes commands
+ * and clock synchronization to the application (on_command).
  *
  * Threading: a handle is used by one thread at a time. All work, including
  * the callbacks, happens inside the *_poll() call of that handle.
@@ -154,7 +157,8 @@ IEC104_API const char* iec104_status_string(iec104_status status);
  *
  * Ranges: t0..t2 1..255 s, t3 1 s .. 48 h or 0 = off (only with tolerant = 1),
  * k and w 1..32767. t2 < t1 and w <= 2/3 k are recommended; violations are
- * accepted (the library reports them nowhere yet).
+ * accepted (the library reports them nowhere yet). The field lengths of the
+ * ASDU deviate from 2/2/3 only for peers outside the standard.
  */
 typedef struct iec104_link_config {
     uint32_t t0_ms; /**< Time-out of connection establishment, default 30000. */
@@ -164,6 +168,11 @@ typedef struct iec104_link_config {
     uint16_t k;     /**< Max. unacknowledged sent I-frames, default 12. */
     uint16_t w;     /**< Acknowledge at the latest after w received I-frames, default 8. */
     int tolerant;   /**< 0 = strict IEC 104 behaviour (default), 1 = tolerate known deviations. */
+    uint8_t cot_length;      /**< Octets of the cause of transmission, 1..2, default 2. */
+    uint8_t ca_length;       /**< Octets of the common address, 1..2, default 2. */
+    uint8_t ioa_length;      /**< Octets of the information object address, 1..3, default 3. */
+    uint8_t max_asdu_length; /**< Largest ASDU this side sends, 1..249, default 249. */
+    uint8_t originator;      /**< Originator address written into sent ASDUs, default 0. */
 } iec104_link_config;
 
 /** @brief Fills @p config with the default values of the standard. Does nothing for NULL. */
@@ -201,6 +210,131 @@ IEC104_API const char* iec104_link_state_string(iec104_link_state state);
 /** @brief Short English name of a close reason. Never NULL. */
 IEC104_API const char* iec104_close_reason_string(iec104_close_reason reason);
 
+/* ------------------------------------------------------------------------- */
+/* Values: time, information objects, ASDU information                       */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * @brief Date and time as carried by CP56Time2a (7 octets).
+ *
+ * The standard does not say whether the time is UTC or local time; that is
+ * agreed with the peer (interoperability list). This struct carries no time
+ * zone. CP56Time2a transmits the year as 0..99; the library maps it to
+ * 2000..2099.
+ */
+typedef struct iec104_time {
+    uint16_t year;        /**< 2000..2099. */
+    uint8_t month;        /**< 1..12. */
+    uint8_t day;          /**< 1..31. */
+    uint8_t hour;         /**< 0..23. */
+    uint8_t minute;       /**< 0..59. */
+    uint8_t second;       /**< 0..59. */
+    uint16_t millisecond; /**< 0..999. */
+    uint8_t day_of_week;  /**< 1..7, 0 = not used. */
+    uint8_t invalid;      /**< 1 = IV, the time is not valid. */
+    uint8_t summer_time;  /**< 1 = SU, summer (daylight saving) time. */
+} iec104_time;
+
+/**
+ * @brief Converts milliseconds since 1970-01-01 00:00 UTC into an iec104_time (UTC).
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL; IEC104_ERR_OUT_OF_RANGE
+ *         outside 2000..2099.
+ */
+IEC104_API iec104_status iec104_time_from_unix_ms(int64_t unix_ms, iec104_time* out);
+
+/** @brief Converts an iec104_time taken as UTC into milliseconds since 1970. 0 for NULL. */
+IEC104_API int64_t iec104_time_to_unix_ms(const iec104_time* time);
+
+/** @brief Quality bits (QDS and the quality part of SIQ/DIQ). */
+#define IEC104_QUALITY_OVERFLOW 0x01U    /**< OV: value beyond the range of the representation. */
+#define IEC104_QUALITY_BLOCKED 0x10U     /**< BL: blocked for transmission. */
+#define IEC104_QUALITY_SUBSTITUTED 0x20U /**< SB: substituted (manually or by another source). */
+#define IEC104_QUALITY_NOT_TOPICAL 0x40U /**< NT: not updated in time. */
+#define IEC104_QUALITY_INVALID 0x80U     /**< IV: not valid. */
+
+/** @brief Flags in iec104_object::flags (meaning depends on the type, see there). */
+#define IEC104_FLAG_TRANSIENT 0x01U /**< Step position (5, 32): equipment is moving. */
+#define IEC104_FLAG_CARRY 0x01U     /**< Integrated totals (15, 37): counter overflow (CY). */
+#define IEC104_FLAG_ADJUSTED 0x02U  /**< Integrated totals (15, 37): counter adjusted (CA). */
+#define IEC104_FLAG_PARAMETERS_CHANGED                                                             \
+    0x01U /**< End of initialization (70): after parameter change. */
+
+/**
+ * @brief One information object as a value.
+ *
+ * Which fields are used depends on @ref type:
+ *
+ * | type                         | value                      | other fields |
+ * |------------------------------|----------------------------|-------------------------------------|
+ * | 1, 30 single point           | 0 off, 1 on                | quality | | 3, 31 double point |
+ * 0..3 (1 off, 2 on)         | quality                             | | 5, 32 step position |
+ * -64..63                    | quality, flags TRANSIENT            | | 7, 33 bitstring | - | bits,
+ * quality                       | | 9, 34 normalized             | -1.0 .. 1.0 - 2^-15        |
+ * quality                             | | 11, 35 scaled                | -32768..32767 | quality |
+ * | 13, 36 short float           | float                      | quality | | 15, 37 integrated
+ * totals     | counter, 32 bit signed     | qualifier = sequence 0..31,         | | | | flags
+ * CARRY/ADJUSTED, quality IV    | | 21 normalized, no quality    | -1.0 .. 1.0 - 2^-15        | - |
+ * | 45, 58 single command        | 0 off, 1 on                | qualifier = QU 0..31, select | |
+ * 46, 59 double command        | 1 off, 2 on                | qualifier = QU, select              |
+ * | 47, 60 regulating step       | 1 lower, 2 higher          | qualifier = QU, select | | 48, 61
+ * set point normalized  | -1.0 .. 1.0 - 2^-15        | qualifier = QL 0..127, select       | | 49,
+ * 62 set point scaled      | -32768..32767              | qualifier = QL, select              | |
+ * 50, 63 set point float       | float                      | qualifier = QL, select              |
+ * | 51, 64 bitstring command     | -                          | bits | | 70 end of initialization
+ * | -                          | qualifier = cause 0..127, flags     | | 100 interrogation | - |
+ * qualifier = QOI (20 station, 21..36 group 1..16) | | 101 counter interrogation    | - | qualifier
+ * = RQT (1..4 group, 5 all), bits = FRZ 0..3 | | 102 read                     | - | - | | 103 clock
+ * synchronization    | -                          | time                                | | 105
+ * reset process            | -                          | qualifier = QRP                     | |
+ * 107 test with time tag       | test sequence counter      | time                                |
+ *
+ * Types 30..37, 58..64 and 107 carry @ref time as time tag. Other types
+ * (e.g. CP24Time2a types, parameters, protection events) are available as
+ * raw ASDUs (on_asdu, *_send_asdu).
+ */
+typedef struct iec104_object {
+    uint8_t type;      /**< Type identification, e.g. 13 = M_ME_NC_1. */
+    uint32_t ioa;      /**< Information object address, 0..16777215. */
+    double value;      /**< Value, see table. */
+    uint32_t bits;     /**< Bitstring (7, 33, 51, 64) or FRZ (101). */
+    uint8_t quality;   /**< IEC104_QUALITY_* bits. */
+    uint8_t flags;     /**< IEC104_FLAG_* bits. */
+    uint8_t qualifier; /**< QU, QL, QOI, RQT, QRP, sequence number or cause, see table. */
+    uint8_t select;    /**< Commands: 1 = select, 0 = execute. */
+    iec104_time time;  /**< Time tag or clock value, see table. */
+} iec104_object;
+
+/** @brief Causes of transmission used by the library (bits 0..5 of the COT). */
+/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
+typedef enum iec104_cause {
+    IEC104_COT_PERIODIC = 1,
+    IEC104_COT_BACKGROUND = 2,
+    IEC104_COT_SPONTANEOUS = 3,
+    IEC104_COT_INITIALIZED = 4,
+    IEC104_COT_REQUEST = 5,
+    IEC104_COT_ACTIVATION = 6,
+    IEC104_COT_ACTIVATION_CON = 7,
+    IEC104_COT_DEACTIVATION = 8,
+    IEC104_COT_DEACTIVATION_CON = 9,
+    IEC104_COT_ACTIVATION_TERMINATION = 10,
+    IEC104_COT_INTERROGATED_STATION = 20, /**< 21..36 = interrogated by group 1..16. */
+    IEC104_COT_REQUESTED_COUNTERS = 37,   /**< 38..41 = counter group 1..4. */
+    IEC104_COT_UNKNOWN_TYPE = 44,
+    IEC104_COT_UNKNOWN_CAUSE = 45,
+    IEC104_COT_UNKNOWN_COMMON_ADDRESS = 46,
+    IEC104_COT_UNKNOWN_IOA = 47
+} iec104_cause;
+
+/** @brief The data unit identifier of a received ASDU. */
+typedef struct iec104_asdu_info {
+    uint8_t type;            /**< Type identification. */
+    uint8_t cause;           /**< Cause of transmission, 0..63 (see ::iec104_cause). */
+    uint8_t negative;        /**< 1 = negative confirmation (P/N bit). */
+    uint8_t test;            /**< 1 = test (T bit). */
+    uint8_t originator;      /**< Originator address. */
+    uint16_t common_address; /**< Common address (station). */
+} iec104_asdu_info;
+
 /**
  * @brief Callbacks of a server or client. Every pointer may be NULL.
  *
@@ -223,6 +357,27 @@ typedef struct iec104_callbacks {
      */
     void (*on_state)(void* user, uint32_t connection, iec104_link_state state,
                      iec104_close_reason reason);
+    /**
+     * @brief An information object was received (types of the table at ::iec104_object).
+     *
+     * Called once per object, after on_asdu for the same ASDU. On the client
+     * this includes the confirmations of own requests (cause 7, 10, negative).
+     * On the server it is called for data in monitor direction only; requests
+     * are answered by the library and commands go to on_command.
+     */
+    void (*on_object)(void* user, uint32_t connection, const iec104_asdu_info* info,
+                      const iec104_object* object);
+    /**
+     * @brief Server only: a command or clock synchronization arrived (types 45..51, 58..64,
+     *        103, 105).
+     *
+     * The library answers with a positive confirmation (cause 7) if the
+     * callback returns 1, with a negative one if it returns 0 or the callback
+     * is NULL, and with an activation termination (cause 10) after a positive
+     * confirmation of a command (see iec104_server_options).
+     */
+    int (*on_command)(void* user, uint32_t connection, const iec104_asdu_info* info,
+                      const iec104_object* command);
 } iec104_callbacks;
 
 /* ------------------------------------------------------------------------- */
@@ -286,6 +441,72 @@ IEC104_API iec104_status iec104_server_send_asdu(iec104_server* server, uint32_t
 /** @brief Number of open connections. */
 IEC104_API size_t iec104_server_connection_count(const iec104_server* server);
 
+/** @brief Behaviour of the server's application layer. */
+typedef struct iec104_server_options {
+    /** 1 (default) = send end of initialization (type 70, cause 4) on the first STARTDT
+     *  of every connection after the server was created. */
+    int send_end_of_init;
+    /** 1 (default) = send activation termination (cause 10) after an accepted command. */
+    int command_termination;
+    /** Cause of initialization sent with type 70, default 0 (local power switch on). */
+    uint8_t cause_of_init;
+} iec104_server_options;
+
+/** @brief Fills @p options with the defaults. Does nothing for NULL. */
+IEC104_API void iec104_server_options_init(iec104_server_options* options);
+
+/** @brief Applies options. @return IEC104_OK or IEC104_ERR_INVALID_ARGUMENT for NULL. */
+IEC104_API iec104_status iec104_server_set_options(iec104_server* server,
+                                                   const iec104_server_options* options);
+
+/**
+ * @brief Adds a data point to the server's process image (or replaces it).
+ *
+ * The image answers interrogation (type 100) and counter interrogation
+ * (type 101) and read commands (type 102). A point is identified by common
+ * address and IOA. Points with a time tag type (30..37) are stored as their
+ * type without time tag and answered as such in an interrogation.
+ *
+ * @param common_address Station address, 1..65534 (the common address must be known
+ *                       to the server; unknown addresses are answered with cause 46).
+ * @param point          Initial value; type 1, 3, 5, 7, 9, 11, 13, 15, 21 or 30..37.
+ * @param groups         Interrogation groups the point belongs to: bit 0 = group 1 ..
+ *                       bit 15 = group 16; for counters bits 0..3 = counter group 1..4.
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL or an unsupported type;
+ *         IEC104_ERR_OUT_OF_RANGE for a value outside its range.
+ */
+IEC104_API iec104_status iec104_server_add_point(iec104_server* server, uint16_t common_address,
+                                                 const iec104_object* point, uint16_t groups);
+
+/**
+ * @brief Updates a point of the image and sends it spontaneously (cause 3).
+ *
+ * The object may carry the time tag variant of the point's type (e.g. 36
+ * for a point added as 13); it is sent as given, the image keeps the value.
+ * Connections that are not started do not receive it (no buffering yet).
+ *
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT if the point is unknown or
+ *         the type does not fit; IEC104_ERR_OUT_OF_RANGE for a bad value;
+ *         IEC104_ERR_WOULD_BLOCK if the send queue of a connection is full.
+ */
+IEC104_API iec104_status iec104_server_update(iec104_server* server, uint16_t common_address,
+                                              const iec104_object* object);
+
+/**
+ * @brief Sends objects of one type with a chosen cause (e.g. periodic, cause 1).
+ *
+ * Long lists are split into several ASDUs. Objects are not stored in the image.
+ *
+ * @param connection Connection id, or 0 = all started connections.
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, count 0, mixed or
+ *         unsupported types; IEC104_ERR_OUT_OF_RANGE for a bad value;
+ *         IEC104_ERR_WRONG_STATE if no started connection matches;
+ *         IEC104_ERR_WOULD_BLOCK if a send queue is full.
+ */
+IEC104_API iec104_status iec104_server_send(iec104_server* server, uint32_t connection,
+                                            uint16_t common_address, uint8_t cause,
+                                            const iec104_object* objects, size_t count);
+
 /** @brief Closes all connections and the listening socket and frees the handle. NULL is ignored. */
 IEC104_API void iec104_server_destroy(iec104_server* server);
 
@@ -328,6 +549,32 @@ IEC104_API iec104_status iec104_client_poll(iec104_client* client, int timeout_m
  */
 IEC104_API iec104_status iec104_client_send_asdu(iec104_client* client, const uint8_t* asdu,
                                                  size_t length);
+
+/**
+ * @brief Sends one object with cause activation (6), e.g. a command or a set point.
+ *
+ * The answer (confirmation, cause 7, and termination, cause 10) arrives via
+ * on_object with the same type; a negative answer has info->negative = 1.
+ *
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL or an unsupported
+ *         type; IEC104_ERR_OUT_OF_RANGE for a bad value; IEC104_ERR_WRONG_STATE
+ *         if not STARTED; IEC104_ERR_WOULD_BLOCK if the window k is full.
+ */
+IEC104_API iec104_status iec104_client_send_command(iec104_client* client, uint16_t common_address,
+                                                    const iec104_object* command);
+
+/** @brief General (qoi 20) or group (21..36) interrogation; results via on_object. */
+IEC104_API iec104_status iec104_client_interrogation(iec104_client* client, uint16_t common_address,
+                                                     uint8_t qoi);
+
+/** @brief Counter interrogation: rqt 1..4 = group, 5 = all; frz 0 = read .. 3 = reset. */
+IEC104_API iec104_status iec104_client_counter_interrogation(iec104_client* client,
+                                                             uint16_t common_address, uint8_t rqt,
+                                                             uint8_t frz);
+
+/** @brief Clock synchronization command (type 103) with @p time. */
+IEC104_API iec104_status iec104_client_clock_sync(iec104_client* client, uint16_t common_address,
+                                                  const iec104_time* time);
 
 /** @brief Current state; IEC104_LINK_CLOSED before connect and after close. */
 IEC104_API iec104_link_state iec104_client_state(const iec104_client* client);

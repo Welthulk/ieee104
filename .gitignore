@@ -10,4 +10,5 @@ timeout-*
 oom-*
 fuzz/corpus/
 fuzz/corpus_apci/
+fuzz/corpus_session/
 *.swp

@@ -23,7 +23,7 @@ Schichten (jede ohne Abhängigkeit nach oben):
 | --- | --- | --- |
 | codec | `src/codec` | APCI und ASDU kodieren und dekodieren; reine Funktionen auf Byte-Puffern, kein I/O, keine Allokation |
 | apci | `src/apci` | Zustandsmaschine je Verbindung: Bytes und Zeit rein, Bytes und Ereignisse raus |
-| session | `src/session` | Abläufe: Generalabfrage, Uhrzeit, Befehle, Pufferung, Redundanzgruppen (in Arbeit) |
+| session | `src/session` | Abläufe der gesteuerten Station: Prozessabbild, Generalabfrage, Zählerabfrage, Lesen, Test, Uhrzeit, Befehle; später Pufferung und Redundanzgruppen |
 | transport | `src/transport` | TCP (später TLS), Verbindungsaufbau, Zeitbasis |
 | API | `include/iec104/iec104.h`, `src/api` | C-Schnittstelle: Handles, Konfiguration, Callbacks |
 

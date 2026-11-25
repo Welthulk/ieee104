@@ -12,7 +12,10 @@
  */
 #include "api/link_common.hpp"
 
+#include "api/values.hpp"
+
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <poll.h>
 
@@ -108,6 +111,26 @@ void CallbackSink::on_closed(std::uint32_t id, transport::LinkCloseReason reason
                              apci::CloseReason protocol_reason) {
     if (callbacks_.on_state != nullptr) {
         callbacks_.on_state(callbacks_.user, id, IEC104_LINK_CLOSED, to_c(reason, protocol_reason));
+    }
+}
+
+void CallbackSink::deliver_objects(std::uint32_t id, const std::uint8_t* asdu, std::size_t length,
+                                   const codec::AsduProfile& profile) const {
+    if (callbacks_.on_object == nullptr) {
+        return;
+    }
+    std::array<codec::InformationObject, codec::kMaxObjects> objects{};
+    codec::DecodedAsdu d{};
+    if (codec::decode_asdu(asdu, length, profile, objects.data(), objects.size(), d) != IEC104_OK ||
+        d.type == nullptr || !value_type_supported(d.header.type_id)) {
+        return;
+    }
+    const iec104_asdu_info info = to_info(d.header);
+    for (std::size_t i = 0; i < d.object_count; ++i) {
+        iec104_object object{};
+        if (from_codec(d.header.type_id, objects[i], object)) {
+            callbacks_.on_object(callbacks_.user, id, &info, &object);
+        }
     }
 }
 

@@ -7,6 +7,9 @@
 #
 # Aufruf: tools/make_fuzz_seeds.sh [ZIELORDNER]     (Default: fuzz/corpus)
 #
+# Zusätzlich erhält fuzz/corpus_session/ die Referenz-ASDUs im IEC-104-Profil
+# ohne Profil-Oktett (Eingabeformat von fuzz/fuzz_session.cpp).
+#
 # Quellen (tests/data/):
 #   lib60870_capture.txt         jede APDU als eigene Datei (APCI-Pfad des Fuzzers)
 #   lib60870_asdu_reference.txt  jede ASDU mit vorangestelltem Profil-Oktett
@@ -53,7 +56,13 @@ while IFS= read -r line; do
             [ "$profile" = "cot1_ca1_ioa2" ] && selector=02
             # shellcheck disable=SC2086
             write_hex "$DEST/seed_asdu_${name}_${profile}_${sq}" $selector ${line#*:}
-            count=$((count + 1)) ;;
+            count=$((count + 1))
+            if [ "$profile" = "iec104" ]; then
+                mkdir -p "$ROOT/fuzz/corpus_session"
+                # shellcheck disable=SC2086
+                write_hex "$ROOT/fuzz/corpus_session/seed_${name}_${sq}" ${line#*:}
+                count=$((count + 1))
+            fi ;;
     esac
 done < "$DATA/lib60870_asdu_reference.txt"
 

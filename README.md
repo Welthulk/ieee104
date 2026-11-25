@@ -11,9 +11,10 @@ Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
 | `codec` | APCI (I/S/U-Format), ASDU-Kopf mit parametrierbaren Feldlängen, alle Informationselemente, Typtabelle mit 59 Typkennungen, vollständige ASDUs mit SQ = 0 und SQ = 1, Aufteilen langer Objektlisten nach maximaler ASDU-Länge, strikter und toleranter Modus, CP56Time2a |
 | `apci` | Zustandsmaschine der Verbindung ohne eigenes I/O: STARTDT/STOPDT/TESTFR, Folgenummern, Quittierung nach k und w, Timer t1–t3 |
 | `transport` | TCP für Linux (nicht blockierend, `poll`), Verbindungsaufbau mit t0 |
-| C-API | Server und Client mit Handles, konfigurierbaren Ports und Timern, Callbacks für empfangene ASDUs und Zustandswechsel |
+| `session` | Abläufe der gesteuerten Station: Prozessabbild, Generalabfrage (Station und Gruppen), Zählerabfrage, Lesebefehl, Testbefehl, Uhrzeit, Befehle mit Bestätigung und Beendigung, Ende der Initialisierung, negative Bestätigungen (Ursachen 44–47) |
+| C-API | Server und Client mit Handles, konfigurierbaren Ports, Timern und ASDU-Profil; Werte statt Oktette (`iec104_object`), Callbacks für Objekte, Befehle und Zustandswechsel |
 | Selbsttest | `iec104_selftest_server` und `iec104_selftest_client` für automatische und manuelle Tests |
-| in Arbeit | Session-Schicht: Generalabfrage, Uhrzeitsynchronisation, Zählerabfrage, Befehle; danach TLS (OpenSSL 3.x) und Redundanzgruppen |
+| in Arbeit | Select/Execute mit Zeitüberwachung, maximale Befehlsverzögerung, Pufferung, TLS (OpenSSL 3.x), Redundanzgruppen |
 
 ## Unterlagen
 
@@ -32,6 +33,7 @@ Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
 | `include/iec104/` | öffentlicher C-Header, die einzige Schnittstelle für Anwender |
 | `src/codec/` | reine Funktionen auf Byte-Puffern, kein I/O, keine Allokation |
 | `src/apci/` | Zustandsmaschine: Bytes und Zeit rein, Bytes und Ereignisse raus |
+| `src/session/` | Anwendungsabläufe der gesteuerten Station, Prozessabbild |
 | `src/transport/` | Sockets, Verbindungsaufbau, Zeitbasis |
 | `src/api/` | Implementierung der C-Schnittstelle |
 | `tests/` | Unit-Tests (GoogleTest), Referenzdaten unter `tests/data/` |
@@ -56,6 +58,7 @@ cmake --preset fuzz && cmake --build --preset fuzz
 tools/make_fuzz_seeds.sh
 ./build/fuzz/fuzz_codec -max_total_time=300 fuzz/corpus
 ./build/fuzz/fuzz_apci  -max_total_time=300 fuzz/corpus_apci
+./build/fuzz/fuzz_session -max_total_time=300 fuzz/corpus_session
 ```
 
 Die Library baut mit `-Werror`, ohne Exceptions und ohne RTTI. Formatierung nach `.clang-format`.
@@ -64,44 +67,54 @@ Die Library baut mit `-Werror`, ohne Exceptions und ohne RTTI. Formatierung nach
 
 ```bash
 build/debug/iec104_selftest_server --port 2404 --count 100
-build/debug/iec104_selftest_client --host 127.0.0.1 --port 2404 --expect 100 --count 10 --idle 25
+build/debug/iec104_selftest_client --host 127.0.0.1 --port 2404 --idle 25
+build/debug/iec104_selftest_client --host <Gerät> --foreign --ca <Adresse> --idle 60     # fremder Server
 ```
 
 Der Client meldet jeden Schritt mit `ok` oder `FAILED` und endet mit `result: PASSED` (Exit-Code 0) oder `result: FAILED` (Exit-Code 1). `ctest` lässt beide Programme automatisch über Loopback gegeneinander laufen. Testfälle gegen fremde Geräte, Fehlerfälle und alle Optionen: `docs/04_Selbsttest.md`.
 
 ## Verwendung der C-API
 
+Server mit Prozessabbild; Generalabfrage, Zählerabfrage und Lesebefehle beantwortet die Library selbst, Befehle entscheidet die Anwendung:
+
 ```c
 #include <iec104/iec104.h>
 #include <stdio.h>
 
-static void on_asdu(void* user, uint32_t connection, const uint8_t* asdu, size_t length) {
-    printf("connection %u: ASDU type %u, %zu octets\n", connection, asdu[0], length);
-}
-
-static void on_state(void* user, uint32_t connection, iec104_link_state state,
-                     iec104_close_reason reason) {
-    printf("connection %u: %s\n", connection, iec104_link_state_string(state));
+static int on_command(void* user, uint32_t connection, const iec104_asdu_info* info,
+                      const iec104_object* command) {
+    printf("command type %u at IOA %u, value %g\n", info->type, command->ioa, command->value);
+    return 1; /* 1 = annehmen (positive Bestätigung), 0 = ablehnen */
 }
 
 int main(void) {
     iec104_link_config config;
-    iec104_link_config_init(&config);          /* Normwerte: t0..t3 = 30/15/10/20 s, k = 12, w = 8 */
+    iec104_link_config_init(&config); /* Normwerte: t0..t3 = 30/15/10/20 s, k = 12, w = 8 */
 
-    iec104_callbacks callbacks = {NULL, on_asdu, on_state};
+    iec104_callbacks callbacks = {0};
+    callbacks.on_command = on_command;
+
     iec104_server* server = NULL;
-    if (iec104_server_create(&config, &callbacks, &server) != IEC104_OK ||
-        iec104_server_listen(server, NULL, IEC104_DEFAULT_PORT) != IEC104_OK) {
+    if (iec104_server_create(&config, &callbacks, &server) != IEC104_OK) {
+        return 1;
+    }
+    iec104_object point = {0};
+    point.type = 13;      /* M_ME_NC_1, Gleitkomma */
+    point.ioa = 1001;
+    point.value = 230.4;
+    iec104_server_add_point(server, 1, &point, 0x0001); /* Station 1, Abfragegruppe 1 */
+
+    if (iec104_server_listen(server, NULL, IEC104_DEFAULT_PORT) != IEC104_OK) {
         return 1;
     }
     for (;;) {
-        iec104_server_poll(server, 100);       /* Empfang, Timer, Senden und Callbacks */
-        /* iec104_server_send_asdu(server, 0, asdu, length) sendet an alle gestarteten Verbindungen */
+        iec104_server_poll(server, 100); /* Empfang, Timer, Antworten, Callbacks */
+        /* Neue Werte: point.value = ...; iec104_server_update(server, 1, &point); (spontan) */
     }
 }
 ```
 
-Der Client funktioniert entsprechend: `iec104_client_create`, `iec104_client_connect(client, host, port)`, nach dem Zustand `IEC104_LINK_STOPPED` `iec104_client_start`, danach `iec104_client_send_asdu`. Alle Funktionen liefern einen `iec104_status`; `iec104_status_string()` gibt einen lesbaren Text dazu.
+Der Client funktioniert entsprechend: `iec104_client_create`, `iec104_client_connect(client, host, port)`, nach dem Zustand `IEC104_LINK_STOPPED` `iec104_client_start`, danach zum Beispiel `iec104_client_interrogation(client, 1, 20)`; die Antworten kommen als Objekte über `on_object`. Befehle sendet `iec104_client_send_command`. Alle Funktionen liefern einen `iec104_status`; `iec104_status_string()` gibt einen lesbaren Text dazu.
 
 ## Lizenz
 

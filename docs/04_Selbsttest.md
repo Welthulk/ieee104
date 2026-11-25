@@ -1,28 +1,59 @@
 # Selbsttest und manuelle Tests
 
-Diese Anleitung beschreibt, wie die Library ohne fremde Gegenstelle geprüft wird und wie die beiden Selbsttest-Programme für manuelle Tests gegen andere IEC-104-Geräte eingesetzt werden.
+Diese Anleitung beschreibt, wie die Library ohne fremde Gegenstelle geprüft wird und wie die beiden Selbsttest-Programme für manuelle Tests gegen andere IEC-104-Geräte eingesetzt werden. Beide Programme nutzen ausschließlich die öffentliche C-Schnittstelle (`include/iec104/iec104.h`) und sind damit zugleich Beispiele für deren Verwendung.
 
 ## 1. Überblick
 
 | Programm | Rolle | Was es tut |
 | --- | --- | --- |
-| `iec104_selftest_server` | gesteuerte Station (Unterstation) | lauscht auf einem TCP-Port, sendet nach STARTDT spontane Messwerte (Typ 11, M_ME_NB_1, IOA 100, Werte 0, 1, 2, …), bestätigt jeden empfangenen Sollwertbefehl (Typ 49, C_SE_NB_1) mit Übertragungsursache 7 |
-| `iec104_selftest_client` | steuernde Station (Leitstelle) | verbindet sich, sendet STARTDT, sendet Sollwertbefehle (IOA 5000, Werte 0, 1, 2, …), prüft Messwerte und Bestätigungen auf Vollständigkeit und Reihenfolge, hält optional eine Ruhephase, sendet STOPDT, schließt und gibt einen Bericht aus |
+| `iec104_selftest_server` | gesteuerte Station (Unterstation), gemeinsame Adresse 1 | hält ein Prozessabbild, beantwortet Generalabfrage, Zählerabfrage, Lesebefehl und Testbefehl, nimmt Sollwerte, Einzelbefehle und Uhrzeit an, sendet nach STARTDT „Ende der Initialisierung“ und eine Reihe spontaner Messwerte |
+| `iec104_selftest_client` | steuernde Station (Leitstelle) | verbindet sich, prüft jeden Ablauf Schritt für Schritt und gibt einen Bericht aus; mit `--foreign` gegen beliebige IEC-104-Server |
 
-Gemeinsame Adresse (CA) ist 1, Profil IEC 104 (COT 2, CA 2, IOA 3 Oktette).
+Prozessabbild des Selbsttest-Servers:
 
-Der Client prüft schrittweise und meldet jeden Schritt mit `ok` oder `FAILED`:
+| IOA | Typ | Inhalt | Gruppe |
+| --- | --- | --- | --- |
+| 100 | 11 (M_ME_NB_1, skaliert) | spontane Messreihe 0, 1, 2, … | Abfragegruppe 1 |
+| 101 | 13 (M_ME_NC_1, Gleitkomma) | 49,95 | Abfragegruppe 1 |
+| 300 | 1 (M_SP_NA_1, Einzelmeldung) | folgt dem Einzelbefehl an IOA 6000 | Abfragegruppe 2 |
+| 200 | 15 (M_IT_NA_1, Zählwert) | 123456 | Zählergruppe 1 |
+
+Befehle: Sollwert skaliert (Typ 49) an IOA 5000 und Einzelbefehl (Typ 45) an IOA 6000 werden angenommen, alle anderen abgelehnt (negative Bestätigung).
+
+Der Client prüft im Selbsttest-Modus:
 
 ```
-iec104_selftest_client: 127.0.0.1:2404
-  connect .......................... ok
-  start data transfer (STARTDT) .... ok
-  measured values received ......... 100/100, in order
-  commands confirmed ............... 10/10, in order
-  idle period (link test) .......... 25 s, ok
-  stop data transfer (STOPDT) ...... ok
+iec104_selftest_client: 127.0.0.1:2404, station 1
+  connect .............................. ok
+  start data transfer (STARTDT) ........ ok
+  end of initialization (type 70) ...... ok
+  general interrogation ................ 3/3 objects
+  group interrogation 2 ................ 1/1 objects
+  clock synchronization ................ ok
+  counter interrogation ................ ok
+  set point commands (type 49) ......... 10/10 confirmed
+  single command with feedback ......... ok
+  rejected command (negative ACTCON) ... ok
+  unknown station (cause 46) ........... ok
+  spontaneous values ................... 100/100, in order
+  idle period (link test) .............. 25 s, ok
+  stop data transfer (STOPDT) .......... ok
 result: PASSED
 ```
+
+| Schritt | Geprüft wird |
+| --- | --- |
+| end of initialization | Typ 70 mit Übertragungsursache 4 nach STARTDT |
+| general interrogation | Bestätigung (Ursache 7), drei Datenpunkte mit Ursache 20, Beendigung (Ursache 10) |
+| group interrogation 2 | nur IOA 300, Ursache 22 |
+| clock synchronization | positive Bestätigung |
+| counter interrogation | Bestätigung, Zählwert 123456 mit Ursache 37, Beendigung |
+| set point commands | je Befehl Bestätigung und Beendigung |
+| single command with feedback | Bestätigung, Beendigung und spontane Rückmeldung von IOA 300 = 1 |
+| rejected command | negative Bestätigung für einen Sollwert an unbekannter IOA |
+| unknown station | Generalabfrage an Station 99 wird mit Ursache 46 negativ beantwortet |
+| spontaneous values | alle Werte der Messreihe vollständig und in der richtigen Reihenfolge |
+| idle period | Verbindung bleibt über die Ruhephase bestehen (Testrahmen nach t3, Antwort innerhalb t1) |
 
 Exit-Code: `0` = bestanden, `1` = ein Schritt fehlgeschlagen, `2` = falscher Aufruf oder Port nicht verfügbar.
 
@@ -68,15 +99,23 @@ Rechner B (Client):
 iec104_selftest_client --host <Adresse von A> --port 2404 --expect 1000 --count 50 --idle 30
 ```
 
-Erwartung: Client `result: PASSED`; der Server meldet je Verbindung `connection N result: PASSED`. Der Server läuft weiter und nimmt neue Verbindungen an, bis er mit Strg-C beendet wird.
+Erwartung: Client `result: PASSED`; der Server meldet je Verbindung `connection N result: PASSED`. Der Server läuft weiter und nimmt neue Verbindungen an, bis er mit Strg-C beendet wird. Jede Verbindung erhält ihre eigene Messreihe ab 0.
 
 ### 4.2 Client gegen eine fremde Unterstation
 
 ```bash
-iec104_selftest_client --host <Gerät> --port 2404 --expect 0 --count 0 --idle 60
+iec104_selftest_client --host <Gerät> --port 2404 --foreign --ca <gemeinsame Adresse> --idle 60
 ```
 
-Mit `--expect 0 --count 0` werden nur Verbindungsaufbau, STARTDT, Ruhephase mit Verbindungstest und STOPDT geprüft. Daten des Geräts werden gezählt und als „other ASDUs received (ignored)“ ausgewiesen. Generalabfrage und Befehle an fremde Geräte folgen mit der Session-Schicht.
+Mit `--foreign` prüft der Client nur die Abläufe, nicht die Datenpunkte des Selbsttest-Servers: Verbindungsaufbau, STARTDT, Generalabfrage (Bestätigung und Beendigung, Anzahl der Objekte), Uhrzeitsynchronisation, Zählerabfrage, Ruhephase mit Verbindungstest und STOPDT. Lehnt das Gerät eine Anfrage normgerecht ab (Ursache 44 bis 47), meldet der Client „not supported (cause …)“; das gilt nicht als Fehler. Beispiel gegen einen Server, der keine Zählerabfrage kennt:
+
+```
+  general interrogation ................ 14 objects
+  clock synchronization ................ confirmed
+  counter interrogation ................ not supported (cause 44)
+```
+
+Mit `--verbose` gibt der Client jedes empfangene Objekt aus (Typ, Ursache, gemeinsame Adresse, IOA, Wert).
 
 ### 4.3 Fremde Leitstelle gegen den Selbsttest-Server
 
@@ -84,14 +123,14 @@ Mit `--expect 0 --count 0` werden nur Verbindungsaufbau, STARTDT, Ruhephase mit 
 iec104_selftest_server --port 2404 --count 100 --interval 100 --verbose
 ```
 
-Mit `--verbose` gibt der Server jeden Zustandswechsel und jede empfangene ASDU aus. Die Leitstelle sollte nach STARTDT die Messwerte 0 bis 99 an IOA 100 anzeigen.
+Erwartung an die Leitstelle: Nach STARTDT kommt „Ende der Initialisierung“, eine Generalabfrage liefert IOA 100, 101 und 300, eine Zählerabfrage IOA 200, und die Messwerte an IOA 100 zählen hoch. Ein Einzelbefehl an IOA 6000 schaltet IOA 300. Mit `--verbose` gibt der Server jeden Zustandswechsel, jeden Befehl und die gesetzte Uhrzeit aus. Beim Schließen der Verbindung meldet er, wie viele Anfragen und Befehle er beantwortet hat.
 
 ### 4.4 Abweichende Parameter der Gegenstelle
 
 Timer, k und w lassen sich auf beiden Seiten setzen (Timer in Sekunden):
 
 ```bash
-iec104_selftest_client --host <Gerät> --t1 250 --t2 240 --t3 255 --k 12 --w 8
+iec104_selftest_client --host <Gerät> --foreign --t1 250 --t2 240 --t3 255 --k 12 --w 8
 ```
 
 `--tolerant` erlaubt bekannte Abweichungen, zum Beispiel `--t3 0` (Verbindungstest abgeschaltet).
@@ -124,7 +163,7 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
 | --- | --- | --- |
 | `--host ADDR` | lokale Adresse | alle |
 | `--port N` | TCP-Port, 0 = freier Port | 2404 |
-| `--count N` | Messwerte je Verbindung | 100 |
+| `--count N` | spontane Messwerte je Verbindung | 100 |
 | `--interval MS` | Abstand zwischen zwei Messwerten, 0 = so schnell wie möglich | 10 |
 | `--duration S` | Laufzeit, 0 = bis Strg-C | 0 |
 | `--once` | nach der ersten Verbindung beenden, Exit-Code wie beim Client | aus |
@@ -136,10 +175,12 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
 | --- | --- | --- |
 | `--host ADDR` | Adresse des Servers | 127.0.0.1 |
 | `--port N` | TCP-Port | 2404 |
+| `--foreign` | beliebiger IEC-104-Server: nur Abläufe prüfen | aus |
+| `--ca N` | gemeinsame Adresse der Station | 1 |
 | `--count N` | zu sendende Sollwertbefehle | 10 |
-| `--expect N` | erwartete Messwerte | 100 |
+| `--expect N` | erwartete spontane Messwerte | 100 |
 | `--idle S` | Ruhephase vor STOPDT, größer als t3 wählen | 0 |
-| `--timeout S` | Grenze je Schritt | 60 |
+| `--timeout S` | Grenze je Schritt | 20 |
 
 ### Beide
 
@@ -148,10 +189,10 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
 | `--t0 … --t3 S` | Timer in Sekunden | 30, 15, 10, 20 |
 | `--k N`, `--w N` | Fenstergrößen | 12, 8 |
 | `--tolerant` | bekannte Abweichungen zulassen | aus (strikt) |
-| `--verbose` | jeden Zustandswechsel und jede ASDU ausgeben | aus |
+| `--verbose` | jeden Zustandswechsel und jedes Objekt ausgeben | aus |
 
 ## 6. Was der Selbsttest abdeckt und was nicht
 
-Abgedeckt: TCP-Verbindungsaufbau und -abbau, STARTDT/STOPDT, Folgenummern und Quittierung über viele Rahmen (mehr als k), Verbindungstest nach t3, Zeitüberwachung t1, Kodierung und Dekodierung der verwendeten Typen.
+Abgedeckt: TCP-Verbindungsaufbau und -abbau, STARTDT/STOPDT, Folgenummern und Quittierung über viele Rahmen (mehr als k), Verbindungstest nach t3, Zeitüberwachung t1, Ende der Initialisierung, Generalabfrage (Station und Gruppe), Zählerabfrage, Uhrzeitsynchronisation, Befehle mit Bestätigung und Beendigung, Rückmeldung eines Befehls, negative Bestätigungen (abgelehnter Befehl, unbekannte Station).
 
-Noch nicht abgedeckt (folgt mit der Session-Schicht): Generalabfrage, Uhrzeitsynchronisation, Zählerabfrage, Befehle mit Select/Execute und Beendigung (ACTTERM), TLS, Redundanzgruppen.
+Noch nicht abgedeckt: Select/Execute mit Zeitüberwachung je Befehl, maximale Befehlsverzögerung für Befehle mit Zeitmarke, Pufferung bei unterbrochener Verbindung, TLS, Redundanzgruppen.

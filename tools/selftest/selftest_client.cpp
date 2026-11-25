@@ -9,21 +9,32 @@
  * @brief iec104_selftest_client: controlling station for the self-test (see selftest_common.hpp).
  *
  * Example:
- *   iec104_selftest_client --host 127.0.0.1 --port 2404 --expect 100 --count 10 --idle 25
+ *   iec104_selftest_client --host 127.0.0.1 --port 2404 --idle 25
+ *   iec104_selftest_client --host 10.0.0.5 --foreign --ca 7 --idle 60
  *
- * Steps, each reported with ok / FAILED:
- *   1. TCP connect (t0)            4. M commands confirmed (cause 7)
- *   2. STARTDT act/con             5. idle period: link test with TESTFR after t3
- *   3. N measured values in order  6. STOPDT act/con, close
+ * Every step is reported with ok / FAILED:
+ *
+ *   step                         self-test server              --foreign
+ *   connect, STARTDT             yes                           yes
+ *   end of initialization        type 70 after STARTDT         -
+ *   general interrogation        ACTCON, 3 points, ACTTERM     ACTCON, ACTTERM, points counted
+ *   group interrogation 2        only IOA 300                  -
+ *   clock synchronization        positive ACTCON               ACTCON (positive or negative)
+ *   counter interrogation        ACTCON, counter, ACTTERM      ACTCON, ACTTERM, counters counted
+ *   set point commands           M x ACTCON and ACTTERM        -
+ *   single command               ACTCON, ACTTERM, IOA 300 = 1  -
+ *   rejected command             negative ACTCON               -
+ *   unknown station              negative, cause 46            -
+ *   spontaneous values           N values in order             -
+ *   idle period, STOPDT          yes                           yes
  *
  * Exit code: 0 = all steps passed, 1 = a step failed, 2 = usage error.
- * With --expect 0 the client does not wait for measured values, which allows
- * a test against any IEC 104 server that only has to accept STARTDT/STOPDT.
  */
 #include "selftest_common.hpp"
 
 #include <ctime>
 #include <functional>
+#include <vector>
 
 namespace {
 
@@ -32,7 +43,15 @@ struct Options {
     unsigned long count{10};
     unsigned long expect{100};
     unsigned long idle_s{0};
-    unsigned long timeout_s{60};
+    unsigned long timeout_s{20};
+    unsigned long ca{selftest::kStation};
+    bool foreign{false};
+};
+
+/** @brief One received object with the parts of its ASDU the checks need. */
+struct Received {
+    iec104_asdu_info info;
+    iec104_object object;
 };
 
 struct Client {
@@ -40,18 +59,14 @@ struct Client {
     iec104_client* handle{nullptr};
     iec104_link_state state{IEC104_LINK_CONNECTING};
     iec104_close_reason close_reason{IEC104_CLOSE_NONE};
-    unsigned long values{0};
-    bool values_in_order{true};
-    unsigned long confirmations{0};
-    bool confirmations_in_order{true};
-    unsigned long other_asdus{0};
+    std::vector<Received> received;
 };
 
 std::uint64_t now_ms() {
     timespec ts{};
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<std::uint64_t>(ts.tv_sec) * 1000U +
-           static_cast<std::uint64_t>(ts.tv_nsec) / 1000000U;
+    return (static_cast<std::uint64_t>(ts.tv_sec) * 1000U) +
+           (static_cast<std::uint64_t>(ts.tv_nsec) / 1000000U);
 }
 
 void on_state(void* user, std::uint32_t /*id*/, iec104_link_state state,
@@ -68,26 +83,13 @@ void on_state(void* user, std::uint32_t /*id*/, iec104_link_state state,
     }
 }
 
-void on_asdu(void* user, std::uint32_t /*id*/, const std::uint8_t* asdu, std::size_t length) {
+void on_object(void* user, std::uint32_t /*id*/, const iec104_asdu_info* info,
+               const iec104_object* object) {
     auto* c = static_cast<Client*>(user);
-    const selftest::Received r = selftest::parse_asdu(asdu, length);
     if (c->opt.common.verbose) {
-        std::printf("received type %u cause %u ioa %u value %d\n", r.type, r.cause, r.ioa, r.value);
+        selftest::print_object("received ", info, object);
     }
-    if (r.ok && r.type == selftest::kMeasurementType && r.ioa == selftest::kMeasurementIoa) {
-        if (r.value != static_cast<std::int16_t>(c->values)) {
-            c->values_in_order = false;
-        }
-        ++c->values;
-    } else if (r.ok && r.type == selftest::kCommandType &&
-               r.cause == selftest::kCauseActivationCon) {
-        if (r.value != static_cast<std::int16_t>(c->confirmations)) {
-            c->confirmations_in_order = false;
-        }
-        ++c->confirmations;
-    } else {
-        ++c->other_asdus;
-    }
+    c->received.push_back(Received{*info, *object});
 }
 
 /** @brief Polls until @p done, the connection closes, or @p ms have passed. */
@@ -99,24 +101,39 @@ bool wait_for(Client& c, std::uint64_t ms, const std::function<bool()>& done) {
     return done();
 }
 
+/** @brief Index of the first object at or after @p from with type and cause, or -1. */
+long find(const Client& c, std::size_t from, std::uint8_t type, std::uint8_t cause) {
+    for (std::size_t i = from; i < c.received.size(); ++i) {
+        const Received& r = c.received[i];
+        if (r.info.type == type && r.info.cause == cause) {
+            return static_cast<long>(i);
+        }
+    }
+    return -1;
+}
+
+/** @brief Number of objects at or after @p from with the given cause. */
+std::size_t count_cause(const Client& c, std::size_t from, std::uint8_t cause) {
+    std::size_t n = 0;
+    for (std::size_t i = from; i < c.received.size(); ++i) {
+        n += c.received[i].info.cause == cause ? 1U : 0U;
+    }
+    return n;
+}
+
 void print_help() {
     std::printf("iec104_selftest_client - IEC 60870-5-104 controlling station for self-tests\n\n"
                 "usage: iec104_selftest_client [options]\n\n"
                 "  --host ADDR      server address (default 127.0.0.1)\n"
-                "  --count N        set-point commands to send (default 10, 0 = none)\n"
-                "  --expect N       measured values to expect (default 100, 0 = none)\n"
+                "  --foreign        test any IEC 104 server: only the sequences, not the\n"
+                "                   data points of the self-test server\n"
+                "  --ca N           common address of the station (default 1)\n"
+                "  --count N        set-point commands to send (default 10)\n"
+                "  --expect N       spontaneous values to expect (default 100)\n"
                 "  --idle S         idle seconds before STOPDT, to see the link test\n"
                 "                   (default 0; choose more than t3)\n"
-                "  --timeout S      limit for each step in seconds (default 60)\n");
+                "  --timeout S      limit for each step in seconds (default 20)\n");
     selftest::print_common_help();
-}
-
-std::string ratio(unsigned long have, unsigned long want, bool in_order) {
-    std::string s = std::to_string(have) + "/" + std::to_string(want);
-    if (have > 0U) {
-        s += in_order ? ", in order" : ", NOT in order";
-    }
-    return s;
 }
 
 } // namespace
@@ -139,6 +156,10 @@ int main(int argc, char** argv) {
             c.opt.idle_s = selftest::parse_number("--idle", value(), 172800);
         } else if (arg == "--timeout") {
             c.opt.timeout_s = selftest::parse_number("--timeout", value(), 86400);
+        } else if (arg == "--ca") {
+            c.opt.ca = selftest::parse_number("--ca", value(), 65535);
+        } else if (arg == "--foreign") {
+            c.opt.foreign = true;
         } else if (arg == "--help" || arg == "-h") {
             print_help();
             return 0;
@@ -150,66 +171,212 @@ int main(int argc, char** argv) {
 
     iec104_callbacks cb{};
     cb.user = &c;
-    cb.on_asdu = on_asdu;
     cb.on_state = on_state;
+    cb.on_object = on_object;
     iec104_status st = iec104_client_create(&c.opt.common.link, &cb, &c.handle);
     if (st != IEC104_OK) {
         std::fprintf(stderr, "invalid configuration: %s\n", iec104_status_string(st));
         return 2;
     }
-    std::printf("iec104_selftest_client: %s:%u\n", c.opt.common.host.c_str(), c.opt.common.port);
+    const auto ca = static_cast<std::uint16_t>(c.opt.ca);
     const std::uint64_t step_ms = c.opt.timeout_s * 1000U;
+    std::printf("iec104_selftest_client: %s:%u, station %u%s\n", c.opt.common.host.c_str(),
+                c.opt.common.port, ca, c.opt.foreign ? ", foreign server" : "");
+
     bool passed = true;
     auto step = [&](const char* label, bool ok, const std::string& detail = "") {
-        selftest::report_line(label, ok ? (detail.empty() ? "ok" : detail)
-                                        : "FAILED" + (detail.empty() ? "" : " (" + detail + ")"));
+        std::string text = ok ? (detail.empty() ? "ok" : detail) : "FAILED";
+        if (!ok && !detail.empty()) {
+            text += " (" + detail + ")";
+        }
+        selftest::report_line(label, text);
         passed = passed && ok;
         std::fflush(stdout);
         return ok;
     };
-    auto closed_detail = [&]() {
+    auto closed_detail = [&]() -> std::string {
         return c.state == IEC104_LINK_CLOSED ? iec104_close_reason_string(c.close_reason)
                                              : "timeout";
     };
+    // Waits for ACTCON (and optionally ACTTERM) of a request sent after index @p from.
+    auto confirmed = [&](std::size_t from, std::uint8_t type, bool termination) {
+        return wait_for(c, step_ms, [&] {
+            return find(c, from, type, IEC104_COT_ACTIVATION_CON) >= 0 &&
+                   (!termination || find(c, from, type, IEC104_COT_ACTIVATION_TERMINATION) >= 0);
+        });
+    };
+    auto positive = [&](std::size_t from, std::uint8_t type) {
+        const long i = find(c, from, type, IEC104_COT_ACTIVATION_CON);
+        return i >= 0 && c.received[static_cast<std::size_t>(i)].info.negative == 0U;
+    };
+    auto value_at = [&](long index) { return c.received[static_cast<std::size_t>(index)].object; };
+    // A foreign server may reject a request it does not implement (causes 44..47).
+    auto rejection = [&](std::size_t from, std::uint8_t type) -> long {
+        for (std::uint8_t cause = IEC104_COT_UNKNOWN_TYPE; cause <= IEC104_COT_UNKNOWN_IOA;
+             ++cause) {
+            if (find(c, from, type, cause) >= 0) {
+                return cause;
+            }
+        }
+        return -1;
+    };
+    auto answered = [&](std::size_t from, std::uint8_t type, bool termination) {
+        return wait_for(c, step_ms, [&] {
+            return rejection(from, type) >= 0 ||
+                   (find(c, from, type, IEC104_COT_ACTIVATION_CON) >= 0 &&
+                    (!termination || !positive(from, type) ||
+                     find(c, from, type, IEC104_COT_ACTIVATION_TERMINATION) >= 0));
+        });
+    };
 
-    // 1. Connect.
+    // Connect and start.
     st = iec104_client_connect(c.handle, c.opt.common.host.c_str(), c.opt.common.port);
     bool ok =
         st == IEC104_OK && wait_for(c, step_ms, [&] { return c.state == IEC104_LINK_STOPPED; });
-    const std::string connect_detail =
-        ok ? "" : (st != IEC104_OK ? iec104_status_string(st) : closed_detail());
-    if (!step("connect", ok, connect_detail)) {
+    if (!step("connect", ok,
+              ok ? "" : (st != IEC104_OK ? iec104_status_string(st) : closed_detail()))) {
         iec104_client_destroy(c.handle);
         std::printf("result: FAILED\n");
         return 1;
     }
-
-    // 2. Start data transfer.
     ok = iec104_client_start(c.handle) == IEC104_OK &&
          wait_for(c, step_ms, [&] { return c.state == IEC104_LINK_STARTED; });
     if (step("start data transfer (STARTDT)", ok, ok ? "" : closed_detail())) {
-        // 3. + 4. Send commands while values arrive.
-        unsigned long sent = 0;
-        const bool all = wait_for(c, step_ms, [&] {
-            while (sent < c.opt.count) {
-                std::uint8_t out[32];
-                const std::size_t len = selftest::build_asdu(
-                    selftest::kCommandType, selftest::kCauseActivation, selftest::kCommandIoa,
-                    static_cast<std::int16_t>(sent), out, sizeof out);
-                if (iec104_client_send_asdu(c.handle, out, len) != IEC104_OK) {
-                    break; // window k full: retry after the next poll
-                }
-                ++sent;
-            }
-            return c.values >= c.opt.expect && c.confirmations >= c.opt.count;
-        });
-        (void)all;
-        step("measured values received", c.values == c.opt.expect && c.values_in_order,
-             ratio(c.values, c.opt.expect, c.values_in_order));
-        step("commands confirmed", c.confirmations == c.opt.count && c.confirmations_in_order,
-             ratio(c.confirmations, c.opt.count, c.confirmations_in_order));
+        if (!c.opt.foreign) {
+            ok = wait_for(c, 2000, [&] { return find(c, 0, 70, IEC104_COT_INITIALIZED) >= 0; });
+            step("end of initialization (type 70)", ok);
+        }
 
-        // 5. Idle: the link stays up only if both sides answer TESTFR within t1.
+        // General interrogation.
+        std::size_t mark = c.received.size();
+        ok = iec104_client_interrogation(c.handle, ca, 20) == IEC104_OK &&
+             confirmed(mark, 100, true);
+        const std::size_t points = count_cause(c, mark, IEC104_COT_INTERROGATED_STATION);
+        if (c.opt.foreign) {
+            step("general interrogation", ok && positive(mark, 100),
+                 std::to_string(points) + " objects");
+        } else {
+            step("general interrogation", ok && positive(mark, 100) && points == 3U,
+                 std::to_string(points) + "/3 objects");
+            mark = c.received.size();
+            ok = iec104_client_interrogation(c.handle, ca, 22) == IEC104_OK &&
+                 confirmed(mark, 100, true);
+            const long sp = find(c, mark, 1, 22);
+            const std::size_t in_group = count_cause(c, mark, 22);
+            step("group interrogation 2",
+                 ok && in_group == 1U && sp >= 0 && value_at(sp).ioa == selftest::kSinglePointIoa,
+                 std::to_string(in_group) + "/1 objects");
+        }
+
+        // Clock synchronization with the current UTC time.
+        iec104_time now{};
+        (void)iec104_time_from_unix_ms(static_cast<std::int64_t>(std::time(nullptr)) * 1000, &now);
+        mark = c.received.size();
+        if (c.opt.foreign) {
+            ok = iec104_client_clock_sync(c.handle, ca, &now) == IEC104_OK &&
+                 answered(mark, 103, false);
+            const long r = rejection(mark, 103);
+            step("clock synchronization", ok,
+                 r >= 0 ? "not supported (cause " + std::to_string(r) + ")"
+                        : (positive(mark, 103) ? "confirmed" : "negative confirmation"));
+        } else {
+            ok = iec104_client_clock_sync(c.handle, ca, &now) == IEC104_OK &&
+                 confirmed(mark, 103, false);
+            step("clock synchronization", ok && positive(mark, 103));
+        }
+
+        // Counter interrogation (general request, read).
+        mark = c.received.size();
+        if (c.opt.foreign) {
+            ok = iec104_client_counter_interrogation(c.handle, ca, 5, 0) == IEC104_OK &&
+                 answered(mark, 101, true);
+            const long r = rejection(mark, 101);
+            step("counter interrogation", ok,
+                 r >= 0 ? "not supported (cause " + std::to_string(r) + ")"
+                        : std::to_string(count_cause(c, mark, IEC104_COT_REQUESTED_COUNTERS)) +
+                              " counters");
+        } else {
+            ok = iec104_client_counter_interrogation(c.handle, ca, 5, 0) == IEC104_OK &&
+                 confirmed(mark, 101, true);
+            const long counter = find(c, mark, 15, IEC104_COT_REQUESTED_COUNTERS);
+            step("counter interrogation", ok && positive(mark, 101) && counter >= 0 &&
+                                              value_at(counter).value == selftest::kCounterValue);
+        }
+
+        if (!c.opt.foreign) {
+            // Set points: each confirmed and terminated.
+            mark = c.received.size();
+            unsigned long sent = 0;
+            ok = wait_for(c, step_ms, [&] {
+                while (sent < c.opt.count) {
+                    iec104_object sp{};
+                    sp.type = 49;
+                    sp.ioa = selftest::kSetPointIoa;
+                    sp.value = static_cast<double>(sent);
+                    if (iec104_client_send_command(c.handle, ca, &sp) != IEC104_OK) {
+                        break; // window k full: retry after the next poll
+                    }
+                    ++sent;
+                }
+                return count_cause(c, mark, IEC104_COT_ACTIVATION_TERMINATION) >= c.opt.count;
+            });
+            const std::size_t cons = count_cause(c, mark, IEC104_COT_ACTIVATION_CON);
+            step("set point commands (type 49)", ok && cons == c.opt.count,
+                 std::to_string(cons) + "/" + std::to_string(c.opt.count) + " confirmed");
+
+            // Single command: confirmation, termination and the feedback of IOA 300.
+            mark = c.received.size();
+            iec104_object sc{};
+            sc.type = 45;
+            sc.ioa = selftest::kSwitchIoa;
+            sc.value = 1;
+            ok =
+                iec104_client_send_command(c.handle, ca, &sc) == IEC104_OK &&
+                confirmed(mark, 45, true) &&
+                wait_for(c, step_ms, [&] { return find(c, mark, 1, IEC104_COT_SPONTANEOUS) >= 0; });
+            const long fb = find(c, mark, 1, IEC104_COT_SPONTANEOUS);
+            step("single command with feedback",
+                 ok && positive(mark, 45) && fb >= 0 && value_at(fb).value == 1.0);
+
+            // A command for an address the server does not know is rejected.
+            mark = c.received.size();
+            iec104_object bad{};
+            bad.type = 49;
+            bad.ioa = 9999;
+            ok = iec104_client_send_command(c.handle, ca, &bad) == IEC104_OK &&
+                 confirmed(mark, 49, false);
+            step("rejected command (negative ACTCON)", ok && !positive(mark, 49));
+
+            // An unknown station is answered with cause 46.
+            mark = c.received.size();
+            ok = iec104_client_interrogation(c.handle, 99, 20) == IEC104_OK &&
+                 wait_for(c, step_ms, [&] {
+                     return find(c, mark, 100, IEC104_COT_UNKNOWN_COMMON_ADDRESS) >= 0;
+                 });
+            step("unknown station (cause 46)", ok);
+
+            // Spontaneous values of IOA 100 in order.
+            auto spontaneous = [&](bool& in_order) {
+                unsigned long n = 0;
+                in_order = true;
+                for (const Received& r : c.received) {
+                    if (r.info.cause == IEC104_COT_SPONTANEOUS &&
+                        r.object.ioa == selftest::kMeasurementIoa) {
+                        in_order = in_order && r.object.value == static_cast<double>(n);
+                        ++n;
+                    }
+                }
+                return n;
+            };
+            bool in_order = true;
+            ok = wait_for(c, step_ms, [&] { return spontaneous(in_order) >= c.opt.expect; });
+            const unsigned long values = spontaneous(in_order);
+            step("spontaneous values", ok && in_order && values == c.opt.expect,
+                 std::to_string(values) + "/" + std::to_string(c.opt.expect) +
+                     (in_order ? ", in order" : ", NOT in order"));
+        }
+
+        // Idle: the link stays up only if both sides answer TESTFR within t1.
         if (c.opt.idle_s > 0U) {
             (void)wait_for(c, c.opt.idle_s * 1000U, [] { return false; });
             step("idle period (link test)", c.state == IEC104_LINK_STARTED,
@@ -217,7 +384,6 @@ int main(int argc, char** argv) {
                                                 : closed_detail());
         }
 
-        // 6. Stop data transfer.
         ok = c.state == IEC104_LINK_STARTED && iec104_client_stop(c.handle) == IEC104_OK &&
              wait_for(c, step_ms, [&] { return c.state == IEC104_LINK_STOPPED; });
         step("stop data transfer (STOPDT)", ok, ok ? "" : closed_detail());
@@ -226,9 +392,6 @@ int main(int argc, char** argv) {
     iec104_client_close(c.handle);
     (void)wait_for(c, 1000, [&] { return c.state == IEC104_LINK_CLOSED; });
     iec104_client_destroy(c.handle);
-    if (c.other_asdus > 0U) {
-        selftest::report_line("other ASDUs received (ignored)", std::to_string(c.other_asdus));
-    }
     std::printf("result: %s\n", passed ? "PASSED" : "FAILED");
     return passed ? 0 : 1;
 }

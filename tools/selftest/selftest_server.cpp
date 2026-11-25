@@ -12,9 +12,9 @@
  *   iec104_selftest_server --port 2404 --count 100 --interval 10
  *   iec104_selftest_server --port 0 --port-file /tmp/port --once     (for scripts)
  *
- * Exit code with --once: 0 if the connection sent all values and every
- * received command was in order, 1 otherwise. Without --once the server runs
- * until --duration has passed or it is stopped with Ctrl-C (exit code 0).
+ * Exit code with --once: 0 if the first connection received all values and
+ * closed regularly, 1 otherwise. Without --once the server runs until
+ * --duration has passed or it is stopped with Ctrl-C (exit code 0).
  */
 #include "selftest_common.hpp"
 
@@ -42,15 +42,18 @@ struct Options {
 struct Peer {
     bool started{false};
     unsigned long sent{0};
-    unsigned long commands{0};
-    bool commands_in_order{true};
     std::uint64_t next_send_ms{0};
+    unsigned long requests{0}; // interrogations, counter interrogations, reads, tests
+    unsigned long commands{0}; // accepted commands
+    unsigned long rejected{0}; // rejected commands
+    unsigned long clock_syncs{0};
 };
 
 struct Server {
     Options opt;
     iec104_server* handle{nullptr};
     std::map<std::uint32_t, Peer> peers;
+    bool switch_state{false};
     bool finished_once{false};
     bool once_passed{false};
 };
@@ -58,8 +61,16 @@ struct Server {
 std::uint64_t now_ms() {
     timespec ts{};
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<std::uint64_t>(ts.tv_sec) * 1000U +
-           static_cast<std::uint64_t>(ts.tv_nsec) / 1000000U;
+    return (static_cast<std::uint64_t>(ts.tv_sec) * 1000U) +
+           (static_cast<std::uint64_t>(ts.tv_nsec) / 1000000U);
+}
+
+iec104_object make(std::uint8_t type, std::uint32_t ioa, double value) {
+    iec104_object o{};
+    o.type = type;
+    o.ioa = ioa;
+    o.value = value;
+    return o;
 }
 
 void on_state(void* user, std::uint32_t id, iec104_link_state state, iec104_close_reason reason) {
@@ -77,11 +88,12 @@ void on_state(void* user, std::uint32_t id, iec104_link_state state, iec104_clos
     } else if (state == IEC104_LINK_CLOSED) {
         selftest::report_line("measured values sent",
                               std::to_string(p.sent) + "/" + std::to_string(s->opt.count));
-        selftest::report_line("commands received and confirmed",
-                              std::to_string(p.commands) +
-                                  (p.commands_in_order ? ", in order" : ", NOT in order"));
-        const bool passed = p.sent == s->opt.count && p.commands_in_order &&
-                            (reason == IEC104_CLOSE_PEER || reason == IEC104_CLOSE_LOCAL);
+        selftest::report_line("requests answered (100-107)", std::to_string(p.requests));
+        selftest::report_line("commands accepted / rejected",
+                              std::to_string(p.commands) + " / " + std::to_string(p.rejected));
+        selftest::report_line("clock synchronizations", std::to_string(p.clock_syncs));
+        const bool passed =
+            p.sent == s->opt.count && (reason == IEC104_CLOSE_PEER || reason == IEC104_CLOSE_LOCAL);
         std::printf("connection %u result: %s\n", id, passed ? "PASSED" : "FAILED");
         if (s->opt.once && !s->finished_once) {
             s->finished_once = true;
@@ -91,29 +103,54 @@ void on_state(void* user, std::uint32_t id, iec104_link_state state, iec104_clos
     }
 }
 
+// Counts the requests the library answers by itself (they do not reach on_command).
 void on_asdu(void* user, std::uint32_t id, const std::uint8_t* asdu, std::size_t length) {
     auto* s = static_cast<Server*>(user);
-    Peer& p = s->peers[id];
-    const selftest::Received r = selftest::parse_asdu(asdu, length);
+    if (length > 0U && asdu[0] >= 100U && asdu[0] <= 107U && asdu[0] != 103U && asdu[0] != 105U) {
+        ++s->peers[id].requests;
+    }
+}
+
+void on_object(void* user, std::uint32_t id, const iec104_asdu_info* info,
+               const iec104_object* object) {
+    auto* s = static_cast<Server*>(user);
     if (s->opt.common.verbose) {
-        std::printf("connection %u: received type %u cause %u ioa %u value %d\n", id, r.type,
-                    r.cause, r.ioa, r.value);
+        std::printf("connection %u: ", id);
+        selftest::print_object("received ", info, object);
     }
-    if (!r.ok || r.type != selftest::kCommandType || r.cause != selftest::kCauseActivation) {
-        return; // not part of the self-test
+}
+
+int on_command(void* user, std::uint32_t id, const iec104_asdu_info* info,
+               const iec104_object* command) {
+    auto* s = static_cast<Server*>(user);
+    Peer& p = s->peers[id];
+    if (s->opt.common.verbose) {
+        std::printf("connection %u: ", id);
+        selftest::print_object("command ", info, command);
     }
-    if (r.value != static_cast<std::int16_t>(p.commands) || r.ioa != selftest::kCommandIoa) {
-        p.commands_in_order = false;
+    if (info->type == 103U) {
+        ++p.clock_syncs;
+        if (s->opt.common.verbose) {
+            std::printf("  clock %04u-%02u-%02u %02u:%02u:%02u.%03u\n", command->time.year,
+                        command->time.month, command->time.day, command->time.hour,
+                        command->time.minute, command->time.second, command->time.millisecond);
+        }
+        return 1;
+    }
+    const bool setpoint = info->type == 49U && command->ioa == selftest::kSetPointIoa;
+    const bool switching = info->type == 45U && command->ioa == selftest::kSwitchIoa;
+    if (!setpoint && !switching) {
+        ++p.rejected;
+        return 0;
     }
     ++p.commands;
-    // Confirm: same command, cause 7 (activation confirmation).
-    std::uint8_t out[32];
-    const std::size_t len = selftest::build_asdu(
-        selftest::kCommandType, selftest::kCauseActivationCon, r.ioa, r.value, out, sizeof out);
-    if (len == 0U || iec104_server_send_asdu(s->handle, id, out, len) != IEC104_OK) {
-        // A full window drops the confirmation; the client then reports it missing.
-        p.commands_in_order = false;
+    if (switching && command->select == 0U) {
+        // Execute: the switch follows the command and reports its new state.
+        s->switch_state = command->value != 0.0;
+        const iec104_object point = make(1, selftest::kSinglePointIoa, s->switch_state ? 1.0 : 0.0);
+        (void)iec104_server_update(s->handle, selftest::kStation, &point);
     }
+    return 1;
 }
 
 // Sends the next measured values that are due on every started connection.
@@ -121,12 +158,11 @@ void send_due_values(Server& s) {
     const std::uint64_t now = now_ms();
     for (auto& [id, p] : s.peers) {
         while (p.started && p.sent < s.opt.count && now >= p.next_send_ms) {
-            std::uint8_t out[32];
-            const std::size_t len = selftest::build_asdu(
-                selftest::kMeasurementType, selftest::kCauseSpontaneous, selftest::kMeasurementIoa,
-                static_cast<std::int16_t>(p.sent), out, sizeof out);
-            if (iec104_server_send_asdu(s.handle, id, out, len) != IEC104_OK) {
-                break; // window k full: try again after the next poll
+            const iec104_object v =
+                make(11, selftest::kMeasurementIoa, static_cast<double>(p.sent));
+            if (iec104_server_send(s.handle, id, selftest::kStation, IEC104_COT_SPONTANEOUS, &v,
+                                   1) != IEC104_OK) {
+                break; // queue full: try again after the next poll
             }
             ++p.sent;
             p.next_send_ms = now + s.opt.interval_ms;
@@ -137,11 +173,22 @@ void send_due_values(Server& s) {
     }
 }
 
+void add_points(Server& s) {
+    iec104_object m = make(11, selftest::kMeasurementIoa, 0);
+    iec104_object f = make(13, selftest::kFloatIoa, selftest::kFloatValue);
+    iec104_object sp = make(1, selftest::kSinglePointIoa, 0);
+    iec104_object c = make(15, selftest::kCounterIoa, selftest::kCounterValue);
+    (void)iec104_server_add_point(s.handle, selftest::kStation, &m, 0x0001U);
+    (void)iec104_server_add_point(s.handle, selftest::kStation, &f, 0x0001U);
+    (void)iec104_server_add_point(s.handle, selftest::kStation, &sp, 0x0002U);
+    (void)iec104_server_add_point(s.handle, selftest::kStation, &c, 0x0001U);
+}
+
 void print_help() {
     std::printf("iec104_selftest_server - IEC 60870-5-104 controlled station for self-tests\n\n"
                 "usage: iec104_selftest_server [options]\n\n"
                 "  --host ADDR      local address to listen on (default: all)\n"
-                "  --count N        measured values to send per connection (default 100)\n"
+                "  --count N        spontaneous values per connection (default 100)\n"
                 "  --interval MS    pause between two values in ms (default 10, 0 = burst)\n"
                 "  --duration S     stop after S seconds (default 0 = run until Ctrl-C)\n"
                 "  --once           exit after the first connection has closed; exit code\n"
@@ -185,11 +232,14 @@ int main(int argc, char** argv) {
     cb.user = &s;
     cb.on_asdu = on_asdu;
     cb.on_state = on_state;
+    cb.on_object = on_object;
+    cb.on_command = on_command;
     iec104_status st = iec104_server_create(&s.opt.common.link, &cb, &s.handle);
     if (st != IEC104_OK) {
         std::fprintf(stderr, "invalid configuration: %s\n", iec104_status_string(st));
         return 2;
     }
+    add_points(s);
     st = iec104_server_listen(s.handle, s.opt.common.host.c_str(), s.opt.common.port);
     if (st != IEC104_OK) {
         std::fprintf(stderr, "cannot listen on port %u: %s\n", s.opt.common.port,
@@ -209,7 +259,7 @@ int main(int argc, char** argv) {
 
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
-    const std::uint64_t end = s.opt.duration_s > 0U ? now_ms() + s.opt.duration_s * 1000U : 0U;
+    const std::uint64_t end = s.opt.duration_s > 0U ? now_ms() + (s.opt.duration_s * 1000U) : 0U;
     while (g_stop == 0 && !s.finished_once && (end == 0U || now_ms() < end)) {
         send_due_values(s);
         (void)iec104_server_poll(s.handle, 5);
