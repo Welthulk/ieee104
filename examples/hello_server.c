@@ -12,7 +12,10 @@
  * library answers a general interrogation by itself. Commands are logged
  * and accepted.
  *
- *   hello_server [port]       default port 2404, 0 = any free port
+ *   hello_server [port] [address]
+ *     port     default 2404, 0 = any free port
+ *     address  default 127.0.0.1 (this computer only); 0.0.0.0 = all
+ *              addresses, only deliberately (the server accepts commands)
  */
 #include <iec104/iec104.h>
 #include <signal.h>
@@ -41,6 +44,7 @@ static void on_log(void* user, iec104_log_level level, uint32_t connection, cons
 
 int main(int argc, char** argv) {
     const uint16_t port = argc > 1 ? (uint16_t)atoi(argv[1]) : IEC104_DEFAULT_PORT;
+    const char* address = argc > 2 ? argv[2] : "127.0.0.1";
 
     iec104_callbacks callbacks = {0};
     callbacks.on_command = on_command;
@@ -57,7 +61,7 @@ int main(int argc, char** argv) {
     value.value = 0.0;
     iec104_server_add_point(server, 1, &value, 0x0001); /* station 1, interrogation group 1 */
 
-    iec104_status st = iec104_server_listen(server, NULL, port);
+    iec104_status st = iec104_server_listen(server, address, port);
     if (st != IEC104_OK) {
         fprintf(stderr, "listen: %s\n", iec104_status_string(st));
         iec104_server_destroy(server);

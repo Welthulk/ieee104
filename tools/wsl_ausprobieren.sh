@@ -7,10 +7,12 @@
 # (gedacht für WSL, läuft auf jedem Linux).
 #
 # Aufruf, z. B. aus dem Windows-Checkout heraus:
-#   bash /mnt/c/<pfad>/<repo>/tools/wsl_ausprobieren.sh [ZIEL] [--ohne-bauen]
+#   bash /mnt/c/<pfad>/<repo>/tools/wsl_ausprobieren.sh [ZIEL] [--ohne-bauen] [--mit-lib60870]
 #
-#   ZIEL          Arbeitsordner, Default ~/src/iee104
-#   --ohne-bauen  nur die fertig gebaute Library prüfen, nicht aus den Quellen bauen
+#   ZIEL            Arbeitsordner, Default ~/src/iee104
+#   --ohne-bauen    nur die fertig gebaute Library prüfen, nicht aus den Quellen bauen
+#   --mit-lib60870  lib60870-C v2.4.1 (fremde Gegenstelle für die Test-GUI) neben ZIEL
+#                   holen (GitHub, Variable LIB60870_GIT) und ohne TLS bauen
 #
 # Schritte:
 #   1. Repo nach ZIEL holen (git clone) bzw. aktualisieren (git pull);
@@ -18,7 +20,8 @@
 #   2. Voraussetzungen prüfen; fehlende Pakete als apt-Befehl ausgeben
 #   3. fertig gebaute Library aus dist/: pruefen.sh und beispiel.sh
 #   4. aus den Quellen bauen und alle Tests (ctest) laufen lassen
-#   5. ausgeben, wie Test-GUI und Selbsttest starten
+#   5. optional lib60870 holen und bauen
+#   6. ausgeben, wie Test-GUI und Selbsttest starten
 #
 # Das Skript ändert nichts am System; Pakete installiert es nicht selbst.
 
@@ -27,10 +30,12 @@ set -u
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 ZIEL="$HOME/src/iee104"
 BAUEN=1
+LIB60870=0
 for arg in "$@"; do
     case "$arg" in
         --ohne-bauen) BAUEN=0 ;;
-        -h|--help) sed -n '6,22p' "$0"; exit 0 ;;
+        --mit-lib60870) LIB60870=1 ;;
+        -h|--help) sed -n '6,25p' "$0"; exit 0 ;;
         *) ZIEL="$arg" ;;
     esac
 done
@@ -152,11 +157,36 @@ else
     fi
 fi
 
-# --- 5. Wie weiter ------------------------------------------------------------------------
-step "5. Ausprobieren"
+# --- 5. lib60870 als fremde Gegenstelle (optional) --------------------------------------
+L60870="$(dirname "$ZIEL")/lib60870/lib60870-C"
+if [ "$LIB60870" = 1 ]; then
+    step "5. lib60870 nach $(dirname "$L60870")"
+    if [ -x "$L60870/build/examples/cs104_client/simple_client" ]; then
+        echo "  schon gebaut"
+    else
+        # Nur Gegenstelle: Die Beispielprogramme laufen als eigene Prozesse, nichts wird gelinkt.
+        [ -d "$(dirname "$L60870")/.git" ] ||
+            git clone -q --depth 1 --branch v2.4.1 "${LIB60870_GIT:-https://github.com/mz-automation/lib60870.git}" \
+                "$(dirname "$L60870")" || { FEHLER=1; echo "  git clone fehlgeschlagen (Netz/Proxy?)"; }
+        if [ -d "$L60870" ] && cmake -S "$L60870" -B "$L60870/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                > lib60870-build.log 2>&1 && cmake --build "$L60870/build" >> lib60870-build.log 2>&1; then
+            echo "  gebaut: $L60870/build/examples"
+        else
+            FEHLER=1
+            echo "  Bau fehlgeschlagen, Einzelheiten: $ZIEL/lib60870-build.log"
+        fi
+    fi
+fi
+
+# --- 6. Wie weiter ------------------------------------------------------------------------
+step "6. Ausprobieren"
 if [ -n "$PAKET" ]; then
     echo "  Test-GUI:     bash $ZIEL/$PAKET/gui.sh     dann http://localhost:8080 im Browser"
     echo "                (kommt der Windows-Browser nicht durch: bash $ZIEL/$PAKET/gui.sh 8080 0.0.0.0)"
+    if [ -x "$L60870/build/examples/cs104_client/simple_client" ]; then
+        echo "  mit lib60870: bash $ZIEL/$PAKET/gui.sh 8080 127.0.0.1 $L60870"
+        echo "                (Windows-Browser: bash $ZIEL/$PAKET/gui.sh 8080 0.0.0.0 $L60870)"
+    fi
 fi
 if [ -x build/debug/iec104_selftest_server ]; then
     echo "  Selbsttest:   cd $ZIEL && tools/selftest/run_selftest.sh build/debug/iec104_selftest_server build/debug/iec104_selftest_client"

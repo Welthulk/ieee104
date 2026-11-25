@@ -1,5 +1,17 @@
 # Änderungen
 
+## 0.7.0 (26.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| Test-GUI | Bereich „Gegenstelle lib60870“: startet ein unverändertes lib60870-Beispiel (`simple_client`, `cs104_client_async`, `cs104_client_no_threads`) als Leitstelle gegen die GUI-Station auf 127.0.0.1; Ausgabe unter Ereignisse. Ordner beim Start: `gui.sh 8080 127.0.0.1 <lib60870-C>` |
+| Test-GUI | Schutz: Host-Kopfzeile nur `localhost` oder IP-Adresse, `/api/` nur mit Kopfzeile `X-IEC104-GUI`, nur GET; die Station lauscht auf der Adresse der GUI (Standard 127.0.0.1) statt auf allen |
+| Test-GUI | Zustände und Fehler auf Deutsch mit Hinweis (z. B. „niemand lauscht – Station gestartet?“, „erst STARTDT“, erlaubter Wertebereich); Wertebereich neben den Eingabefeldern; Typ einer IOA lässt sich nicht mehr ändern; keine doppelten Zeilen unter Ereignisse |
+| Beispiele | `server.jl` und `hello_server` lauschen ohne Adressangabe nur auf 127.0.0.1 |
+| Interop | `run_lib60870.sh` startet lib60870-Stationen (lauschen fest auf 0.0.0.0) nur mit `--mit-stationen` |
+| Werkzeug | `wsl_ausprobieren.sh --mit-lib60870`: lib60870 v2.4.1 neben den Arbeitsordner holen und bauen, GUI-Aufruf mit lib60870 ausgeben |
+| Test | `tests/gui/test_gui.sh` (ctest `Julia.Gui`, `Julia.GuiLib60870` im shared-Build) |
+
 ## 0.6.2 (25.11.2026)
 
 | Bereich | Änderung |

@@ -4,18 +4,27 @@
 # All rights reserved by SOPTIM AG.
 #
 # iec104_gui.jl - test GUI in the browser: controlling station (client) and
-# controlled station (server) of the IEC 104 library, side by side.
+# controlled station (server) of the IEC 104 library, side by side, plus an
+# example program of lib60870 as independent controlling station.
 #
-#   julia iec104_gui.jl [port] [address]     default 8080 127.0.0.1
+#   julia iec104_gui.jl [port] [address] [lib60870]
+#     port      default 8080, 0 = any free port (printed in the start line)
+#     address   default 127.0.0.1; the GUI and its station listen there
+#     lib60870  folder lib60870-C (or its parent lib60870) with built
+#               examples; else environment variable IEC104_LIB60870
 #   then open http://localhost:8080
 #
 # Only the Julia standard library is used (Sockets); the page is index.html
-# next to this file. The GUI can send commands: it listens on 127.0.0.1 only,
-# unless another address is given explicitly.
+# next to this file. The GUI can send commands and start programs: it listens
+# on 127.0.0.1 only, unless another address is given explicitly. Requests
+# must name this GUI in the Host header (localhost or an IP address, against
+# DNS rebinding) and /api/ requests must carry "X-IEC104-GUI: 1", which a
+# page of another site cannot send (no CORS, only GET).
 #
 # Design: one Julia thread. A poll task drives client and server every 20 ms;
 # the library calls the callbacks inside that poll and they only store data.
-# HTTP requests are handled in their own tasks between two polls.
+# HTTP requests, the output of lib60870 and its end are handled in their own
+# tasks between two polls (docs/07_Julia.md, section 4).
 
 include(joinpath(@__DIR__, "..", "IEC104.jl"))
 using .IEC104
@@ -60,6 +69,36 @@ end
 const GUI = Gui(C_NULL, IEC104.LINK_CLOSED, 0, 1, Dict(), C_NULL, 1, true, Dict(), Dict(), [], 0)
 const LOG_MAX = 500
 
+# Address and port of the GUI, set by main(). The station listens on the same address.
+const GUI_ADDRESS = Ref("127.0.0.1")
+const GUI_PORT = Ref(0)
+
+"Counterpart lib60870: an unchanged example program as separate process (never linked)."
+mutable struct Peer
+    folder::String                          # lib60870-C, "" = not configured
+    process::Union{Base.Process,Nothing}    # running program
+    program::String                         # key of the last started program
+end
+
+const PEER = Peer("", nothing, "")
+
+# Programs the page may start: only a key of this table comes from the browser,
+# never a path or an argument. All are controlling stations (clients); the
+# lib60870 stations are not offered because they listen on all addresses.
+const PEER_PROGRAMS = [
+    (key = "simple_client", dir = "cs104_client", prog = "simple_client",
+     label = "verbindet, STARTDT, nach 2 s Generalabfrage an Station 1, nach 5 s Testbefehl " *
+             "mit Zeitmarke (Typ 107), endet nach etwa 9 s"),
+    (key = "cs104_client_async", dir = "cs104_client_async", prog = "cs104_client_async",
+     label = "bleibt verbunden: STARTDT, Generalabfrage an Station 1 sofort und alle 10 s; " *
+             "läuft bis Beenden"),
+    (key = "cs104_client_no_threads", dir = "cs104_client_no_threads",
+     prog = "cs104_client_no_threads",
+     label = "bleibt verbunden: nur STARTDT (sendet trotz seiner Meldung keine Abfrage), " *
+             "empfängt spontane Daten, Testrahmen nach 2 s Ruhe; läuft bis Beenden"),
+]
+const PEER_LINE_MAX = 300   # longer output lines are cut
+
 note(text::AbstractString) = begin
     GUI.log_seq += 1
     push!(GUI.log, (GUI.log_seq, time(), String(text)))
@@ -67,13 +106,43 @@ note(text::AbstractString) = begin
     nothing
 end
 
+# --- Plain German texts for the page --------------------------------------------
+
+"State of a connection in words (iec104_link_state)."
+state_text(state::Integer) = get(Dict(0 => "verbinde …",
+    1 => "verbunden, Datenübertragung aus (STARTDT fehlt)",
+    2 => "STARTDT gesendet, warte auf Bestätigung", 3 => "Datenübertragung läuft",
+    4 => "STOPDT gesendet, warte auf Bestätigung", 5 => "getrennt"), Int(state), "Zustand $state")
+
+"Hint for a close reason (iec104_close_reason), \"\" if none."
+close_hint(reason::Integer) = get(Dict(
+    1 => "von dieser Seite getrennt",
+    2 => "Gegenstelle hat die Verbindung beendet",
+    3 => "an Adresse und Port lauscht niemand – Station gestartet? Adresse und Port richtig?",
+    4 => "keine Antwort innerhalb t0 – Adresse im Netz erreichbar?",
+    5 => "Gegenstelle hat nicht rechtzeitig quittiert (t1) – Timer der Gegenstelle prüfen",
+    9 => "Rahmen im falschen Zustand oder in falscher Rolle",
+    11 => "TLS-Fehler, siehe TLS-Ereignis"), Int(reason), "")
+
+# Allowed values per type (time-tagged types like their base type).
+const RANGES = Dict(1 => "0 oder 1", 3 => "0…3 (1 = aus, 2 = ein)", 5 => "−64…63",
+    9 => "−1 bis knapp unter 1, z. B. 0.5", 11 => "−32768…32767", 13 => "beliebig",
+    15 => "ganze Zahl", 45 => "0 oder 1", 46 => "0…3 (1 = aus, 2 = ein)",
+    47 => "0…3 (1 = tiefer, 2 = höher)", 48 => "−1 bis knapp unter 1, z. B. 0.5",
+    49 => "−32768…32767", 50 => "beliebig")
+const BASE_TYPE = Dict(30 => 1, 31 => 3, 32 => 5, 34 => 9, 35 => 11, 36 => 13, 37 => 15,
+                       58 => 45, 59 => 46, 60 => 47, 61 => 48, 62 => 49, 63 => 50)
+range_text(type::Integer) = get(RANGES, get(BASE_TYPE, Int(type), Int(type)), "")
+
 # --- Callbacks (run inside the poll, called from C: store only, no I/O) -------
 
 function cb_client_state(::Ptr{Cvoid}, ::UInt32, state::Cint, reason::Cint)::Cvoid
     GUI.client_state = state
     GUI.client_reason = reason
-    note("Leitstelle: " * IEC104.state_string(state) *
-         (state == IEC104.LINK_CLOSED ? " (" * IEC104.close_reason_string(reason) * ")" : ""))
+    hint = state == IEC104.LINK_CLOSED ? close_hint(reason) : ""
+    note("Leitstelle: " * state_text(state) *
+         (state == IEC104.LINK_CLOSED ? " (" * IEC104.close_reason_string(reason) * ")" : "") *
+         (isempty(hint) ? "" : " – " * hint))
     return nothing
 end
 
@@ -108,10 +177,12 @@ end
 function cb_server_state(::Ptr{Cvoid}, conn::UInt32, state::Cint, reason::Cint)::Cvoid
     if state == IEC104.LINK_CLOSED
         delete!(GUI.connections, conn)
-        note("Station: Verbindung $conn geschlossen (" * IEC104.close_reason_string(reason) * ")")
+        hint = close_hint(reason)
+        note("Station: Verbindung $conn getrennt (" * IEC104.close_reason_string(reason) * ")" *
+             (isempty(hint) ? "" : " – " * hint))
     else
         GUI.connections[conn] = state
-        note("Station: Verbindung $conn " * IEC104.state_string(state))
+        note("Station: Verbindung $conn " * state_text(state))
     end
     return nothing
 end
@@ -123,6 +194,19 @@ function cb_server_command(::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd:
                                        (c.select != 0 ? " (Auswahl)" : "")
     note("Station: $what von Verbindung $conn: " * (GUI.accept_commands ? "angenommen" : "abgelehnt"))
     return Cint(GUI.accept_commands ? 1 : 0)
+end
+
+# Requests the station answers by itself (no on_command), shown as events.
+const REQUESTS = Dict(100 => "Generalabfrage", 101 => "Zählerabfrage", 102 => "Lesebefehl",
+                      104 => "Testbefehl", 107 => "Testbefehl mit Zeitmarke")
+
+function cb_server_asdu(::Ptr{Cvoid}, conn::UInt32, asdu::Ptr{UInt8}, len::Csize_t)::Cvoid
+    len >= 3 || return nothing
+    type = unsafe_load(asdu, 1)
+    what = get(REQUESTS, Int(type), nothing)
+    what === nothing && return nothing
+    note("Station: $what (Typ $type, Ursache $(unsafe_load(asdu, 3) & 0x3f)) von Verbindung $conn")
+    return nothing
 end
 
 function cb_security(::Ptr{Cvoid}, conn::UInt32, event::Cint, detail::Cstring)::Cvoid
@@ -195,31 +279,128 @@ function gui_server_listen(p)
     GUI.server != C_NULL && (server_destroy(GUI.server); GUI.server = C_NULL)
     empty!(GUI.connections)
     cb = Callbacks(GUI;
+        on_asdu = @cfunction(cb_server_asdu, Cvoid, (Ptr{Cvoid}, UInt32, Ptr{UInt8}, Csize_t)),
         on_state = @cfunction(cb_server_state, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cint)),
         on_command = @cfunction(cb_server_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})),
         on_security = @cfunction(cb_security, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cstring)))
     GUI.server = server_create(LinkConfig(), cb)
     server_set_log(GUI.server, 1, @cfunction(cb_log, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
     GUI.server_station = UInt16(p_int(p, "station", 1))
-    for o in values(GUI.points)
-        server_add_point(GUI.server, GUI.server_station, o)
+    try
+        for o in values(GUI.points)
+            server_add_point(GUI.server, GUI.server_station, o)
+        end
+        # Same address as the GUI: 127.0.0.1 unless the GUI was started on another one.
+        IEC104.server_listen(GUI.server, p_int(p, "port", 2404); address = GUI_ADDRESS[])
+    catch
+        server_destroy(GUI.server)   # not listening: no half-started station
+        GUI.server = C_NULL
+        rethrow()
     end
-    IEC104.server_listen(GUI.server, p_int(p, "port", 2404))
-    note("Station: lauscht auf Port $(server_port(GUI.server)), gemeinsame Adresse $(GUI.server_station)")
+    note("Station: lauscht auf $(GUI_ADDRESS[]):$(server_port(GUI.server)), " *
+         "gemeinsame Adresse $(GUI.server_station)")
 end
 
 function gui_server_point(p)
     o = Object(p_int(p, "type", 13), p_int(p, "ioa", 100), p_num(p, "value", 0.0))
-    known = haskey(GUI.points, o.ioa)
-    GUI.points[o.ioa] = o
-    GUI.server == C_NULL && return
-    if known
-        check(server_update(GUI.server, GUI.server_station, o))   # spontaneous
-    else
-        server_add_point(GUI.server, GUI.server_station, o)
-        note("Station: Datenpunkt IOA $(o.ioa) Typ $(o.type) angelegt")
+    old = get(GUI.points, o.ioa, nothing)
+    old !== nothing && old.type != o.type &&
+        throw(ArgumentError("IOA $(o.ioa) ist schon als Typ $(old.type) angelegt; " *
+                            "für Typ $(o.type) eine andere IOA wählen"))
+    if GUI.server != C_NULL
+        if old !== nothing
+            check(server_update(GUI.server, GUI.server_station, o))   # spontaneous
+        else
+            server_add_point(GUI.server, GUI.server_station, o)
+            note("Station: Datenpunkt IOA $(o.ioa) Typ $(o.type) angelegt")
+        end
+    end
+    GUI.points[o.ioa] = o   # only after the library accepted it
+end
+
+# --- Counterpart lib60870 (process, normal tasks; never inside a callback) -----
+
+"lib60870-C folder from the start argument, else IEC104_LIB60870; the parent folder lib60870 is accepted."
+function peer_folder(arg::AbstractString)
+    folder = isempty(arg) ? get(ENV, "IEC104_LIB60870", "") : arg
+    isempty(folder) && return ""
+    folder = abspath(expanduser(folder))
+    isdir(joinpath(folder, "lib60870-C")) && (folder = joinpath(folder, "lib60870-C"))
+    return String(rstrip(normpath(folder), '/'))
+end
+
+peer_path(x) = joinpath(PEER.folder, "build", "examples", x.dir, x.prog)
+peer_found(x) = !isempty(PEER.folder) && isfile(peer_path(x)) && Sys.isexecutable(peer_path(x))
+peer_running() = PEER.process !== nothing && process_running(PEER.process)
+
+"Every output line of the program becomes an event."
+function peer_read(out::Pipe)
+    try
+        for line in eachline(out)
+            line = rstrip(line)
+            isvalid(line) || (line = map(c -> isvalid(c) ? c : '?', line))
+            isempty(line) && continue
+            length(line) > PEER_LINE_MAX && (line = first(line, PEER_LINE_MAX) * " …")
+            note("lib60870: " * line)
+        end
+    catch e
+        e isa Base.IOError || note("lib60870: Ausgabe nicht lesbar: " * sprint(showerror, e))
+    finally
+        close(out)
     end
 end
+
+"Waits for the end of the program and notes how it ended."
+function peer_wait(proc::Base.Process, key::String, reader::Task)
+    wait(proc)
+    PEER.process === proc && (PEER.process = nothing)
+    timedwait(() -> istaskdone(reader), 2.0)   # its last lines first
+    note("lib60870: $key beendet, " *
+         (proc.termsignal != 0 ? "Signal $(proc.termsignal)" : "Rückgabe $(proc.exitcode)"))
+end
+
+function gui_peer_start(p)
+    isempty(PEER.folder) && throw(ArgumentError("kein lib60870-Ordner (beim Start der GUI angeben)"))
+    i = findfirst(x -> x.key == p_str(p, "prog"), PEER_PROGRAMS)
+    i === nothing && throw(ArgumentError("unbekanntes Programm"))
+    x = PEER_PROGRAMS[i]
+    peer_found(x) || throw(ArgumentError("$(x.key) fehlt: $(peer_path(x))"))
+    peer_running() && throw(ArgumentError("Gegenstelle läuft bereits ($(PEER.program))"))
+    port = GUI.server == C_NULL ? 0 : server_port(GUI.server)
+    port == 0 && throw(ArgumentError("erst die Station starten"))
+    a = GUI_ADDRESS[]
+    a == "0.0.0.0" || a == "::" || startswith(a, "127.") ||
+        throw(ArgumentError("Gegenstelle verbindet sich mit 127.0.0.1, die Station lauscht auf $a"))
+    cmd = `$(peer_path(x)) 127.0.0.1 $port`
+    stdbuf = Sys.which("stdbuf")   # C stdio buffers blocks on a pipe; line by line instead
+    stdbuf === nothing || (cmd = `$stdbuf -oL -eL $cmd`)
+    out = Pipe()
+    proc = run(pipeline(Cmd(cmd; dir = mktempdir()); stdin = devnull, stdout = out, stderr = out);
+               wait = false)
+    close(out.in)
+    PEER.process = proc
+    PEER.program = x.key
+    note("lib60870: $(x.key) verbindet sich mit 127.0.0.1:$port (Prozess $(getpid(proc)))")
+    reader = @async peer_read(out)
+    @async peer_wait(proc, x.key, reader)
+    return nothing
+end
+
+"SIGINT; still running after 3 s: SIGKILL."
+function gui_peer_stop(p)
+    peer_running() || throw(ArgumentError("keine Gegenstelle aktiv"))
+    proc = PEER.process
+    note("lib60870: $(PEER.program) wird beendet")
+    kill(proc, Base.SIGINT)
+    @async begin
+        timedwait(() -> !process_running(proc), 3.0)
+        process_running(proc) && kill(proc, Base.SIGKILL)
+    end
+    return nothing
+end
+
+"At exit of the GUI: a running counterpart ends too."
+peer_kill() = (p = PEER.process; p !== nothing && process_running(p) && kill(p, Base.SIGKILL); nothing)
 
 const ACTIONS = Dict{String,Function}(
     "/api/client/connect" => gui_client_connect,
@@ -236,6 +417,8 @@ const ACTIONS = Dict{String,Function}(
                                 empty!(GUI.connections); note("Station: beendet")),
     "/api/server/point" => gui_server_point,
     "/api/server/accept" => p -> (GUI.accept_commands = get(p, "on", "1") == "1"),
+    "/api/peer/start" => gui_peer_start,
+    "/api/peer/stop" => gui_peer_stop,
 )
 
 # --- JSON (hand-made, the page needs little) -------------------------------------
@@ -262,6 +445,8 @@ function state_json(since::Int)
     io = IOBuffer()
     print(io, "{\"client\":{\"state\":")
     jstr(io, GUI.client == C_NULL ? "–" : IEC104.state_string(GUI.client_state))
+    print(io, ",\"text\":")
+    jstr(io, GUI.client == C_NULL ? "nicht verbunden" : state_text(GUI.client_state))
     print(io, ",\"station\":", GUI.station, ",\"rows\":[")
     rows = sort!(collect(values(GUI.rows)); by = r -> (r.station, r.ioa, r.type))
     for (n, r) in enumerate(rows)
@@ -283,7 +468,7 @@ function state_json(since::Int)
     for (n, (id, st)) in enumerate(sort!(collect(GUI.connections)))
         n > 1 && print(io, ',')
         print(io, "{\"id\":", id, ",\"state\":")
-        jstr(io, IEC104.state_string(st))
+        jstr(io, state_text(st))
         print(io, '}')
     end
     print(io, "],\"points\":[")
@@ -292,6 +477,19 @@ function state_json(since::Int)
         print(io, "{\"ioa\":", o.ioa, ",\"type\":", o.type, ",\"value\":")
         jnum(io, o.value)
         print(io, '}')
+    end
+    print(io, "]},\"peer\":{\"available\":", any(peer_found, PEER_PROGRAMS), ",\"folder\":")
+    jstr(io, PEER.folder)
+    print(io, ",\"running\":", peer_running(), ",\"program\":")
+    jstr(io, PEER.program)
+    print(io, ",\"programs\":[")
+    for (n, x) in enumerate(PEER_PROGRAMS)
+        n > 1 && print(io, ',')
+        print(io, "{\"key\":")
+        jstr(io, x.key)
+        print(io, ",\"label\":")
+        jstr(io, x.label)
+        print(io, ",\"available\":", peer_found(x), '}')
     end
     print(io, "]},\"log\":[")
     first = true
@@ -340,6 +538,32 @@ end
 
 const PAGE = read(joinpath(@__DIR__, "index.html"), String)
 
+const ACTION_NAMES = Dict(
+    "/api/client/connect" => "Verbinden", "/api/client/start" => "STARTDT",
+    "/api/client/stop" => "STOPDT", "/api/client/close" => "Trennen",
+    "/api/client/gi" => "Generalabfrage", "/api/client/ci" => "Zählerabfrage",
+    "/api/client/clock" => "Uhrzeit setzen", "/api/client/command" => "Befehl",
+    "/api/server/listen" => "Station starten", "/api/server/point" => "Datenpunkt",
+    "/api/peer/start" => "Gegenstelle starten", "/api/peer/stop" => "Gegenstelle beenden")
+
+"Error message with a hint what to do."
+function error_text(e, path, p)
+    e isa Iec104Error || return e isa ArgumentError ? e.msg : sprint(showerror, e)
+    if e.status == -8   # IEC104_ERR_WRONG_STATE
+        startswith(path, "/api/client") || return e.msg
+        (GUI.client == C_NULL || GUI.client_state == IEC104.LINK_CLOSED) &&
+            return "$(e.msg) – erst verbinden"
+        GUI.client_state == IEC104.LINK_STARTED || return "$(e.msg) – erst STARTDT"
+        return e.msg
+    elseif e.status == -5   # IEC104_ERR_OUT_OF_RANGE
+        r = range_text(p_int(p, "type", 0))
+        return isempty(r) ? e.msg : "$(e.msg) – Typ $(p_str(p, "type")) erlaubt: $r"
+    elseif e.status == -9 && path == "/api/server/listen"   # IEC104_ERR_IO
+        return "$(e.msg) – Port $(p_str(p, "port")) belegt? anderen Port wählen"
+    end
+    return e.msg
+end
+
 function route(path, p)
     path == "/" && return ("200 OK", "text/html; charset=utf-8", PAGE)
     path == "/api/state" && return ("200 OK", "application/json", state_json(p_int(p, "since", 0)))
@@ -349,8 +573,8 @@ function route(path, p)
         action(p)
         return ("200 OK", "application/json", "{\"ok\":true}")
     catch e
-        msg = e isa Iec104Error ? e.msg : sprint(showerror, e)
-        note("Fehler: $msg")
+        msg = error_text(e, path, p)
+        note("Fehler bei " * get(ACTION_NAMES, path, path) * ": " * msg)
         io = IOBuffer()
         print(io, "{\"ok\":false,\"error\":")
         jstr(io, msg)
@@ -359,17 +583,55 @@ function route(path, p)
     end
 end
 
+"Host header names this GUI: localhost or an IP address, with the GUI's port (no DNS name: DNS rebinding)."
+function host_allowed(host::AbstractString)
+    m = match(r"^(localhost|[0-9]{1,3}(?:\.[0-9]{1,3}){3}|\[[0-9A-Fa-f:.]+\]):([0-9]{1,5})$"i, host)
+    m === nothing && return false
+    name, port = m.captures
+    if startswith(name, '[')
+        try
+            parse(IPv6, name[2:end-1])
+        catch
+            return false
+        end
+    elseif lowercase(name) != "localhost"
+        all(o -> parse(Int, o) <= 255, split(name, '.')) || return false
+    end
+    return parse(Int, port) == GUI_PORT[]
+end
+
+const HEADERS_MAX = 100
+
 function handle(sock)
     try
         request = readline(sock)
-        while !isempty(strip(readline(sock))) end   # headers are not needed
+        headers = Dict{String,String}()
+        for _ in 1:HEADERS_MAX
+            line = readline(sock)
+            isempty(strip(line)) && break
+            kv = split(line, ':'; limit = 2)
+            length(kv) == 2 && (headers[lowercase(strip(kv[1]))] = strip(kv[2]))
+        end
         parts = split(request)
         length(parts) >= 2 || return
-        target = parts[2]
+        method, target = parts[1], parts[2]
         path, query = occursin('?', target) ? split(target, '?'; limit = 2) : (target, "")
-        status, type, body = route(String(path), parse_query(query))
+        # No Access-Control-* headers ever: other sites get no CORS permission.
+        status, type, body =
+            if !host_allowed(get(headers, "host", ""))
+                ("403 Forbidden", "text/plain; charset=utf-8", "Zugriff verweigert: Host nicht erlaubt\n")
+            elseif method != "GET"
+                ("405 Method Not Allowed", "text/plain; charset=utf-8", "nur GET\n")
+            elseif startswith(path, "/api/") && get(headers, "x-iec104-gui", "") != "1"
+                ("403 Forbidden", "text/plain; charset=utf-8",
+                 "Zugriff verweigert: Kopfzeile X-IEC104-GUI fehlt\n")
+            else
+                route(String(path), parse_query(query))
+            end
+        allow = startswith(status, "405") ? "Allow: GET\r\n" : ""
         write(sock, "HTTP/1.1 $status\r\nContent-Type: $type\r\nContent-Length: $(sizeof(body))\r\n" *
-                    "Cache-Control: no-store\r\nConnection: close\r\n\r\n", body)
+                    "Cache-Control: no-store\r\nX-Frame-Options: DENY\r\n$(allow)Connection: close\r\n\r\n",
+              body)
     catch e
         e isa Base.IOError || @warn "request failed" exception = e
     finally
@@ -379,13 +641,22 @@ end
 
 # --- Main ----------------------------------------------------------------------------
 
-function main(port = 8080, address = "127.0.0.1")
+function main(port = 8080, address = "127.0.0.1", lib60870 = "")
     address == "127.0.0.1" ||
         @warn "Die GUI ist ohne Anmeldung von $address aus erreichbar und kann Befehle senden."
+    GUI_ADDRESS[] = address
+    PEER.folder = peer_folder(lib60870)
+    atexit(peer_kill)
     server = listen(parse(IPAddr, address), port)
-    println("IEC 104 Test-GUI (Library ", IEC104.version(), "): http://localhost:$port")
-    flush(stdout)
+    GUI_PORT[] = Int(getsockname(server)[2])   # port 0: the one chosen by the system
+    println("IEC 104 Test-GUI (Library ", IEC104.version(), "): http://localhost:$(GUI_PORT[])")
+    flush(stdout)   # scripts wait for this line
     note("GUI gestartet, Library " * IEC104.version())
+    if !isempty(PEER.folder)
+        found = [x.key for x in PEER_PROGRAMS if peer_found(x)]
+        note("Gegenstelle lib60870: $(PEER.folder), " *
+             (isempty(found) ? "keine Beispielprogramme unter build/examples" : join(found, ", ")))
+    end
     @async while true   # poll task: the library runs here, callbacks included
         GUI.client != C_NULL && client_poll(GUI.client, 0)
         GUI.server != C_NULL && server_poll(GUI.server, 0)
@@ -398,5 +669,5 @@ function main(port = 8080, address = "127.0.0.1")
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    main(parse(Int, get(ARGS, 1, "8080")), get(ARGS, 2, "127.0.0.1"))
+    main(parse(Int, get(ARGS, 1, "8080")), get(ARGS, 2, "127.0.0.1"), get(ARGS, 3, ""))
 end

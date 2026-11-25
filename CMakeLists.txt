@@ -6,7 +6,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(iec104
-    VERSION 0.6.2
+    VERSION 0.7.0
     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
     LANGUAGES C CXX)
 
@@ -304,6 +304,31 @@ if(IEC104_BUILD_EXAMPLES AND NOT IEC104_BUILD_FUZZERS)
             COMMAND ${PROJECT_SOURCE_DIR}/tools/check_install.sh ${CMAKE_BINARY_DIR}
                     ${PROJECT_SOURCE_DIR})
         set_tests_properties(Examples.HelloWorldInstalled PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Test GUI in Julia (examples/julia/gui) over HTTP, only on 127.0.0.1. Needs
+# the shared library, Julia and curl; with IEC104_LIB60870_DIR also with
+# lib60870 as controlling station against the station of the GUI.
+# ---------------------------------------------------------------------------
+if(IEC104_BUILD_TESTS AND BUILD_SHARED_LIBS)
+    find_program(IEC104_JULIA julia)
+    find_program(IEC104_CURL curl)
+    if(IEC104_JULIA AND IEC104_CURL)
+        set(_gui_env "JULIA=${IEC104_JULIA}" "CURL=${IEC104_CURL}")
+        add_test(NAME Julia.Gui
+            COMMAND ${PROJECT_SOURCE_DIR}/tests/gui/test_gui.sh $<TARGET_FILE:iec104>)
+        # Empty IEC104_LIB60870: without lib60870, even if set in the environment.
+        set_tests_properties(Julia.Gui PROPERTIES TIMEOUT 300
+            ENVIRONMENT "${_gui_env};IEC104_LIB60870=")
+        if(IEC104_LIB60870_DIR)
+            get_filename_component(_lib60870 "${IEC104_LIB60870_DIR}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
+            add_test(NAME Julia.GuiLib60870
+                COMMAND ${PROJECT_SOURCE_DIR}/tests/gui/test_gui.sh $<TARGET_FILE:iec104> ${_lib60870})
+            set_tests_properties(Julia.GuiLib60870 PROPERTIES TIMEOUT 300
+                ENVIRONMENT "${_gui_env}")
+        endif()
     endif()
 endif()
 

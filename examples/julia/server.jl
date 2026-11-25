@@ -9,7 +9,11 @@
 # every second and is sent spontaneously; the library answers a general
 # interrogation by itself. Commands are printed and accepted.
 #
-#   julia server.jl [port] [seconds] [address]      address default: all
+#   julia server.jl [port] [seconds] [address]
+#     port      default 2404, 0 = any free port
+#     seconds   run time, default 0 = until Ctrl-C
+#     address   default 127.0.0.1 (this computer only); 0.0.0.0 = all
+#               addresses, only deliberately (the station accepts commands)
 
 include(joinpath(@__DIR__, "IEC104.jl"))
 using .IEC104
@@ -25,7 +29,7 @@ function on_command(user::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd::Pt
     return Cint(1)   # 1 = accept (positive confirmation), 0 = reject
 end
 
-function main(port = IEC104.DEFAULT_PORT, seconds = 0, address = nothing)
+function main(port = IEC104.DEFAULT_PORT, seconds = 0, address = "127.0.0.1")
     st = ServerState(Tuple{UInt32,AsduInfo,Object}[])
     cb = Callbacks(st;
         on_command = @cfunction(on_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})))
@@ -34,8 +38,7 @@ function main(port = IEC104.DEFAULT_PORT, seconds = 0, address = nothing)
         try
             value = 0.0
             server_add_point(server, 1, Object(13, 100, value))   # M_ME_NC_1, group 1
-            address === nothing ? server_listen(server, port) :
-                                  server_listen(server, port; address = address)
+            server_listen(server, port; address = address)
             println("listening on port ", server_port(server))
             flush(stdout)   # stdout to a file is buffered; scripts wait for this line
             t_end = seconds > 0 ? time() + seconds : Inf
@@ -62,5 +65,5 @@ end
 if abspath(PROGRAM_FILE) == @__FILE__
     port = parse(Int, get(ARGS, 1, string(IEC104.DEFAULT_PORT)))
     seconds = parse(Int, get(ARGS, 2, "0"))
-    main(port, seconds, get(ARGS, 3, nothing))
+    main(port, seconds, get(ARGS, 3, "127.0.0.1"))
 end

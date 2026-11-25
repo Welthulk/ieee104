@@ -2,7 +2,7 @@
 
 Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
 
-Stand: 25.11.2026, Version 0.6.2, Linux x86-64.
+Stand: 26.11.2026, Version 0.7.0, Linux x86-64.
 
 ## Sofort nutzen, ohne zu bauen
 
@@ -18,7 +18,7 @@ Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab
 Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iee104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
 
 ```bash
-cd dist/iec104-0.6.2-linux-x86_64
+cd dist/iec104-0.7.0-linux-x86_64
 gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
 julia julia/server.jl 2404 &                                                       # Julia: Station
 julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
@@ -38,7 +38,7 @@ julia julia/gui/iec104_gui.jl                                                   
 | Sicherheit | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3: gegenseitige Authentifizierung, Sperrlisten, Prüfung von Name oder Fingerprint, Key Update und Renegotiation, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse; Abweisung unbekannter Absender |
 | Betrieb | Log mit Stufen bis zum APDU-Hexdump, Statistik je Verbindung und Gruppe, Konfigurationsdatei, kein interner Thread (Poll im Thread der Anwendung) |
 | Einbindung | stabile C-Schnittstelle (ein Header), statisch oder geteilt, `find_package(iec104)`, Anbindung für Julia per `ccall`; fertig gebaute Library |
-| Werkzeuge | Test-GUI im Browser (Leitstelle und Station); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870; Interoperabilitätsliste für die eigene Konfiguration (`iec104_interop_list`, Markdown oder CSV) |
+| Werkzeuge | Test-GUI im Browser (Leitstelle und Station, dazu lib60870 als fremde Leitstelle gegen die eigene Station); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870; Interoperabilitätsliste für die eigene Konfiguration (`iec104_interop_list`, Markdown oder CSV) |
 
 ## Tests
 
@@ -136,7 +136,7 @@ cmake -S . -B build-tls -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build bui
 cd -
 ```
 
-Testen (Ports 2404 und 19998 müssen frei sein):
+Testen (Port 19998 muss frei sein; `--mit-stationen` auch 2404 und lib60870-Stationen auf `0.0.0.0`, siehe `docs/08_Interop.md`):
 
 ```bash
 tools/interop/run_lib60870.sh ../lib60870/lib60870-C build/debug

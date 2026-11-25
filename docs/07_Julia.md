@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
 Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
 
 ```bash
-cd iec104-0.6.2-linux-x86_64
+cd iec104-0.7.0-linux-x86_64
 julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
 julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
 ```
@@ -28,7 +28,7 @@ type 13  cause 3  station 1  IOA 100  value 31.0    spontan
 | --- | --- |
 | `IEC104.jl` | Modul `IEC104`: Typen wie im Header, Funktionen für Server und Client (u. a. `client_interrogation`, `client_read`, `client_send_command`, `client_clock_sync`) |
 | `client.jl` | Leitstelle: verbinden, STARTDT, Generalabfrage, Werte ausgeben |
-| `server.jl` | Station: ein Messwert, spontane Meldung jede Sekunde, Befehle annehmen |
+| `server.jl` | Station: ein Messwert, spontane Meldung jede Sekunde, Befehle annehmen; lauscht auf `127.0.0.1` (dritter Parameter: andere Adresse) |
 
 `IEC104.jl` sucht die Library in dieser Reihenfolge:
 
@@ -158,25 +158,61 @@ end
 
 ## 7. Test-GUI im Browser
 
-`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server). Es braucht nur Julia, keine Pakete.
+`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server), darunter lib60870 als fremde Leitstelle. Es braucht nur Julia, keine Pakete.
 
 ```bash
-julia julia/gui/iec104_gui.jl            # im Binärpaket; im Quellbaum examples/julia/gui/
+julia julia/gui/iec104_gui.jl [port] [adresse] [lib60870]   # im Binärpaket; im Quellbaum examples/julia/gui/
 ```
 
-Dann im Browser `http://localhost:8080` öffnen. Anderer Port: `julia julia/gui/iec104_gui.jl 8081`. Kommt unter WSL der Windows-Browser nicht an `localhost` heran: `bash gui.sh 8080 0.0.0.0` (Binärpaket) und die angezeigte Adresse der WSL öffnen.
+| Parameter | Default | Bedeutung |
+| --- | --- | --- |
+| `port` | 8080 | Port der GUI; 0 = freier Port, steht in der Startzeile |
+| `adresse` | `127.0.0.1` | GUI und ihre Station lauschen nur hier |
+| `lib60870` | Umgebungsvariable `IEC104_LIB60870` | Ordner `lib60870-C` (oder `lib60870` darüber) mit gebauten Beispielen, Abschnitt 7.1 |
+
+Dann im Browser `http://localhost:8080` öffnen. Kommt unter WSL der Windows-Browser nicht an `localhost` heran: `bash gui.sh 8080 0.0.0.0` (Binärpaket) und die angezeigte Adresse der WSL öffnen.
 
 | Bereich | Funktionen |
 | --- | --- |
 | Leitstelle | Verbinden (Adresse, Port, Station, Timer, k, w, tolerant, TLS mit CA, Zertifikat, Schlüssel, Name), STARTDT, STOPDT, Trennen; Generalabfrage (Station, Gruppe 1–16), Zählerabfrage, Uhrzeit; Befehle 45–50 und 58–63 direkt oder mit Select/Execute |
 | Tabelle | jeder empfangene Punkt mit Typ, Wert, Qualität, Ursache (negativ rot), Zeitmarke, Anzahl, Alter; frische Werte hervorgehoben |
 | Station | Starten auf Port/Station, Datenpunkte anlegen (Typen 1, 3, 5, 9, 11, 13, 15), Wert ändern und spontan senden (+1 für schnelle Tests), Befehle annehmen oder ablehnen, Verbindungen |
-| Ereignisse | Zustände, Befehle und ihr Ergebnis, TLS-Ereignisse, Fehler und Warnungen der Library |
+| Gegenstelle lib60870 | ein Leitstellen-Beispiel von lib60870 gegen die eigene Station starten und beenden (Abschnitt 7.1) |
+| Ereignisse | Zustände, Abfragen und Befehle an die Station, Befehlsergebnisse, TLS-Ereignisse, Fehler und Warnungen der Library, Ausgabe von lib60870 |
 
 Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Punkt anlegen, Leitstelle auf `127.0.0.1:2404` verbinden, STARTDT, Generalabfrage.
 
 | Hinweis | Grund |
 | --- | --- |
-| Die GUI lauscht nur auf `127.0.0.1` | sie hat keine Anmeldung und kann Befehle senden; eine andere Adresse nur bewusst als zweiter Parameter |
+| GUI und Station lauschen nur auf `127.0.0.1` | die GUI hat keine Anmeldung, kann Befehle senden und Programme starten; eine andere Adresse nur bewusst als zweiter Parameter |
+| Anfragen nur mit Host `localhost` oder IP-Adresse samt Port der GUI, `/api/` nur mit Kopfzeile `X-IEC104-GUI: 1`, nur GET, kein CORS, nicht einbettbar | eine fremde Webseite im selben Browser kann die GUI nicht steuern, auch nicht über DNS-Rebinding |
 | Die GUI ist ein Testwerkzeug | eine Verbindung je Seite, kein Speichern der Einstellungen |
 | Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`) und `index.html` (Seite) |
+| Test | `tests/gui/test_gui.sh`; in `ctest` (Preset `shared`) als `Julia.Gui`, mit `IEC104_LIB60870_DIR` auch `Julia.GuiLib60870` |
+
+### 7.1 Gegenstelle lib60870
+
+Die GUI startet ein unverändertes Beispielprogramm von lib60870-C als eigenen Prozess; gelinkt wird nichts. Es verbindet sich mit der Station der GUI. So läuft die Station im Browser gegen eine unabhängige Implementierung. lib60870 holen und bauen: README, Abschnitt „Gegen lib60870 testen“ (`build` ohne TLS genügt).
+
+```bash
+bash gui.sh 8080 127.0.0.1 ~/src/lib60870/lib60870-C                     # Binärpaket
+IEC104_LIB60870=~/src/lib60870/lib60870-C julia julia/gui/iec104_gui.jl   # gleichwertig
+```
+
+Ablauf: Station mit Station (CA) 1 starten, Datenpunkt anlegen, unter „Gegenstelle lib60870“ ein Programm wählen, Starten. Die Ausgabe von lib60870 erscheint unter Ereignisse („lib60870: …“), daneben die Sicht der Station (Verbindung, Generalabfrage, Testbefehl).
+
+| Programm | Ablauf | Ende |
+| --- | --- | --- |
+| `simple_client` | verbindet, STARTDT, nach 2 s Generalabfrage an Station 1, nach 5 s Testbefehl mit Zeitmarke (Typ 107) | von selbst nach etwa 9 s |
+| `cs104_client_async` | STARTDT, Generalabfrage an Station 1 sofort und alle 10 s, spontane Werte | Beenden |
+| `cs104_client_no_threads` | nur STARTDT, spontane Werte, Testrahmen nach 2 s Ruhe; die Meldung „Sending interrogation command...“ stimmt nicht, es sendet keine Abfrage | Beenden |
+
+| Regel | Grund |
+| --- | --- |
+| Ordner nur beim Start der GUI; die Seite wählt nur einen der drei Programmnamen | die Seite kann keinen Pfad und kein Argument übergeben |
+| Ziel ist immer `127.0.0.1` und der Port der eigenen Station; ohne laufende Station: „erst die Station starten“ | lib60870 verbindet sich nur mit dieser GUI |
+| lib60870 spricht Station 1 an (CA 1) | Station der GUI mit Station (CA) 1 starten, sonst negative Antworten (Ursache 46) |
+| Nur die Leitstellen-Beispiele | die Stations-Beispiele von lib60870 lauschen fest auf `0.0.0.0` (alle Schnittstellen) |
+| Eine Gegenstelle zur Zeit; Beenden schickt SIGINT, nach 3 s SIGKILL; endet die GUI, endet die Gegenstelle mit | kein Prozess bleibt zurück |
+| Ausgabe zeilenweise, Zeilen über 300 Zeichen gekürzt | mit `stdbuf` (coreutils) sofort, sonst erst beim Ende des Programms |
+| Prozess und Ausgabe laufen in normalen Julia-Tasks, nie in einem Callback | Regel aus Abschnitt 4 |

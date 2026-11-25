@@ -5,25 +5,43 @@
 # All rights reserved by SOPTIM AG.
 # run_lib60870.sh – Interop-Tests gegen lib60870-C als fremde Gegenstelle.
 #
-# Aufruf: tools/interop/run_lib60870.sh LIB60870_C BUILD [AUSGABE]
+# Aufruf: tools/interop/run_lib60870.sh [--mit-stationen] LIB60870_C BUILD [AUSGABE]
 #
 #   LIB60870_C  Ordner lib60870-C einer gebauten lib60870 (v2.4.1 geprüft):
 #               build/examples      ohne TLS (Pflicht)
 #               build-tls/examples  mit mbedTLS 3.6 (optional, sonst ohne TLS-Fälle)
 #   BUILD       eigener Build-Ordner (Selbsttest-Programme, examples/hello_server)
 #   AUSGABE     Logs und Mitschnitte, Default BUILD/interop
+#   --mit-stationen  auch die Fälle mit einer lib60870-Station (cs104_server,
+#               cs104_redundancy_server, tls_server). Diese Beispiele lauschen
+#               fest auf 0.0.0.0, also auf allen Netzwerkschnittstellen; ohne
+#               Änderung an lib60870 geht das nicht anders. Ohne die Option
+#               laufen nur die Fälle, in denen lib60870 die Leitstelle ist und
+#               sich mit den eigenen Servern auf 127.0.0.1 verbindet; die
+#               übrigen stehen in der Tabelle als "übersprungen".
 #
 # lib60870 ist nur Gegenstelle: Es laufen die unveränderten Beispielprogramme
-# über TCP, nichts wird gelinkt. Die Beispiele nutzen feste Ports (2404, 19998);
-# die müssen frei sein. Die TLS-Beispiele lesen ihre Zertifikate unter festen
-# Namen aus dem Arbeitsordner; das Skript legt dort die RSA-Test-PKI ab
-# (tools/make_test_certs.sh ... rsa).
+# über TCP, nichts wird gelinkt. Feste Ports der Beispiele: 19998 (TLS-Fälle),
+# mit --mit-stationen zusätzlich 2404; die müssen frei sein. Die TLS-Beispiele
+# lesen ihre Zertifikate unter festen Namen aus dem Arbeitsordner; das Skript
+# legt dort die RSA-Test-PKI ab (tools/make_test_certs.sh ... rsa).
 #
 # Ergebnis je Fall: bestanden | Abweichung Gegenstelle (bekannter Fehler des
-# Beispielprogramms, eigenes Verhalten korrekt) | FEHLER. Rückgabe 1 bei FEHLER.
+# Beispielprogramms, eigenes Verhalten korrekt) | übersprungen | FEHLER.
+# Rückgabe 1 bei FEHLER.
 
 set -u
 
+STATIONS=0
+ARGS=()
+for a in "$@"; do
+    case "$a" in
+        --mit-stationen) STATIONS=1 ;;
+        -*) echo "Unbekannte Option: $a" >&2; exit 2 ;;
+        *) ARGS+=("$a") ;;
+    esac
+done
+set -- "${ARGS[@]}"
 LIB="${1:?Ordner lib60870-C fehlt}"
 BUILD="$(cd "${2:?Build-Ordner fehlt}" && pwd)"
 OUT="${3:-$BUILD/interop}"
@@ -34,7 +52,7 @@ SERVER="$BUILD/iec104_selftest_server"
 CLIENT="$BUILD/iec104_selftest_client"
 HELLO="$BUILD/examples/hello_server"
 
-[ -x "$PLAIN/cs104_server/cs104_server" ] || { echo "lib60870 nicht gebaut: $PLAIN" >&2; exit 2; }
+[ -x "$PLAIN/cs104_client/simple_client" ] || { echo "lib60870 nicht gebaut: $PLAIN" >&2; exit 2; }
 [ -x "$CLIENT" ] || { echo "Selbsttest nicht gebaut: $BUILD" >&2; exit 2; }
 mkdir -p "$OUT"
 
@@ -47,10 +65,15 @@ result() { # Fall, Ergebnis, Notiz
 has() { grep -q -E -- "$2" "$1"; }
 count() { grep -c -E -- "$2" "$1"; }
 
+# Nur lesend prüfen, ob die festen Ports frei sind.
 port_free() { ! ss -ltn 2>/dev/null | grep -q -E "[:.]$1[[:space:]]"; }
-for p in 2404 2441 19998; do
+PORTS=()
+[ "$STATIONS" = 1 ] && PORTS+=(2404)
+[ -x "$TLS/tls_client/tls_client" ] && PORTS+=(19998)
+for p in "${PORTS[@]}"; do
     port_free "$p" || { echo "Port $p ist belegt (läuft noch eine Gegenstelle?)" >&2; exit 2; }
 done
+SKIP_NOTE="lib60870-Station lauscht auf 0.0.0.0 (--mit-stationen)"
 
 PID=""
 start_peer() { # Ordner, Programm, Log, Argumente...
@@ -68,20 +91,30 @@ stop_peer() {
 trap stop_peer EXIT
 
 # --- 1. Eigener Client gegen lib60870-Server ---------------------------------
-start_peer "$OUT" "$PLAIN/cs104_server/cs104_server" "$OUT/1_peer.log"
-"$CLIENT" --port 2404 --foreign --idle 3 --t3 1 --timeout 5 --log trace > "$OUT/1_client.log" 2>&1
-stop_peer
-if has "$OUT/1_client.log" '^result: PASSED'; then
-    result "Client -> Server" "bestanden" "GA, Uhrzeit, Zähler (Ursache 44), TESTFR, STOPDT"
+if [ "$STATIONS" = 1 ]; then
+    start_peer "$OUT" "$PLAIN/cs104_server/cs104_server" "$OUT/1_peer.log"
+    "$CLIENT" --port 2404 --foreign --idle 3 --t3 1 --timeout 5 --log trace > "$OUT/1_client.log" 2>&1
+    stop_peer
+    if has "$OUT/1_client.log" '^result: PASSED'; then
+        result "Client -> Server" "bestanden" "GA, Uhrzeit, Zähler (Ursache 44), TESTFR, STOPDT"
+    else
+        result "Client -> Server" "FEHLER" "$OUT/1_client.log"
+    fi
 else
-    result "Client -> Server" "FEHLER" "$OUT/1_client.log"
+    result "Client -> Server" "übersprungen" "$SKIP_NOTE"
 fi
 
 # --- 2. lib60870-Client gegen eigenen Server -----------------------------------
-"$HELLO" 2441 < /dev/null > "$OUT/2_server.log" 2>&1 &
+# hello_server auf 127.0.0.1 mit freiem Port (0); der Port steht in seiner Ausgabe.
+"$HELLO" 0 127.0.0.1 < /dev/null > "$OUT/2_server.log" 2>&1 &
 PID=$!
-sleep 0.5
-timeout 30 "$PLAIN/cs104_client/simple_client" 127.0.0.1 2441 > "$OUT/2_peer.log" 2>&1
+HPORT=""
+for _ in $(seq 1 100); do
+    HPORT="$(sed -n 's/^listening on port \([0-9]*\)$/\1/p' "$OUT/2_server.log")"
+    [ -n "$HPORT" ] && break
+    sleep 0.05
+done
+timeout 30 "$PLAIN/cs104_client/simple_client" 127.0.0.1 "${HPORT:-0}" > "$OUT/2_peer.log" 2>&1
 stop_peer
 if has "$OUT/2_peer.log" 'Received STARTDT_CON' && has "$OUT/2_peer.log" 'M_EI_NA_1\(70\)' &&
    [ "$(count "$OUT/2_peer.log" 'C_IC_NA_1\(100\)')" -ge 2 ] && has "$OUT/2_peer.log" 'C_TS_TA_1\(107\)'; then
@@ -93,19 +126,23 @@ fi
 # --- 3. Umschaltung gegen lib60870-Redundanzserver ----------------------------
 # Server puffert den zyklischen Wert IOA 110 je Gruppe; nach STOPDT/STARTDT
 # muss die Reihe lückenlos weitergehen.
-start_peer "$OUT" "$PLAIN/cs104_redundancy_server/cs104_redundancy_server" "$OUT/3_peer.log"
-"$CLIENT" --port 2404 --foreign --switchover --series-ioa 110 --expect 5 --timeout 8 \
-    > "$OUT/3_client.log" 2>&1
-stop_peer
-if has "$OUT/3_client.log" 'switch-over.*values before' && ! has "$OUT/3_client.log" 'switch-over.*FAILED' &&
-   has "$OUT/3_client.log" 'series after switch-over.*in order' && ! has "$OUT/3_client.log" 'series after.*FAILED'; then
-    if has "$OUT/3_client.log" 'no termination'; then
-        result "Umschaltung (Redundanz)" "Abweichung Gegenstelle" "Reihe lückenlos; GA ohne gültiges ACTTERM (Typ 0)"
+if [ "$STATIONS" = 1 ]; then
+    start_peer "$OUT" "$PLAIN/cs104_redundancy_server/cs104_redundancy_server" "$OUT/3_peer.log"
+    "$CLIENT" --port 2404 --foreign --switchover --series-ioa 110 --expect 5 --timeout 8 \
+        > "$OUT/3_client.log" 2>&1
+    stop_peer
+    if has "$OUT/3_client.log" 'switch-over.*values before' && ! has "$OUT/3_client.log" 'switch-over.*FAILED' &&
+       has "$OUT/3_client.log" 'series after switch-over.*in order' && ! has "$OUT/3_client.log" 'series after.*FAILED'; then
+        if has "$OUT/3_client.log" 'no termination'; then
+            result "Umschaltung (Redundanz)" "Abweichung Gegenstelle" "Reihe lückenlos; GA ohne gültiges ACTTERM (Typ 0)"
+        else
+            result "Umschaltung (Redundanz)" "bestanden" "Reihe lückenlos"
+        fi
     else
-        result "Umschaltung (Redundanz)" "bestanden" "Reihe lückenlos"
+        result "Umschaltung (Redundanz)" "FEHLER" "$OUT/3_client.log"
     fi
 else
-    result "Umschaltung (Redundanz)" "FEHLER" "$OUT/3_client.log"
+    result "Umschaltung (Redundanz)" "übersprungen" "$SKIP_NOTE"
 fi
 
 # --- TLS ----------------------------------------------------------------------
@@ -130,6 +167,10 @@ else
 
     # 4./5. Eigener TLS-Client gegen lib60870-TLS-Server (er verhandelt alle 2 s neu).
     for V in 1.3 1.2; do
+        if [ "$STATIONS" != 1 ]; then
+            result "TLS $V Client -> Server" "übersprungen" "$SKIP_NOTE"
+            continue
+        fi
         N="tls${V/./}"
         start_peer "$SRVDIR" "$TLS/tls_server/tls_server" "$OUT/${N}_peer.log"
         "$CLIENT" --port 19998 --foreign "${OWN[@]}" --tls-version "$V" --idle 7 --t3 2 \

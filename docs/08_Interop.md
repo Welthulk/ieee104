@@ -11,30 +11,38 @@ Die Unit-Tests und der Selbsttest prüfen die Library gegen sich selbst. Fehler,
 lib60870 holen und bauen: README, Abschnitt „Gegen lib60870 testen“. Dann:
 
 ```bash
-tools/interop/run_lib60870.sh ../lib60870/lib60870-C build/debug        # Ports 2404, 19998 frei
+tools/interop/run_lib60870.sh ../lib60870/lib60870-C build/debug                   # Standard
+tools/interop/run_lib60870.sh --mit-stationen ../lib60870/lib60870-C build/debug   # alle Fälle
 ```
+
+| Lauf | Fälle | Lauscht | Feste Ports |
+| --- | --- | --- | --- |
+| Standard | 2, 6, 7, 8: lib60870 ist Leitstelle und verbindet sich mit den eigenen Servern | nur `127.0.0.1` | 19998 (TLS-Fälle) |
+| `--mit-stationen` | zusätzlich 1, 3, 4, 5 mit `cs104_server`, `cs104_redundancy_server`, `tls_server` | diese drei Beispiele auf `0.0.0.0` | zusätzlich 2404 |
+
+Die Stations-Beispiele von lib60870 binden fest an `0.0.0.0`, sind also während des Laufs über alle Netzwerkschnittstellen erreichbar; ohne Änderung an lib60870 geht das nicht anders. Deshalb laufen sie nur mit `--mit-stationen`.
 
 | Ergebnis | Bedeutung |
 | --- | --- |
 | bestanden | Verhalten wie erwartet |
 | Abweichung Gegenstelle | bekannter Fehler eines Beispielprogramms (Abschnitt 4); eigenes Verhalten korrekt |
 | FEHLER | eigenes Verhalten falsch; Rückgabe 1, Log unter `build/debug/interop/` |
-| übersprungen | lib60870 ohne TLS gebaut |
+| übersprungen | lib60870 ohne TLS gebaut, oder Fall mit lib60870-Station ohne `--mit-stationen` |
 
-In `ctest`: `cmake --preset debug -DIEC104_LIB60870_DIR=../lib60870/lib60870-C`, Test `Interop.Lib60870`.
+In `ctest`: `cmake --preset debug -DIEC104_LIB60870_DIR=../lib60870/lib60870-C`, Test `Interop.Lib60870` (Standardlauf). Im Preset `shared` zusätzlich `Julia.GuiLib60870` (Abschnitt 6).
 
 ## 3. Fälle und Ergebnis
 
-| Nr. | Fall | Gegenstelle | Geprüft | Ergebnis |
-| --- | --- | --- | --- | --- |
-| 1 | Client → Server | `cs104_server` | STARTDT, Generalabfrage, Uhrzeit, Zählerabfrage (Ursache 44), TESTFR, STOPDT | bestanden |
-| 2 | Server ← Client | `simple_client` gegen `hello_server` | STARTDT con, Ende der Initialisierung, Generalabfrage mit ACTCON/ACTTERM, Testbefehl 107 | bestanden |
-| 3 | Umschaltung | `cs104_redundancy_server` | zwei Verbindungen, STOPDT/STARTDT, die gepufferte Reihe (IOA 110) läuft lückenlos weiter | bestanden; Abweichung Gegenstelle (ACTTERM) |
-| 4 | TLS 1.3 Client → Server | `tls_server` | Handshake mit gegenseitiger Authentifizierung, Uhrzeit, TESTFR | bestanden; Abweichung Gegenstelle (ACTTERM) |
-| 5 | TLS 1.2 Client → Server | `tls_server` | wie 4, dazu Renegotiation durch die Gegenstelle alle 2 s | bestanden (5 Renegotiations in 7 s); Abweichung Gegenstelle (ACTTERM) |
-| 6 | TLS Server ← Client | `tls_client` | zwei Verbindungen nacheinander, Generalabfrage, Einzelbefehl, Uhrzeit | bestanden |
-| 7 | TLS mit EC-Schlüsseln | `tls_client` | P-256-Zertifikate | Abweichung Gegenstelle (EC abgelehnt) |
-| 8 | Abgelaufenes Zertifikat | `tls_client` mit seinen Original-Zertifikaten | Client-Zertifikat seit 2022 abgelaufen | bestanden: abgewiesen |
+| Nr. | Fall | Gegenstelle | Lauf | Geprüft | Ergebnis |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Client → Server | `cs104_server` | `--mit-stationen` | STARTDT, Generalabfrage, Uhrzeit, Zählerabfrage (Ursache 44), TESTFR, STOPDT | bestanden |
+| 2 | Server ← Client | `simple_client` gegen `hello_server` | Standard | STARTDT con, Ende der Initialisierung, Generalabfrage mit ACTCON/ACTTERM, Testbefehl 107 | bestanden |
+| 3 | Umschaltung | `cs104_redundancy_server` | `--mit-stationen` | zwei Verbindungen, STOPDT/STARTDT, die gepufferte Reihe (IOA 110) läuft lückenlos weiter | bestanden; Abweichung Gegenstelle (ACTTERM) |
+| 4 | TLS 1.3 Client → Server | `tls_server` | `--mit-stationen` | Handshake mit gegenseitiger Authentifizierung, Uhrzeit, TESTFR | bestanden; Abweichung Gegenstelle (ACTTERM) |
+| 5 | TLS 1.2 Client → Server | `tls_server` | `--mit-stationen` | wie 4, dazu Renegotiation durch die Gegenstelle alle 2 s | bestanden (5 Renegotiations in 7 s); Abweichung Gegenstelle (ACTTERM) |
+| 6 | TLS Server ← Client | `tls_client` | Standard | zwei Verbindungen nacheinander, Generalabfrage, Einzelbefehl, Uhrzeit | bestanden |
+| 7 | TLS mit EC-Schlüsseln | `tls_client` | Standard | P-256-Zertifikate | Abweichung Gegenstelle (EC abgelehnt) |
+| 8 | Abgelaufenes Zertifikat | `tls_client` mit seinen Original-Zertifikaten | Standard | Client-Zertifikat seit 2022 abgelaufen | bestanden: abgewiesen |
 
 ## 4. Befunde
 
@@ -90,3 +98,20 @@ Alles Folgende steht in der Interoperabilitätsliste der Gegenstelle (Abschnitt 
 | Befehl ohne Ergebnis `NO_TERMINATION` | Gegenstelle sendet kein ACTTERM | `expect_termination = 0` |
 | TLS: `peer certificate rejected` | CA, Ablaufdatum, Sperrliste, Name | Zertifikat mit `openssl x509 -noout -text -in …` |
 | TLS: Handshake bricht ohne Grund ab | Schlüsseltyp oder Suite nicht unterstützt | RSA statt EC, `tls_ciphers` |
+
+## 6. Interaktiv in der Test-GUI
+
+Die Test-GUI (`docs/07_Julia.md`, Abschnitt 7.1) startet auf Knopfdruck ein Leitstellen-Beispiel von lib60870 gegen ihre eigene Station auf `127.0.0.1`. Datenpunkte, Werte und die Annahme von Befehlen werden in der GUI eingestellt; die Ausgabe von lib60870 steht unter Ereignisse neben den Meldungen der Station. Den Ordner bekommt die GUI beim Start:
+
+```bash
+bash gui.sh 8080 127.0.0.1 ../lib60870/lib60870-C                              # Binärpaket
+julia examples/julia/gui/iec104_gui.jl 8080 127.0.0.1 ../lib60870/lib60870-C   # Quellbaum
+```
+
+| Programm | Prüft an der eigenen Station |
+| --- | --- |
+| `simple_client` | Verbindungsaufbau, STARTDT, Ende der Initialisierung, Generalabfrage mit ACTCON, Werten und ACTTERM, Testbefehl 107 |
+| `cs104_client_async` | Generalabfrage sofort und alle 10 s, spontane Werte nach „Anlegen / senden“ |
+| `cs104_client_no_threads` | Dauerverbindung mit Testrahmen (t3 = 2 s), spontane Werte |
+
+Nur die Leitstellen-Beispiele sind wählbar, weil die Stations-Beispiele auf `0.0.0.0` lauschen. Automatisch: `tests/gui/test_gui.sh`, in `ctest` (Preset `shared`, `-DIEC104_LIB60870_DIR=…`) als `Julia.GuiLib60870`.
