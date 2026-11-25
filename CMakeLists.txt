@@ -98,9 +98,13 @@ if(IEC104_BUILD_TESTS)
         tests/test_api.cpp
         tests/test_apci.cpp
         tests/test_asdu_header.cpp
+        tests/test_capture.cpp
         tests/test_cp56time2a.cpp)
     # Tests use the internal C++ headers directly (sans-I/O, no network)
     target_include_directories(iec104_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    # Reference data (captures of foreign implementations), read at run time
+    target_compile_definitions(iec104_tests PRIVATE
+        IEC104_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
     target_link_libraries(iec104_tests PRIVATE iec104::iec104 GTest::gtest GTest::gtest_main)
     iec104_set_warnings(iec104_tests FALSE)
     gtest_discover_tests(iec104_tests)

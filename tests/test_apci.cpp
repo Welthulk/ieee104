@@ -1,15 +1,27 @@
+/**
+ * @file test_apci.cpp
+ * @brief Unit tests for the APCI codec (src/codec/apci.hpp).
+ *
+ * Reference bytes come from two kinds of sources, named at every test:
+ *   - "capture": tests/data/lib60870_capture.txt, produced by an independent
+ *     implementation (lib60870-C v2.4.1, used only as external test peer);
+ *   - "layout": derived by hand from the bit layouts documented in apci.hpp,
+ *     which follow docs/03 (citing the Wireshark IEC 104 dissector).
+ */
+#include "codec/apci.hpp"
+
 #include <array>
 #include <cstdint>
-
 #include <gtest/gtest.h>
-
-#include "codec/apci.hpp"
 
 using namespace iec104::codec;
 using Bytes6 = std::array<std::uint8_t, 6>;
 
-// Reference frames, see docs/03_Recherchebericht (U functions) and the
-// Wireshark dissector.
+// Rule: each U-function is one specific first control octet, the other three
+// control octets are zero, and decoding returns the same function.
+// Source: STARTDT act/con from the capture (lines "SEND: 68 04 07 ..." and
+// "RCVD: 68 04 0b ..."); STOPDT and TESTFR from the function octets listed in
+// docs/03 (Wireshark dissector masks).
 TEST(Apci, EncodeUFrames) {
     struct Case {
         UFunction f;
@@ -35,12 +47,15 @@ TEST(Apci, EncodeUFrames) {
     }
 }
 
+// Rule: UFunction::None is not a function and must never be put on the wire.
+// Source: apci.hpp (API contract).
 TEST(Apci, EncodeUFrameRejectsNone) {
     Bytes6 out{};
-    EXPECT_EQ(encode_u_frame(UFunction::None, out.data(), out.size()),
-              IEC104_ERR_INVALID_ARGUMENT);
+    EXPECT_EQ(encode_u_frame(UFunction::None, out.data(), out.size()), IEC104_ERR_INVALID_ARGUMENT);
 }
 
+// Rule: S-frame = 01 00 followed by N(R) shifted left by one bit.
+// Source: layout (N(R) = 1 -> 02 00).
 TEST(Apci, EncodeSFrame) {
     Bytes6 out{};
     ASSERT_EQ(encode_s_frame(1, out.data(), out.size()), IEC104_OK);
@@ -52,6 +67,24 @@ TEST(Apci, EncodeSFrame) {
     EXPECT_EQ(apci.recv_seq, 1U);
 }
 
+// Rule: same as EncodeSFrame, checked against a peer's frame.
+// Source: capture, client acknowledgement "SEND: 68 04 01 00 14 00" (N(R) = 10).
+TEST(Apci, SFrameFromCapture) {
+    const Bytes6 captured{0x68, 0x04, 0x01, 0x00, 0x14, 0x00};
+    Apci apci{};
+    ASSERT_EQ(decode_apci(captured.data(), captured.size(), apci), IEC104_OK);
+    EXPECT_EQ(apci.format, FrameFormat::S);
+    EXPECT_EQ(apci.recv_seq, 10U);
+
+    Bytes6 out{};
+    ASSERT_EQ(encode_s_frame(10, out.data(), out.size()), IEC104_OK);
+    EXPECT_EQ(out, captured);
+}
+
+// Rule: N(S) and N(R) survive an encode/decode round trip over the full
+// 15-bit range, including the octet boundaries (127/128, 255/256) and the
+// largest value 32767.
+// Source: layout.
 TEST(Apci, IFrameSequenceNumbersRoundTrip) {
     const std::uint16_t values[] = {0, 1, 127, 128, 255, 256, 16383, 32766, 32767};
     for (std::uint16_t ns : values) {
@@ -68,13 +101,31 @@ TEST(Apci, IFrameSequenceNumbersRoundTrip) {
     }
 }
 
+// Rule: I-frame control field = N(S) << 1, N(R) << 1, little endian; length
+// octet = ASDU length + 4.
+// Source: layout (N(S) = 2, N(R) = 3, ASDU 10 octets -> 0E 04 00 06 00).
 TEST(Apci, IFrameKnownBytes) {
-    // N(S) = 2, N(R) = 3, ASDU length 10 (general interrogation)
     Bytes6 out{};
     ASSERT_EQ(encode_i_header(2, 3, 10, out.data(), out.size()), IEC104_OK);
     EXPECT_EQ(out, (Bytes6{0x68, 0x0E, 0x04, 0x00, 0x06, 0x00}));
 }
 
+// Rule: as IFrameKnownBytes, checked against a peer's frames.
+// Source: capture, general interrogation "SEND: 68 0e 00 00 04 00 ..."
+// (N(S) = 0, N(R) = 2, ASDU 10 octets) and test command confirmation
+// "RCVD: 68 16 14 00 04 00 ..." (N(S) = 10, N(R) = 2, ASDU 18 octets).
+TEST(Apci, IFrameHeaderFromCapture) {
+    Bytes6 out{};
+    ASSERT_EQ(encode_i_header(0, 2, 10, out.data(), out.size()), IEC104_OK);
+    EXPECT_EQ(out, (Bytes6{0x68, 0x0E, 0x00, 0x00, 0x04, 0x00}));
+    ASSERT_EQ(encode_i_header(10, 2, 18, out.data(), out.size()), IEC104_OK);
+    EXPECT_EQ(out, (Bytes6{0x68, 0x16, 0x14, 0x00, 0x04, 0x00}));
+}
+
+// Rule: values outside the 15-bit sequence range and ASDU lengths outside
+// 1..249 are rejected, never truncated; 249 is the largest allowed ASDU
+// (length octet 253). Also covers buffer and NULL checks of encode_s_frame.
+// Source: limits from docs/03 (APDU at most 255 octets).
 TEST(Apci, EncodeRejectsOutOfRange) {
     Bytes6 out{};
     EXPECT_EQ(encode_i_header(32768, 0, 1, out.data(), out.size()), IEC104_ERR_OUT_OF_RANGE);
@@ -89,6 +140,9 @@ TEST(Apci, EncodeRejectsOutOfRange) {
     EXPECT_EQ(encode_s_frame(0, nullptr, 6), IEC104_ERR_INVALID_ARGUMENT);
 }
 
+// Rule: stream framing needs two octets; the start octet must be 0x68 and the
+// length octet 4..253; total length = 2 + length octet.
+// Source: docs/03 (APCI section).
 TEST(Apci, PeekLength) {
     std::size_t len = 0;
     const std::uint8_t ok[] = {0x68, 0x0E};
@@ -104,6 +158,11 @@ TEST(Apci, PeekLength) {
     EXPECT_EQ(peek_apdu_length(too_long, 2, len), IEC104_ERR_MALFORMED);
 }
 
+// Rule: decoding is strict (see decode_apci() in apci.hpp): incomplete
+// APDUs need more data; I-frames need an ASDU and a clear reserved bit;
+// S- and U-frames have no ASDU and zero reserved octets; a U-frame carries
+// exactly one function.
+// Source: layout; malformed inputs constructed by hand.
 TEST(Apci, DecodeRejectsMalformed) {
     Apci apci{};
     // incomplete APDU

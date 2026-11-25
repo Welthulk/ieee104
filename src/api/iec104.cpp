@@ -1,5 +1,18 @@
+/**
+ * @file iec104.cpp
+ * @brief Implementation of the general C API functions (version, status texts).
+ *
+ * Layer: API. This file only contains functions that do not belong to a
+ * protocol layer. It must not throw and must not use RTTI, like the rest of the
+ * library (built with -fno-exceptions -fno-rtti).
+ */
 #include "iec104/iec104.h"
 
+/*
+ * The build system passes the project version (CMakeLists.txt, project()) as
+ * IEC104_VERSION_STRING. The fallback only exists so that the file still
+ * compiles when built outside CMake, e.g. by an IDE indexer.
+ */
 #ifndef IEC104_VERSION_STRING
 #define IEC104_VERSION_STRING "0.0.0"
 #endif
@@ -11,6 +24,8 @@ const char* iec104_version_string(void) {
 }
 
 const char* iec104_status_string(iec104_status status) {
+    // A switch without 'default' lets the compiler warn when a new status code
+    // is added to the enum but not to this table.
     switch (status) {
     case IEC104_OK:
         return "ok";
@@ -29,6 +44,8 @@ const char* iec104_status_string(iec104_status status) {
     case IEC104_ERR_INTERNAL:
         return "internal error";
     }
+    // Reached for integers that are not a declared enumerator (C callers can
+    // pass any int).
     return "unknown status";
 }
 

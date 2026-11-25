@@ -1,59 +1,131 @@
-// CP56Time2a: 7-octet time tag.
-//
-// Layout (octets 1..7):
-//   1-2  milliseconds incl. seconds, 0..59999, little endian
-//   3    bits 0-5 minute, bit 6 RES1, bit 7 IV (invalid)
-//   4    bits 0-4 hour,   bits 5-6 RES2, bit 7 SU (summer time)
-//   5    bits 0-4 day of month 1..31, bits 5-7 day of week 1..7 (0 = not used)
-//   6    bits 0-3 month 1..12, bits 4-7 RES3
-//   7    bits 0-6 year 0..99,  bit 7 RES4
-//
-// The standard does NOT define whether the time is UTC or local time. This
-// type therefore carries no time zone; interpretation belongs to the
-// connection profile (TimeBase, see docs/02_Konzept, section "Zeit").
+/**
+ * @file cp56time2a.hpp
+ * @brief CP56Time2a: the 7-octet time tag of IEC 60870-5-101/104.
+ *
+ * CP56Time2a carries date and time with millisecond resolution. The IEC 104
+ * time-tagged types (30-40, 58-64, 107) use it. Whether the 3-octet CP24Time2a
+ * types of IEC 101 are excluded from IEC 104 is not proven by the standard text
+ * yet (docs/04_Analyse.md, N4).
+ *
+ * Layout (octets 1..7, little endian where a field spans two octets):
+ *
+ *   octet 1-2:  milliseconds incl. seconds, 0..59999
+ *   octet 3:    bit 7 IV (invalid) | bit 6 RES1 | bits 5..0 minute 0..59
+ *   octet 4:    bit 7 SU (summer time) | bits 6..5 RES2 | bits 4..0 hour 0..23
+ *   octet 5:    bits 7..5 day of week 1..7 (0 = not used) | bits 4..0 day of month 1..31
+ *   octet 6:    bits 7..4 RES3 | bits 3..0 month 1..12
+ *   octet 7:    bit 7 RES4 | bits 6..0 year 0..99
+ *
+ * Example: 2B 17 01 0B 19 0B 1A = 2026-11-25 11:01:05.931, day of week not
+ * used, IV = 0, SU = 0 (time tag of a C_TS_TA_1 test command in
+ * tests/data/lib60870_capture.txt).
+ *
+ * The standard does NOT define whether the time is UTC or local time; that is
+ * an item of the interoperability list. This type therefore carries no time
+ * zone. Interpretation belongs to the connection profile (time base, see
+ * docs/02, "Zeit").
+ *
+ * Sources: docs/03, section on information elements (citing the Wireshark
+ * IEC 104 dissector).
+ * TODO(norm): CP56Time2a definition, clause unknown (defined in the
+ * IEC 60870-5 series, not in the documents of this repository).
+ *
+ * Layer: codec (pure functions, no I/O, no allocation).
+ */
 #pragma once
+
+#include "iec104/iec104.h"
 
 #include <cstddef>
 #include <cstdint>
 
-#include "iec104/iec104.h"
-
 namespace iec104::codec {
 
+/** @brief Length of a CP56Time2a time tag in octets. */
 inline constexpr std::size_t kCp56Time2aLength = 7U;
 
+/**
+ * @brief Decoded CP56Time2a time tag.
+ *
+ * Plain field values, no time zone and no calendar arithmetic. A
+ * default-constructed value is 00:00:00.000 on day 1, month 1, year 0.
+ */
 struct Cp56Time2a {
-    std::uint16_t milliseconds{0}; // 0..59999 (seconds * 1000 + ms)
-    std::uint8_t minute{0};        // 0..59
-    std::uint8_t hour{0};          // 0..23
-    std::uint8_t day_of_month{1};  // 1..31
-    std::uint8_t day_of_week{0};   // 1..7, 0 = not used
-    std::uint8_t month{1};         // 1..12
-    std::uint8_t year{0};          // 0..99
-    bool invalid{false};           // IV
-    bool summer_time{false};       // SU
-    bool res1{false};              // RES1 bit of the minute octet, kept as is
+    std::uint16_t milliseconds{0}; ///< Seconds * 1000 + milliseconds, 0..59999.
+    std::uint8_t minute{0};        ///< 0..59.
+    std::uint8_t hour{0};          ///< 0..23.
+    std::uint8_t day_of_month{1};  ///< 1..31.
+    std::uint8_t day_of_week{
+        0}; ///< 1..7, 0 = not used. TODO(norm): numbering of weekdays, clause unknown.
+    std::uint8_t month{1};   ///< 1..12.
+    std::uint8_t year{0};    ///< 0..99, the century is not transmitted.
+    bool invalid{false};     ///< IV: the time is not valid (e.g. clock not synchronised).
+    bool summer_time{false}; ///< SU: the time is summer (daylight saving) time.
+    /**
+     * @brief RES1 bit of the minute octet, preserved as received.
+     *
+     * RES2..RES4 are dropped on decoding and written as 0. Why RES1 is treated
+     * differently is not documented in the sources of this repository
+     * (docs/04_Analyse.md, A6).
+     * TODO(norm): meaning of RES1, clause unknown.
+     */
+    bool res1{false};
 
+    /** @brief Field-wise equality, including IV, SU and RES1. */
     friend bool operator==(const Cp56Time2a& a, const Cp56Time2a& b) noexcept {
         return a.milliseconds == b.milliseconds && a.minute == b.minute && a.hour == b.hour &&
                a.day_of_month == b.day_of_month && a.day_of_week == b.day_of_week &&
                a.month == b.month && a.year == b.year && a.invalid == b.invalid &&
                a.summer_time == b.summer_time && a.res1 == b.res1;
     }
-    friend bool operator!=(const Cp56Time2a& a, const Cp56Time2a& b) noexcept {
-        return !(a == b);
-    }
+    /** @brief Negation of operator==. */
+    friend bool operator!=(const Cp56Time2a& a, const Cp56Time2a& b) noexcept { return !(a == b); }
 };
 
-// Range check of all fields. Does not check calendar validity (e.g. 31.02.).
+/**
+ * @brief Checks every field against its range.
+ *
+ * Only the ranges listed at the struct members are checked. Calendar validity
+ * (e.g. 31 February) and the consistency of the day of week are not checked,
+ * because the year is only known modulo 100.
+ *
+ * @param t Time tag to check.
+ * @return IEC104_OK if every field is in range.
+ * @return IEC104_ERR_OUT_OF_RANGE otherwise.
+ */
 iec104_status validate(const Cp56Time2a& t) noexcept;
 
-// Encodes 7 octets. Returns OUT_OF_RANGE if validate() fails.
+/**
+ * @brief Encodes a time tag into 7 octets.
+ *
+ * Encoding is strict: out-of-range fields are rejected, never truncated.
+ *
+ * @param t        Time tag to encode.
+ * @param out      Destination buffer.
+ * @param out_size Size of @p out, at least 7.
+ * @return IEC104_OK on success.
+ * @return IEC104_ERR_INVALID_ARGUMENT if @p out is NULL.
+ * @return IEC104_ERR_BUFFER_TOO_SMALL if @p out_size is less than 7.
+ * @return IEC104_ERR_OUT_OF_RANGE if validate() fails.
+ */
 iec104_status encode_cp56time2a(const Cp56Time2a& t, std::uint8_t* out,
                                 std::size_t out_size) noexcept;
 
-// Decodes 7 octets without range check (tolerant). Reserved bits RES2..RES4
-// are ignored. Call validate() for strict handling.
+/**
+ * @brief Decodes 7 octets into a time tag.
+ *
+ * Decoding is tolerant: field values are taken as received without range
+ * check, so that a peer's time tag can still be inspected and logged. Callers
+ * that need strict handling call validate() on the result. RES2..RES4 are
+ * ignored.
+ *
+ * @param data Start of the time tag. Must not be NULL.
+ * @param size Number of octets available at @p data.
+ * @param out  Receives the decoded time tag on success. Unchanged on error.
+ * @return IEC104_OK on success.
+ * @return IEC104_ERR_INVALID_ARGUMENT if @p data is NULL.
+ * @return IEC104_ERR_NEED_MORE_DATA if @p size is less than 7.
+ */
 iec104_status decode_cp56time2a(const std::uint8_t* data, std::size_t size,
                                 Cp56Time2a& out) noexcept;
 

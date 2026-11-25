@@ -1,3 +1,12 @@
+/**
+ * @file asdu_header.cpp
+ * @brief Implementation of the data unit identifier and IOA codec.
+ *
+ * See asdu_header.hpp for the layout. The functions work for every valid
+ * AsduProfile, not only for the IEC 104 profile.
+ *
+ * Layer: codec (pure functions, no I/O, no allocation).
+ */
 #include "codec/asdu_header.hpp"
 
 #include "codec/byte_io.hpp"
@@ -5,6 +14,12 @@
 namespace iec104::codec {
 namespace {
 
+/**
+ * @brief Largest unsigned value that fits into @p octets octets.
+ *
+ * Example: 1 -> 0xFF, 2 -> 0xFFFF, 3 -> 0xFFFFFF. The 4-octet case is handled
+ * separately because shifting a 32-bit value by 32 bits is undefined.
+ */
 std::uint32_t max_value(std::size_t octets) noexcept {
     return octets >= 4U ? 0xFFFFFFFFU : ((1U << (8U * octets)) - 1U);
 }
@@ -17,6 +32,7 @@ bool is_valid(const AsduProfile& profile) noexcept {
 }
 
 std::size_t header_length(const AsduProfile& profile) noexcept {
+    // type id + VSQ + COT + CA
     return 2U + static_cast<std::size_t>(profile.cot_length) +
            static_cast<std::size_t>(profile.ca_length);
 }
@@ -31,6 +47,9 @@ iec104_status encode_asdu_header(const AsduHeader& header, const AsduProfile& pr
     if (out_size < len) {
         return IEC104_ERR_BUFFER_TOO_SMALL;
     }
+    // Values that would not survive the bit packing are rejected instead of
+    // being truncated, so that a caller error never turns into wrong data on
+    // the wire. An originator address needs the second COT octet.
     if (header.num_objects > kMaxObjects || header.cause > kCotCauseMask ||
         (profile.cot_length == 1U && header.originator != 0U) ||
         header.common_address > max_value(profile.ca_length)) {
@@ -39,8 +58,8 @@ iec104_status encode_asdu_header(const AsduHeader& header, const AsduProfile& pr
 
     std::size_t pos = 0;
     out[pos++] = header.type_id;
-    out[pos++] = static_cast<std::uint8_t>((header.sequence ? kVsqSequenceBit : 0U) |
-                                           header.num_objects);
+    out[pos++] =
+        static_cast<std::uint8_t>((header.sequence ? kVsqSequenceBit : 0U) | header.num_objects);
     out[pos++] = static_cast<std::uint8_t>(header.cause | (header.negative ? kCotNegativeBit : 0U) |
                                            (header.test ? kCotTestBit : 0U));
     if (profile.cot_length == 2U) {
@@ -64,6 +83,7 @@ iec104_status decode_asdu_header(const std::uint8_t* data, std::size_t size,
         return IEC104_ERR_NEED_MORE_DATA;
     }
 
+    // Decode into a local copy so that 'out' stays untouched on error.
     AsduHeader h{};
     std::size_t pos = 0;
     h.type_id = data[pos++];

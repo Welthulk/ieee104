@@ -1,6 +1,6 @@
 # TASK-000: Auftrag – exemplarische IEC-104-Library
 
-Status: offen · gilt für alle weiteren Aufgaben in `tasks/` · Vorrang vor TASK-001
+Status: erledigt (25.11.2026) · gilt für alle weiteren Aufgaben in `tasks/` · Vorrang vor TASK-001
 
 ## 1. Die Aufgabe
 
@@ -115,9 +115,16 @@ Folgende Regeln in `CLAUDE.md` aufnehmen (Abschnitt „Code-Regeln“):
 
 ## Definition of Done
 
-- [ ] `docs/04_Analyse.md` liegt vor, mit allen fünf Punkten aus Abschnitt 3.
-- [ ] Freigabe der Analyse durch den Auftraggeber.
-- [ ] `tools/check_neutral.sh` vorhanden und läuft ohne Treffer.
-- [ ] `CLAUDE.md` und `README.md` neutral und um Abschnitt 6 ergänzt.
-- [ ] Vorhandener Code nach Kommentarstandard überarbeitet, Build und Tests (`debug`, `asan`) weiter grün.
-- [ ] Commit ohne Bezug auf Kunden, Firma oder Projekt in Code und Nachricht.
+- [x] `docs/04_Analyse.md` liegt vor, mit allen fünf Punkten aus Abschnitt 3.
+- [x] Freigabe der Analyse durch den Auftraggeber.
+- [x] `tools/check_neutral.sh` vorhanden und läuft ohne Treffer.
+- [x] `CLAUDE.md` und `README.md` neutral und um Abschnitt 6 ergänzt.
+- [x] Vorhandener Code nach Kommentarstandard überarbeitet, Build und Tests (`debug`, `asan`) weiter grün.
+- [x] Commit ohne Bezug auf Kunden, Firma oder Projekt in Code und Nachricht.
+
+Hinweise zum Abschluss:
+
+- Begriffsliste `~/.config/iec104/forbidden_terms.txt` liegt als Entwurf vor; Prüfung durch den Auftraggeber offen.
+- Der gepushte Commit `cbee03d` enthält noch eine Co-Author-Zeile (Entscheidung F6: bleibt).
+- Alle Dateien einmal mit `.clang-format` formatiert (vorher 51 Abweichungen).
+- Neue Tests gegen den Mitschnitt `tests/data/lib60870_capture.txt`, 27 Tests grün in `debug` und `asan`.
