@@ -1,3 +1,8 @@
+# SPDX-FileCopyrightText: 2026 SOPTIM AG
+# SPDX-License-Identifier: LicenseRef-Proprietary
+# Author: Udo Schmitz (SOPTIM AG)
+# All rights reserved by SOPTIM AG.
+
 cmake_minimum_required(VERSION 3.21)
 
 project(iec104

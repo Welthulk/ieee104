@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SOPTIM AG
+ * SPDX-License-Identifier: LicenseRef-Proprietary
+ * Author: Udo Schmitz (SOPTIM AG)
+ * All rights reserved by SOPTIM AG.
+ */
 /**
  * @file cp56time2a.cpp
  * @brief Implementation of the CP56Time2a codec.

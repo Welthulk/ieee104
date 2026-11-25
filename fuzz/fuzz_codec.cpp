@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SOPTIM AG
+ * SPDX-License-Identifier: LicenseRef-Proprietary
+ * Author: Udo Schmitz (SOPTIM AG)
+ * All rights reserved by SOPTIM AG.
+ */
 /**
  * @file fuzz_codec.cpp
  * @brief libFuzzer target for the codec layer (APCI, ASDU header, CP56Time2a).

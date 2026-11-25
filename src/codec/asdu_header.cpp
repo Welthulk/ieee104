@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SOPTIM AG
+ * SPDX-License-Identifier: LicenseRef-Proprietary
+ * Author: Udo Schmitz (SOPTIM AG)
+ * All rights reserved by SOPTIM AG.
+ */
 /**
  * @file asdu_header.cpp
  * @brief Implementation of the data unit identifier and IOA codec.

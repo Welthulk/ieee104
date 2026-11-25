@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SOPTIM AG
+ * SPDX-License-Identifier: LicenseRef-Proprietary
+ * Author: Udo Schmitz (SOPTIM AG)
+ * All rights reserved by SOPTIM AG.
+ */
 /**
  * @file cp56time2a.hpp
  * @brief CP56Time2a: the 7-octet time tag of IEC 60870-5-101/104.

@@ -126,5 +126,6 @@ Die Analyse ist freigegeben. Zu F1–F8 gelten die Vorschläge aus Abschnitt 5.
 | F6 | Keine Co-Author-Zeilen; `67f7f99` bereinigen; `cbee03d` bleibt | Regel in `CLAUDE.md`, lokale Historie bereinigt |
 | F7 | Nur Linux x86-64 in Version 1 | `CLAUDE.md`; A7 (dllimport) entfällt |
 | F8 | Kein C++-Wrapper in Version 1 | – |
+| F9 | Lizenz (Nachtrag 25.11.2026): Rechte liegen ausschließlich beim Rechteinhaber; was für den Zugriff gebraucht wird (öffentlicher Header), ist offen unter Apache-2.0 | SPDX-Kopfblock in jeder Quelldatei, `LICENSES/Apache-2.0.txt` und `LICENSES/LicenseRef-Proprietary.txt`; Ausnahme von der Neutralitätsregel nur für diese Kopfzeilen (`allow:` in der Begriffsdatei) und `LICENSES/` |
 
 Umgesetzt aus Abschnitt 1: W1 (Hinweis in `03`), W3, W6, W7, W8 (in `02`), W10 (Catch2 aus dem Setup), W11 (Fuzz-Dauern in `CLAUDE.md`). In `02` zusätzlich die CP24-Typen korrigiert: 2, 4, …, 16 und 17–19 (vorher „2–19 gerade“).

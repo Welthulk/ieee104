@@ -168,7 +168,7 @@ Hinweis: IEC TS 60870-5-604 prüft Normkonformität, garantiert aber nach eigene
 - [ ] Interoperabilitätsliste und Testzugang vom Aucoteam-Gateway anfordern.
 - [ ] Rolle in der SpPS klären: nur Client, oder auch Server?
 - [ ] Zielplattformen und Threading-Modell der SpPS festlegen.
-- [ ] Lizenzmodell und Rechte am Code klären (Produktbestandteil SOPTIM).
+- [x] Lizenzmodell und Rechte am Code: Rechte bei SOPTIM AG, öffentlicher Header unter Apache-2.0, Rest proprietär (entschieden, F9 in `docs/04_Analyse.md`).
 - [ ] Testgegenstelle Triangle MicroWorks Test Harness: Lizenz beschaffen oder nicht?
 
 Grundlage der Werte und Abweichungen ist der Recherchebericht "IEC 104 im Detail" vom 24.11.2026.

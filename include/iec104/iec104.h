@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SOPTIM AG
+ * SPDX-License-Identifier: Apache-2.0
+ * Author: Udo Schmitz (SOPTIM AG)
+ */
 /**
  * @file iec104.h
  * @brief Public C API of the IEC 60870-5-104 library.

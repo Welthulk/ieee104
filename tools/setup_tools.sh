@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 SOPTIM AG
+# SPDX-License-Identifier: LicenseRef-Proprietary
+# Author: Udo Schmitz (SOPTIM AG)
+# All rights reserved by SOPTIM AG.
 # setup_tools.sh – Werkzeuge für die IEC-104-Library (C++17, C-API, OpenSSL, Tests)
 #
 # Aufruf:
@@ -20,7 +24,7 @@ for arg in "$@"; do
     case "$arg" in
         --with-lib60870) WITH_LIB60870=1 ;;
         --with-aflpp) WITH_AFLPP=1 ;;
-        -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+        -h|--help) sed -n '6,18p' "$0"; exit 0 ;;
         *) echo "Unbekannte Option: $arg"; exit 1 ;;
     esac
 done

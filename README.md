@@ -26,6 +26,10 @@ cmake --preset fuzz  && cmake --build --preset fuzz  && ./build/fuzz/fuzz_codec 
 
 Vor jedem Commit: `./tools/check_neutral.sh` (Begriffsliste außerhalb des Repos, siehe Kopf des Skripts).
 
+## Lizenz
+
+Rechteinhaber und Lizenztexte: `LICENSES/`. Der öffentliche Header `include/iec104/iec104.h` steht unter Apache-2.0 (`LICENSES/Apache-2.0.txt`), alle übrigen Dateien sind proprietär (`LICENSES/LicenseRef-Proprietary.txt`). Jede Quelldatei nennt ihre Lizenz im SPDX-Kopf.
+
 ## Stand
 
 | Modul | Stand |

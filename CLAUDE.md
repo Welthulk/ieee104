@@ -40,6 +40,7 @@ Werkzeuge installiert `tools/setup_tools.sh`.
 - Exemplarische Library: Lesbarkeit und Nachvollziehbarkeit vor Performance.
 - Kommentarstandard nach `tasks/TASK-000_Auftrag.md`, Abschnitt 5.
 - Neutralitätsregel nach `tasks/TASK-000_Auftrag.md`, Abschnitt 4; `tools/check_neutral.sh` vor jedem Commit.
+- Lizenzkopf: Jede neue Quelldatei (C/C++, CMake, Skripte) beginnt mit dem SPDX-Kopfblock wie in den vorhandenen Dateien. `include/iec104/iec104.h` ist `Apache-2.0`, alles andere `LicenseRef-Proprietary` (Texte in `LICENSES/`). Nur dort steht der Rechteinhaber, nirgends sonst.
 - C++17, keine Exceptions, kein RTTI im Library-Code (`-fno-exceptions -fno-rtti`). Fehler als `iec104_status`.
 - Öffentliche Header: nur C, keine STL-Typen, alles mit `IEC104_API` exportiert.
 - Normverhalten ist Default. Jede bekannte Abweichung einer Gegenstelle wird ein Parameter, nie ein Code-Zweig für einen Hersteller.
