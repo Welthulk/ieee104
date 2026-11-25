@@ -1,5 +1,19 @@
 # Änderungen
 
+## 0.4.0 (25.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| Redundanz | Redundanzgruppen (`iec104_server_add_group`): eine aktive Verbindung je Gruppe, Umschaltung per STOPDT/STARTDT, Übernahme durch STARTDT auf einer zweiten Verbindung |
+| Pufferung | Ereignispuffer je Gruppe: Ereignis bleibt bis zur Quittung, nach Abbruch oder Umschaltung erneut gesendet; Überlauf: älteste verwerfen oder ablehnen |
+| Pufferung | ohne Gruppen: jede Verbindung puffert während STOPDT (`event_buffer_size`, `overflow` in `iec104_server_options`) |
+| Zuordnung | neue Verbindungen nach IP-Adresse der Leitstelle; unbekannte Adressen werden abgewiesen |
+| Betrieb | `iec104_server_get_group_stats`, `iec104_server_connection_group`; Log bei Übernahme und Überlauf |
+| Konfiguration | Schlüssel `group`, `event_buffer_size`, `overflow` |
+| Selbsttest | Server `--group`, `--buffer`, `--overflow`, `--broadcast`; Client `--switchover`; ctest `SelfTest.SwitchOver` |
+| Festlegung | E10: Redundanzgruppen |
+| Lieferung | fertig gebaute Library auf das Nötigste reduziert: `lib/libiec104.so.0`, Header, Lizenzen, Kurzanleitung |
+
 ## 0.3.0 (25.11.2026)
 
 | Bereich | Änderung |

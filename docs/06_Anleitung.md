@@ -17,12 +17,33 @@ cmake --install build/release --prefix /opt/iec104
 | geteilt (`libiec104.so`) | `-DBUILD_SHARED_LIBS=ON` oder Preset `shared` |
 | ohne TLS (ohne OpenSSL) | `-DIEC104_TLS=OFF`; `*_set_tls()` liefert dann `IEC104_ERR_UNSUPPORTED` |
 
-Fertig gebaut: `iec104-<version>-linux-x86_64.zip` enthält dieselbe Struktur wie `/opt/iec104` (geteilte Library, Header, CMake-Dateien, Selbsttest). Läuft auf Linux x86-64 mit glibc ab 2.34 und OpenSSL 3, z. B. AlmaLinux 9, Ubuntu ab 22.04, auch unter WSL2.
+### Fertig gebaute Library
+
+`iec104-<version>-linux-x86_64.zip` enthält nur das Nötigste zum Verwenden, ohne selbst zu bauen:
+
+| Datei | Inhalt |
+| --- | --- |
+| `lib/libiec104.so.0` | geteilte Library (Release, mit TLS), eine Datei ohne Symlinks |
+| `include/iec104/iec104.h` | Header |
+| `LICENSES/` | Lizenztexte |
+| `README.md` | Voraussetzungen, Übersetzen, Starten |
+
+| Voraussetzung | Mindestens |
+| --- | --- |
+| System | Linux x86-64: AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12, auch unter WSL2 |
+| glibc, libstdc++ | 2.34, GCC 11 |
+| OpenSSL | 3.0 (`libssl.so.3`, auf diesen Systemen vorhanden) |
+
+```bash
+gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app
+```
+
+Für `-liec104` einmal `ln -s libiec104.so.0 lib/libiec104.so` anlegen. `find_package(iec104)` braucht die installierte Variante (oben), nicht das Zip.
 
 Eigenes CMake-Projekt:
 
 ```cmake
-find_package(iec104 0.3 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
+find_package(iec104 0.4 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
 target_link_libraries(meine_app PRIVATE iec104::iec104)
 ```
 
@@ -195,7 +216,62 @@ iec104_client_connect(client, cfg.host, cfg.port);
 
 Alle Schlüssel: Kommentar zu `iec104_config_load()` im Header. Zeiten in Sekunden.
 
-## 6. TLS
+## 6. Redundanz und Pufferung
+
+Eine Leitstelle hält zur Station oft zwei oder mehr Verbindungen: eine überträgt, die anderen stehen bereit. Diese Verbindungen bilden eine Redundanzgruppe. Spontane Daten (`iec104_server_update()`, `iec104_server_send()` an alle) laufen durch den Ereignispuffer der Gruppe und bleiben dort, bis die Leitstelle sie quittiert hat.
+
+```c
+iec104_group_config g;
+iec104_group_config_init(&g);                   /* 1000 Ereignisse, älteste verwerfen */
+strcpy(g.peers[0], "10.0.1.10");                /* Leitstelle, Rechner 1 */
+strcpy(g.peers[1], "10.0.2.10");                /* Leitstelle, Rechner 2 */
+uint32_t gruppe;
+iec104_server_add_group(server, &g, &gruppe);   /* vor iec104_server_listen() */
+```
+
+| Situation | Verhalten |
+| --- | --- |
+| keine Verbindung gestartet | Ereignisse sammeln sich im Puffer |
+| STARTDT auf einer Verbindung | sie wird aktiv und erhält zuerst den Puffer, danach laufende Ereignisse |
+| STOPDT, dann STARTDT auf einer anderen | Umschaltung ohne Verlust; die Leitstelle macht danach üblicherweise eine Generalabfrage |
+| STARTDT auf einer zweiten, ohne STOPDT auf der ersten | die zweite übernimmt (Warnung im Log) |
+| Abbruch der aktiven Verbindung | Unquittiertes geht auf der nächsten aktiven erneut hinaus (doppelt möglich, nie verloren) |
+| Puffer voll | ältestes Ereignis verwerfen, oder mit `IEC104_OVERFLOW_REJECT` das neue ablehnen (`IEC104_ERR_WOULD_BLOCK`) |
+| zyklische Daten (Ursache 1, 2) | nicht gepuffert, nur an aktive Verbindungen |
+| Verbindung von unbekannter Adresse | abgewiesen, sofern keine Gruppe ohne Adressliste existiert |
+| keine Gruppe angelegt | jede Verbindung ist ihre eigene Gruppe: Pufferung während STOPDT, endet mit der Verbindung |
+
+| Aufgabe | Aufruf |
+| --- | --- |
+| Zustand und Zähler einer Gruppe | `iec104_server_get_group_stats(server, gruppe, &s)`: aktive Verbindung, Füllstand, verworfen, erneut gesendet, Umschaltungen |
+| Gruppe einer Verbindung | `iec104_server_connection_group(server, verbindung)` |
+| Puffer ohne Gruppen | `iec104_server_options.event_buffer_size`, `.overflow` |
+
+Auf der Seite der Leitstelle sind zwei Client-Handles nötig, je eines pro Verbindung:
+
+```c
+iec104_client_connect(haupt, "10.0.0.5", 2404);
+iec104_client_connect(reserve, "10.0.0.5", 2404);   /* bleibt in STOPDT, TESTFR läuft */
+iec104_client_start(haupt);
+/* ... Umschalten: */
+iec104_client_stop(haupt);                          /* STOPDT con kommt, wenn alles quittiert ist */
+iec104_client_start(reserve);                       /* sobald haupt STOPPED meldet */
+iec104_client_interrogation(reserve, 1, 20);
+```
+
+In der Konfigurationsdatei eine Zeile je Gruppe (`*` = jede Adresse):
+
+```ini
+group = 10.0.1.10, 10.0.2.10
+event_buffer_size = 5000
+overflow = drop_oldest
+```
+
+```c
+for (uint32_t i = 0; i < cfg.group_count; ++i) iec104_server_add_group(server, &cfg.groups[i], NULL);
+```
+
+## 7. TLS
 
 IEC 104 selbst ist ungeschützt. Mit TLS nach IEC 62351-3 laufen dieselben APDUs verschlüsselt und beide Seiten weisen sich mit Zertifikat aus. Standardport mit TLS: 19998 (`IEC104_DEFAULT_TLS_PORT`).
 
@@ -251,7 +327,7 @@ tls_peer_name = leitstelle.example
 if (cfg.use_tls) iec104_client_set_tls(client, &cfg.tls);
 ```
 
-## 7. Regeln
+## 8. Regeln
 
 | Regel | Grund |
 | --- | --- |

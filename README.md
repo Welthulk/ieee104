@@ -2,7 +2,7 @@
 
 Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
 
-Stand: 25.11.2026, Version 0.3.0, Linux x86-64.
+Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
 
 ## Stand
 
@@ -17,7 +17,7 @@ Stand: 25.11.2026, Version 0.3.0, Linux x86-64.
 | Befehle | Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung am Client mit Ergebnis je Befehl und getrennten Timeouts |
 | Betrieb | Log-Callback mit Stufen und APDU-Trace, Statistik je Verbindung, Konfigurationsdatei, `find_package(iec104)`, statisch oder geteilt |
 | TLS | IEC 62351-3: gegenseitige Authentifizierung mit X.509, Sperrlisten, Name oder Fingerprint der Gegenstelle, Key Update und Renegotiation nach Zeit, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse |
-| in Arbeit | Pufferung, Redundanzgruppen |
+| Redundanz | Redundanzgruppen nach Edition 2: eine aktive Verbindung je Gruppe, Ereignispuffer je Gruppe bis zur Quittung, erneutes Senden nach Abbruch, Überlaufstrategie, Zuordnung über die Adresse der Leitstelle |
 
 ## Unterlagen
 
@@ -27,8 +27,8 @@ Stand: 25.11.2026, Version 0.3.0, Linux x86-64.
 | `docs/02_Technik_und_Quellen.md` | Architektur, Protokollaufbau, Parameter, Typkennungen, Elemente, Quellen |
 | `docs/03_Quellen_APCI.md` | Öffentliche Belege für die Regeln der Verbindungssteuerung |
 | `docs/04_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
-| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E9), auf die der Code verweist |
-| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, TLS, Regeln |
+| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E10), auf die der Code verweist |
+| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Redundanz, TLS, Regeln |
 
 ## Verzeichnisse
 
@@ -37,7 +37,7 @@ Stand: 25.11.2026, Version 0.3.0, Linux x86-64.
 | `include/iec104/` | öffentlicher C-Header, die einzige Schnittstelle für Anwender |
 | `src/codec/` | reine Funktionen auf Byte-Puffern, kein I/O, keine Allokation |
 | `src/apci/` | Zustandsmaschine: Bytes und Zeit rein, Bytes und Ereignisse raus |
-| `src/session/` | Anwendungsabläufe der gesteuerten Station, Prozessabbild |
+| `src/session/` | Anwendungsabläufe der gesteuerten Station, Prozessabbild, Redundanzgruppen |
 | `src/transport/` | Sockets, Verbindungsaufbau, Zeitbasis, TLS-Backend |
 | `src/api/` | Implementierung der C-Schnittstelle |
 | `tests/` | Unit-Tests (GoogleTest), Referenzdaten unter `tests/data/` |
@@ -76,6 +76,8 @@ build/debug/iec104_selftest_client --host 127.0.0.1 --port 2404 --idle 25
 build/debug/iec104_selftest_client --host <Gerät> --foreign --ca <Adresse> --idle 60     # fremder Server
 tools/selftest/run_selftest.sh build/debug/iec104_selftest_server \
     build/debug/iec104_selftest_client --tls build/debug/tls                            # über TLS
+tools/selftest/run_selftest.sh build/debug/iec104_selftest_server \
+    build/debug/iec104_selftest_client --switchover                                     # Umschaltung
 ```
 
 Der Client meldet jeden Schritt mit `ok` oder `FAILED` und endet mit `result: PASSED` (Exit-Code 0) oder `result: FAILED` (Exit-Code 1). `ctest` lässt beide Programme automatisch über Loopback gegeneinander laufen. Testfälle gegen fremde Geräte, Fehlerfälle und alle Optionen: `docs/04_Selbsttest.md`.
@@ -125,7 +127,7 @@ Befehlspunkte legt der Server mit `iec104_server_add_command` fest (direkt oder 
 
 Der Client funktioniert entsprechend: `iec104_client_create`, `iec104_client_connect(client, host, port)`, nach dem Zustand `IEC104_LINK_STOPPED` `iec104_client_start`, danach zum Beispiel `iec104_client_interrogation(client, 1, 20)`; die Antworten kommen als Objekte über `on_object`. Befehle sendet `iec104_client_send_command` oder, zweistufig, `iec104_client_select_execute`; das Ergebnis jedes Befehls (ausgeführt, abgelehnt, keine Bestätigung, …) meldet `on_command_result`. Alle Funktionen liefern einen `iec104_status`; `iec104_status_string()` gibt einen lesbaren Text dazu.
 
-TLS: `iec104_server_set_tls` bzw. `iec104_client_set_tls` mit CA, Zertifikat und Schlüssel vor `listen`/`connect`, sonst ändert sich nichts (`docs/06_Anleitung.md`, Abschnitt 6).
+TLS: `iec104_server_set_tls` bzw. `iec104_client_set_tls` mit CA, Zertifikat und Schlüssel vor `listen`/`connect`, sonst ändert sich nichts (`docs/06_Anleitung.md`, Abschnitt 7).
 
 ## Lizenz
 

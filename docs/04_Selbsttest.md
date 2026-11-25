@@ -95,7 +95,7 @@ Die Programme liegen danach unter `build/debug/iec104_selftest_server` und `buil
 2. startet den Client gegen diesen Port mit kurzem t3 (1 s) und 3 s Ruhe, damit auch der Verbindungstest mit TESTFR läuft,
 3. wertet die Exit-Codes beider Programme aus.
 
-Ein zweiter Lauf macht dasselbe über TLS mit gegenseitiger Authentifizierung, Sperrliste, Namensprüfung und Schlüsselerneuerung alle 2 s.
+Ein zweiter Lauf macht dasselbe über TLS mit gegenseitiger Authentifizierung, Sperrliste, Namensprüfung und Schlüsselerneuerung alle 2 s. Ein dritter prüft die Umschaltung einer Redundanzgruppe (`--switchover`, Abschnitt 4.7).
 
 Von Hand:
 
@@ -209,7 +209,34 @@ Gegenprobe ohne eigene Software, mit OpenSSL als Client (sendet STARTDT act und 
 
 `openssl s_client … -tls1_2 -msg` zeigt bei `--tls-renewal 1` am Server jede Sekunde HelloRequest und den neuen Handshake.
 
-### 4.7 Mitschnitt mit Wireshark
+### 4.7 Redundanz und Umschaltung
+
+Der Server sendet die Messreihe mit `--broadcast` als gemeinsame Ereignisse durch den Puffer der Redundanzgruppe, nicht je Verbindung. Der Client öffnet mit `--switchover` eine zweite Verbindung als Reserve und schaltet um, während die Reihe läuft (STOPDT auf der ersten, STARTDT auf der Reserve):
+
+```bash
+iec104_selftest_server --group 127.0.0.1 --broadcast --count 300 --interval 50 --stats
+iec104_selftest_client --switchover --expect 300 --idle 5
+```
+
+```
+  standby connection (stopped) ......... ok
+  switch-over (STOPDT, STARTDT standby)  109 values before
+  spontaneous values ................... 300/300, in order
+  idle connection still open ........... ok
+```
+
+Am Server zeigt `--stats` am Ende die Zähler der Gruppe (Ereignisse, verworfen, erneut gesendet, Umschaltungen).
+
+| Test | Vorgehen | Erwartung |
+| --- | --- | --- |
+| Umschaltung | wie oben | Reihe lückenlos und geordnet, doppelte Werte werden gezählt („repeated“) |
+| fremde Leitstelle mit zwei Verbindungen | Server mit `--group <Adresse 1>,<Adresse 2> --broadcast --count 100000 --interval 1000 --log info`, an der Leitstelle umschalten | Log `group 1: active, N buffered events` bei jedem STARTDT; IOA 100 zählt ohne Lücke weiter |
+| Umschalten ohne STOPDT | Leitstelle startet die zweite Verbindung, ohne die erste zu stoppen | Log `takes over from connection …`, Daten nur noch auf der zweiten |
+| Abbruch | aktive Verbindung trennen (Kabel, `kill`), danach die Reserve starten | unquittierte Werte kommen auf der Reserve erneut |
+| Pufferüberlauf | Server mit `--broadcast --buffer 10 --interval 1000 --log info`; Leitstelle startet, stoppt nach einigen Werten, startet nach 20 s wieder | Log `event buffer full`; nach STARTDT nur die letzten 10 Werte (Lücke von etwa 10) |
+| unbekannte Adresse | Server mit `--group 192.0.2.1`, Client von einer anderen Adresse | Server-Log `rejected: not in any redundancy group`; Client `connect … ok`, dann `STARTDT … FAILED (closed by peer)` |
+
+### 4.8 Mitschnitt mit Wireshark
 
 Wireshark dekodiert IEC 104 auf Port 2404 von selbst. Für einen anderen Port: *Analyze → Decode As… → TCP port → IEC 60870-5-104*. Mitschnitt ohne Oberfläche:
 
@@ -230,6 +257,10 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
 | `--duration S` | Laufzeit, 0 = bis Strg-C | 0 |
 | `--once` | nach der ersten Verbindung beenden, Exit-Code wie beim Client | aus |
 | `--port-file F` | tatsächlichen Port in Datei F schreiben | – |
+| `--broadcast` | Messreihe als gemeinsame, gepufferte Ereignisse für alle Verbindungen | aus (Reihe je Verbindung) |
+| `--group ADR,ADR` | Redundanzgruppe für diese Adressen der Leitstelle, `*` = jede; mehrfach möglich | keine (jede Verbindung eigene Gruppe) |
+| `--buffer N` | Ereignispuffer je Gruppe | 1000 |
+| `--overflow W` | voller Puffer: `drop_oldest` oder `reject` | `drop_oldest` |
 
 ### Client
 
@@ -243,6 +274,7 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
 | `--expect N` | erwartete spontane Messwerte | 100 |
 | `--idle S` | Ruhephase vor STOPDT, größer als t3 wählen | 0 |
 | `--timeout S` | Grenze je Schritt | 20 |
+| `--switchover` | zweite Verbindung als Reserve, Umschaltung während der Messreihe (Server mit `--broadcast`) | aus |
 
 ### Beide
 
@@ -279,4 +311,4 @@ Ebenfalls abgedeckt: Befehlsmodelle je IOA (direkt, Select/Execute mit Zeitüber
 
 Ebenfalls abgedeckt: TLS mit gegenseitiger Authentifizierung, Sperrliste, Namensprüfung und Schlüsselerneuerung. Negativfälle (fremde CA, abgelaufen, gesperrt, Fingerprint, Handshake-Timeout, Klartext gegen TLS) prüfen die Unit-Tests `Tls.*`.
 
-Noch nicht abgedeckt: Pufferung bei unterbrochener Verbindung, Redundanzgruppen.
+Ebenfalls abgedeckt: Redundanzgruppe mit zwei Verbindungen, Umschaltung per STOPDT/STARTDT während laufender Daten. Abbruch mit unquittierten Ereignissen, Übernahme ohne STOPDT, Überlauf und Abweisung prüfen die Unit-Tests `Redundancy.*`.

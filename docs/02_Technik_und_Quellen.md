@@ -128,6 +128,16 @@ Bit-Layouts: `src/codec/elements.hpp`, bestätigt durch die Referenz-ASDUs in `t
 
 UTC oder Ortszeit ist nicht genormt, sondern Teil der Interoperabilitätsliste. Der Codec trägt keine Zeitzone; IV, SU und Wochentag sind eigene Felder. Die Library rechnet in UTC (N13).
 
+## Redundanz
+
+| Punkt | Stand |
+| --- | --- |
+| Redundante Verbindungen | Abschnitt 10 der Norm, neu seit Edition 2 |
+| Gruppe | mehrere Verbindungen einer Leitstelle; genau eine überträgt Daten (STARTDT), die anderen stehen in STOPDT bereit und werden mit TESTFR überwacht |
+| Umschalten | Leitstelle sendet STOPDT auf der alten, STARTDT auf der neuen Verbindung, danach üblicherweise eine Generalabfrage |
+| Ereignispuffer | gehört der Gruppe, puffert auch ohne gestartete Verbindung; Modelle in [LIB]: eine Gruppe für alle, Gruppe je Verbindung, mehrere Gruppen nach Adresse |
+| Umsetzung | `src/session/redundancy_group.hpp`; Festlegungen docs/05, N7 und E10 |
+
 ## Sicherheit
 
 | Punkt | Stand |
@@ -159,4 +169,4 @@ UTC oder Ortszeit ist nicht genormt, sondern Teil der Interoperabilitätsliste. 
 | [AMD1] | IEC 60870-5-104:2006/AMD1:2016, Leseprobe: https://cdn.standards.iteh.ai/samples/22910/722bcd41d12f48898e3b0b642418b49d/IEC-60870-5-104-2006-AMD1-2016.pdf |
 | [CON] | IEC 60870-5-104 Ed. 2.1, Vorschau mit Inhaltsverzeichnis: https://vde-verlag.de/iec-normen/preview-pdf/info_iec60870-5-104{ed2.1}b.pdf |
 | [62351] | IEC 62351-3 Ed. 2.0, Vorschau: https://assets.vde-verlag.de/iec-normen/preview-pdf/info_iec62351-3%7Bed2.0%7Db.pdf |
-| [LIB] | lib60870 (nur externe Testgegenstelle, weder gelinkt noch Code übernommen): https://github.com/mz-automation/lib60870 |
+| [LIB] | lib60870 (nur externe Testgegenstelle, weder gelinkt noch Code übernommen): https://github.com/mz-automation/lib60870, Servermodi: https://github.com/mz-automation/lib60870/blob/master/user_guide.adoc |
