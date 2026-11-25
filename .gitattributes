@@ -1,0 +1,11 @@
+# Zeilenenden: im Repo und beim Auschecken immer LF, auch unter Windows.
+# Shell-Skripte laufen sonst unter WSL nicht, und Lieferpatches passen nicht.
+* text=auto eol=lf
+
+# Unverändert lassen
+*.patch -text
+*.zip binary
+*.so binary
+*.so.* binary
+*.pdf binary
+*.png binary
