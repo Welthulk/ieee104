@@ -1,0 +1,1897 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..1cf246f
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,11 @@
++# Zeilenenden: im Repo und beim Auschecken immer LF, auch unter Windows.
++# Shell-Skripte laufen sonst unter WSL nicht, und Lieferpatches passen nicht.
++* text=auto eol=lf
++
++# Unverändert lassen
++*.patch -text
++*.zip binary
++*.so binary
++*.so.* binary
++*.pdf binary
++*.png binary
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 5a8d08e..e93b28e 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,18 @@
+ # Änderungen
+ 
++## 0.5.0 (25.11.2026)
++
++| Bereich | Änderung |
++| --- | --- |
++| Interop | `tools/interop/run_lib60870.sh`: 8 Fälle gegen lib60870 mit und ohne TLS; Ergebnisse und Befunde in `docs/08_Interop.md` |
++| Interop | Vorbereitung Integrationstest: Checkliste, Ablauf, Fehlerbilder, Vorlage `tools/interop/gegenstelle.conf` |
++| TLS | Renegotiation durch die Gegenstelle wird gemeldet (`key renewal: renegotiation complete`) |
++| Selbsttest | Client `--series-ioa`; `--switchover` auch gegen fremde Server; klare Meldung bei fehlendem ACTCON/ACTTERM |
++| Tests | Referenzmitschnitt über TLS (`Capture.ForeignTlsServer`); Test-PKI auch mit RSA-Schlüsseln |
++| Doku | README mit Schnellstart ohne Bauen, Feature-Liste, Tests, Test gegen lib60870 |
++| Test-GUI | `examples/julia/gui/`: Oberfläche im Browser für Leitstelle und Station (Abfragen, Befehle mit Select/Execute, Werte, TLS, Ereignisse); nur Julia-Standardbibliothek |
++| Julia | `IEC104.jl` um Befehle, Uhrzeit, Zählerabfrage, TLS, Log und Texte der Zustände erweitert |
++
+ ## 0.4.0 (25.11.2026)
+ 
+ | Bereich | Änderung |
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 186e4a5..ec13e26 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,7 @@
+ cmake_minimum_required(VERSION 3.21)
+ 
+ project(iec104
+-    VERSION 0.4.0
++    VERSION 0.5.0
+     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
+     LANGUAGES C CXX)
+ 
+@@ -210,6 +210,14 @@ if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
+             COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
+                     $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>)
+         set_tests_properties(SelfTest.ServerAndClientOverTcp PROPERTIES TIMEOUT 90)
++        # Interop with lib60870-C as foreign peer (only if given; see docs/08_Interop.md).
++        set(IEC104_LIB60870_DIR "" CACHE PATH "lib60870-C folder with build/ (and build-tls/) for interop tests")
++        if(IEC104_LIB60870_DIR AND IEC104_BUILD_EXAMPLES)
++            get_filename_component(_lib60870 "${IEC104_LIB60870_DIR}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
++            add_test(NAME Interop.Lib60870
++                COMMAND ${PROJECT_SOURCE_DIR}/tools/interop/run_lib60870.sh ${_lib60870} ${CMAKE_BINARY_DIR})
++            set_tests_properties(Interop.Lib60870 PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
++        endif()
+         add_test(NAME SelfTest.SwitchOver
+             COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
+                     $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>
+diff --git a/README.md b/README.md
+index ff726da..7c67bde 100644
+--- a/README.md
++++ b/README.md
+@@ -2,22 +2,53 @@
+ 
+ Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
+ 
+-Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
++Stand: 25.11.2026, Version 0.5.0, Linux x86-64.
+ 
+-## Stand
++## Sofort nutzen, ohne zu bauen
+ 
+-| Modul | Inhalt |
++| Was | Wo |
+ | --- | --- |
+-| `codec` | APCI (I/S/U-Format), ASDU-Kopf mit parametrierbaren Feldlängen, alle Informationselemente, Typtabelle mit 59 Typkennungen, vollständige ASDUs mit SQ = 0 und SQ = 1, Aufteilen langer Objektlisten nach maximaler ASDU-Länge, strikter und toleranter Modus, CP56Time2a |
+-| `apci` | Zustandsmaschine der Verbindung ohne eigenes I/O: STARTDT/STOPDT/TESTFR, Folgenummern, Quittierung nach k und w, Timer t1–t3 |
+-| `transport` | TCP für Linux (nicht blockierend, `poll`), Verbindungsaufbau mit t0; TLS 1.2/1.3 mit OpenSSL 3.x |
+-| `session` | Abläufe der gesteuerten Station: Prozessabbild, Generalabfrage (Station und Gruppen), Zählerabfrage, Lesebefehl, Testbefehl, Uhrzeit, Befehle mit Bestätigung und Beendigung, Ende der Initialisierung, negative Bestätigungen (Ursachen 44–47) |
+-| C-API | Server und Client mit Handles, konfigurierbaren Ports, Timern und ASDU-Profil; Werte statt Oktette (`iec104_object`), Callbacks für Objekte, Befehle und Zustandswechsel |
+-| Selbsttest | `iec104_selftest_server` und `iec104_selftest_client` für automatische und manuelle Tests |
+-| Befehle | Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung am Client mit Ergebnis je Befehl und getrennten Timeouts |
+-| Betrieb | Log-Callback mit Stufen und APDU-Trace, Statistik je Verbindung, Konfigurationsdatei, `find_package(iec104)`, statisch oder geteilt |
+-| TLS | IEC 62351-3: gegenseitige Authentifizierung mit X.509, Sperrlisten, Name oder Fingerprint der Gegenstelle, Key Update und Renegotiation nach Zeit, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse |
+-| Redundanz | Redundanzgruppen nach Edition 2: eine aktive Verbindung je Gruppe, Ereignispuffer je Gruppe bis zur Quittung, erneutes Senden nach Abbruch, Überlaufstrategie, Zuordnung über die Adresse der Leitstelle |
++| Fertig gebaute Library für Linux x86-64 (Release, mit TLS) | `dist/iec104-<version>-linux-x86_64/` (in der Lieferung als gleichnamiges Zip): `lib/libiec104.so.0`, `include/iec104/iec104.h`, Kurzanleitung `README.md` |
++| Beispielprogramme für Julia | `julia/` im selben Ordner bzw. `examples/julia/`: `IEC104.jl` (Anbindung), `client.jl`, `server.jl`; Anleitung `docs/07_Julia.md` |
++| Test-GUI im Browser | `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080`: Leitstelle und Station mit Abfragen, Befehlen, Werten, TLS (`docs/07_Julia.md`, Abschnitt 7) |
++| Beispielprogramme in C | `examples/hello_server.c`, `examples/hello_client.c`; Anleitung `docs/06_Anleitung.md` |
++
++Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab 2.34, OpenSSL 3).
++
++```bash
++cd dist/iec104-0.5.0-linux-x86_64
++gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
++julia julia/server.jl 2404 &                                                       # Julia: Station
++julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
++julia julia/gui/iec104_gui.jl                                                      # Test-GUI: http://localhost:8080
++```
++
++## Funktionen
++
++| Bereich | Funktionen |
++| --- | --- |
++| Rollen | Server (gesteuerte Station) und Client (Leitstelle), beide im selben Prozess nutzbar |
++| Protokoll | IEC 60870-5-104 Ed. 2.1: APCI mit STARTDT/STOPDT/TESTFR, Folgenummern, k/w, Timer t0–t3; alle 59 Typkennungen, ASDUs mit SQ = 0/1, CP56Time2a; strikter Normmodus und toleranter Modus für bekannte Abweichungen |
++| Parameter | Timer, k, w, Feldlängen (COT, CA, IOA), maximale ASDU-Länge, Port, Adresse; alles je Verbindung einstellbar, auch per Konfigurationsdatei |
++| Server | Prozessabbild; Generalabfrage (Station, Gruppen 1–16), Zählerabfrage, Lesebefehl, Testbefehl, Uhrzeit beantwortet die Library selbst; Ende der Initialisierung; negative Bestätigungen (Ursachen 44–47); Broadcast-Adresse |
++| Befehle | Einzel-, Doppel-, Stufen-, Sollwert- und Bitmusterbefehle mit und ohne Zeitmarke; Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout); maximale Befehlsverzögerung; Client verfolgt jeden Befehl bis zum Ergebnis |
++| Redundanz | Redundanzgruppen nach Edition 2: eine aktive Verbindung je Gruppe, Umschaltung per STOPDT/STARTDT, Ereignispuffer je Gruppe bis zur Quittung, erneutes Senden nach Abbruch, Überlaufstrategie, Zuordnung über die Adresse der Leitstelle |
++| Sicherheit | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3: gegenseitige Authentifizierung, Sperrlisten, Prüfung von Name oder Fingerprint, Key Update und Renegotiation, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse; Abweisung unbekannter Absender |
++| Betrieb | Log mit Stufen bis zum APDU-Hexdump, Statistik je Verbindung und Gruppe, Konfigurationsdatei, kein interner Thread (Poll im Thread der Anwendung) |
++| Einbindung | stabile C-Schnittstelle (ein Header), statisch oder geteilt, `find_package(iec104)`, Anbindung für Julia per `ccall`; fertig gebaute Library |
++| Werkzeuge | Test-GUI im Browser (Leitstelle und Station); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870 |
++
++## Tests
++
++| Art | Umfang |
++| --- | --- |
++| Unit-Tests (GoogleTest) | 158 Tests: Codec mit Referenz-Hexdumps, Zustandsmaschine mit simulierter Zeit, Abläufe der Station, Befehle, C-API über Loopback, TLS mit Negativfällen, Redundanz, Konfigurationsdatei |
++| Referenzdaten | Mitschnitte einer fremden Implementierung, auch über TLS (`tests/data/`); jede APDU wird dekodiert und bitgenau neu kodiert |
++| Selbsttest | Server und Client über TCP, über TLS und mit Umschaltung einer Redundanzgruppe, als Teil von `ctest` (162 Fälle gesamt) |
++| Sanitizer | alle Tests mit AddressSanitizer und UBSan (Preset `asan`) |
++| Statische Analyse | clang-tidy ohne Befunde, Übersetzung mit `-Werror` |
++| Fuzzing | libFuzzer für Codec, Zustandsmaschine und Abläufe der Station |
++| Interop | gegen lib60870 als fremde Gegenstelle, mit und ohne TLS: `tools/interop/run_lib60870.sh`, Ergebnisse in `docs/08_Interop.md` |
+ 
+ ## Unterlagen
+ 
+@@ -30,6 +61,7 @@ Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
+ | `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E10), auf die der Code verweist |
+ | `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Redundanz, TLS, Regeln |
+ | `docs/07_Julia.md` | Library aus Julia verwenden: Schnellstart, Typen, Callbacks, Beispiele |
++| `docs/08_Interop.md` | Tests gegen eine fremde Implementierung, Befunde, Vorbereitung des Integrationstests mit einer Gegenstelle |
+ 
+ ## Verzeichnisse
+ 
+@@ -45,6 +77,8 @@ Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
+ | `fuzz/` | libFuzzer-Ziele für Codec und Zustandsmaschine |
+ | `examples/` | Hello World: kleinster Server und Client; `examples/julia/` für Julia |
+ | `tools/selftest/` | Selbsttest-Programme und Testskript |
++| `tools/interop/` | Interop-Tests gegen lib60870 |
++| `dist/` | fertig gebaute Library je Version |
+ | `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer, Test-PKI für TLS |
+ 
+ ## Bauen und testen
+@@ -83,6 +117,28 @@ tools/selftest/run_selftest.sh build/debug/iec104_selftest_server \
+ 
+ Der Client meldet jeden Schritt mit `ok` oder `FAILED` und endet mit `result: PASSED` (Exit-Code 0) oder `result: FAILED` (Exit-Code 1). `ctest` lässt beide Programme automatisch über Loopback gegeneinander laufen. Testfälle gegen fremde Geräte, Fehlerfälle und alle Optionen: `docs/04_Selbsttest.md`.
+ 
++## Gegen lib60870 testen
++
++lib60870-C dient nur als fremde Gegenstelle: Das Skript startet deren unveränderte Beispielprogramme und spricht über TCP mit ihnen, gelinkt wird nichts. Einmalig holen und bauen (neben diesem Repo):
++
++```bash
++git clone --branch v2.4.1 https://github.com/mz-automation/lib60870.git ../lib60870
++cd ../lib60870/lib60870-C
++cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build       # ohne TLS
++curl -L https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.8/mbedtls-3.6.8.tar.bz2 \
++    | tar xj -C dependencies                                                         # für TLS
++cmake -S . -B build-tls -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build-tls
++cd -
++```
++
++Testen (Ports 2404 und 19998 müssen frei sein):
++
++```bash
++tools/interop/run_lib60870.sh ../lib60870/lib60870-C build/debug
++```
++
++Ausgabe: je Fall `bestanden`, `Abweichung Gegenstelle` (bekannter Fehler eines Beispielprogramms, eigenes Verhalten korrekt) oder `FEHLER`; Logs mit APDU-Mitschnitt unter `build/debug/interop/`. Mit `cmake --preset debug -DIEC104_LIB60870_DIR=../lib60870/lib60870-C` läuft derselbe Test in `ctest` mit. Fälle, Befunde und Vorbereitung des Integrationstests: `docs/08_Interop.md`.
++
+ ## Verwendung der C-API
+ 
+ Server mit Prozessabbild; Generalabfrage, Zählerabfrage und Lesebefehle beantwortet die Library selbst, Befehle entscheidet die Anwendung:
+diff --git a/docs/06_Anleitung.md b/docs/06_Anleitung.md
+index fb0ba14..ac46248 100644
+--- a/docs/06_Anleitung.md
++++ b/docs/06_Anleitung.md
+@@ -43,7 +43,7 @@ Für `-liec104` einmal `ln -s libiec104.so.0 lib/libiec104.so` anlegen. `find_pa
+ Eigenes CMake-Projekt:
+ 
+ ```cmake
+-find_package(iec104 0.4 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
++find_package(iec104 0.5 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
+ target_link_libraries(meine_app PRIVATE iec104::iec104)
+ ```
+ 
+diff --git a/docs/07_Julia.md b/docs/07_Julia.md
+index e6cc518..4916e2d 100644
+--- a/docs/07_Julia.md
++++ b/docs/07_Julia.md
+@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
+ Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
+ 
+ ```bash
+-cd iec104-0.4.0-linux-x86_64
++cd iec104-0.5.0-linux-x86_64
+ julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
+ julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
+ ```
+@@ -155,3 +155,28 @@ end
+ | `try … finally *_destroy(handle) end` | schließt Verbindungen auch nach Strg-C oder Fehler |
+ | `IEC104.jl` und Library aus derselben Version verwenden | Strukturen können sich zwischen Versionen ändern; `IEC104.jl` prüft die Größen beim Laden |
+ | Typen, Ursachen und Qualitätsbits: Tabellen in `include/iec104/iec104.h` | Kommentar zu `iec104_object` |
++
++## 7. Test-GUI im Browser
++
++`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server). Es braucht nur Julia, keine Pakete.
++
++```bash
++julia julia/gui/iec104_gui.jl            # im Binärpaket; im Quellbaum examples/julia/gui/
++```
++
++Dann im Browser `http://localhost:8080` öffnen; unter WSL auch aus Windows heraus. Anderer Port: `julia julia/gui/iec104_gui.jl 8081`.
++
++| Bereich | Funktionen |
++| --- | --- |
++| Leitstelle | Verbinden (Adresse, Port, Station, Timer, k, w, tolerant, TLS mit CA, Zertifikat, Schlüssel, Name), STARTDT, STOPDT, Trennen; Generalabfrage (Station, Gruppe 1–16), Zählerabfrage, Uhrzeit; Befehle 45–50 und 58–63 direkt oder mit Select/Execute |
++| Tabelle | jeder empfangene Punkt mit Typ, Wert, Qualität, Ursache (negativ rot), Zeitmarke, Anzahl, Alter; frische Werte hervorgehoben |
++| Station | Starten auf Port/Station, Datenpunkte anlegen (Typen 1, 3, 5, 9, 11, 13, 15), Wert ändern und spontan senden (+1 für schnelle Tests), Befehle annehmen oder ablehnen, Verbindungen |
++| Ereignisse | Zustände, Befehle und ihr Ergebnis, TLS-Ereignisse, Fehler und Warnungen der Library |
++
++Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Punkt anlegen, Leitstelle auf `127.0.0.1:2404` verbinden, STARTDT, Generalabfrage.
++
++| Hinweis | Grund |
++| --- | --- |
++| Die GUI lauscht nur auf `127.0.0.1` | sie hat keine Anmeldung und kann Befehle senden; eine andere Adresse nur bewusst als zweiter Parameter |
++| Die GUI ist ein Testwerkzeug | eine Verbindung je Seite, kein Speichern der Einstellungen |
++| Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`) und `index.html` (Seite) |
+diff --git a/docs/08_Interop.md b/docs/08_Interop.md
+new file mode 100644
+index 0000000..2fc455d
+--- /dev/null
++++ b/docs/08_Interop.md
+@@ -0,0 +1,92 @@
++# Interop-Tests und Integrationstest
++
++Stand: 25.11.2026 · Gegenstelle: lib60870-C v2.4.1, für TLS mit mbedTLS 3.6.8 · Skript: `tools/interop/run_lib60870.sh`
++
++## 1. Zweck
++
++Die Unit-Tests und der Selbsttest prüfen die Library gegen sich selbst. Fehler, die beide Seiten gleich machen, finden sie nicht. Deshalb läuft die Library zusätzlich gegen eine unabhängige Implementierung: lib60870-C. Sie dient nur als Gegenstelle. Das Skript startet deren unveränderte Beispielprogramme und spricht über TCP mit ihnen; nichts wird gelinkt, kein Code übernommen.
++
++## 2. Aufruf
++
++lib60870 holen und bauen: README, Abschnitt „Gegen lib60870 testen“. Dann:
++
++```bash
++tools/interop/run_lib60870.sh ../lib60870/lib60870-C build/debug        # Ports 2404, 19998 frei
++```
++
++| Ergebnis | Bedeutung |
++| --- | --- |
++| bestanden | Verhalten wie erwartet |
++| Abweichung Gegenstelle | bekannter Fehler eines Beispielprogramms (Abschnitt 4); eigenes Verhalten korrekt |
++| FEHLER | eigenes Verhalten falsch; Rückgabe 1, Log unter `build/debug/interop/` |
++| übersprungen | lib60870 ohne TLS gebaut |
++
++In `ctest`: `cmake --preset debug -DIEC104_LIB60870_DIR=../lib60870/lib60870-C`, Test `Interop.Lib60870`.
++
++## 3. Fälle und Ergebnis
++
++| Nr. | Fall | Gegenstelle | Geprüft | Ergebnis |
++| --- | --- | --- | --- | --- |
++| 1 | Client → Server | `cs104_server` | STARTDT, Generalabfrage, Uhrzeit, Zählerabfrage (Ursache 44), TESTFR, STOPDT | bestanden |
++| 2 | Server ← Client | `simple_client` gegen `hello_server` | STARTDT con, Ende der Initialisierung, Generalabfrage mit ACTCON/ACTTERM, Testbefehl 107 | bestanden |
++| 3 | Umschaltung | `cs104_redundancy_server` | zwei Verbindungen, STOPDT/STARTDT, die gepufferte Reihe (IOA 110) läuft lückenlos weiter | bestanden; Abweichung Gegenstelle (ACTTERM) |
++| 4 | TLS 1.3 Client → Server | `tls_server` | Handshake mit gegenseitiger Authentifizierung, Uhrzeit, TESTFR | bestanden; Abweichung Gegenstelle (ACTTERM) |
++| 5 | TLS 1.2 Client → Server | `tls_server` | wie 4, dazu Renegotiation durch die Gegenstelle alle 2 s | bestanden (5 Renegotiations in 7 s); Abweichung Gegenstelle (ACTTERM) |
++| 6 | TLS Server ← Client | `tls_client` | zwei Verbindungen nacheinander, Generalabfrage, Einzelbefehl, Uhrzeit | bestanden |
++| 7 | TLS mit EC-Schlüsseln | `tls_client` | P-256-Zertifikate | Abweichung Gegenstelle (EC abgelehnt) |
++| 8 | Abgelaufenes Zertifikat | `tls_client` mit seinen Original-Zertifikaten | Client-Zertifikat seit 2022 abgelaufen | bestanden: abgewiesen |
++
++## 4. Befunde
++
++| Befund | Wirkung | Folgerung |
++| --- | --- | --- |
++| lib60870 lehnt EC-Schlüssel (P-256) ab: „insufficient key length“ | kein TLS mit EC-Zertifikaten | Für Gegenstellen dieser Art RSA-Zertifikate (≥ 2048, besser 3072 Bit) vorsehen; Test-PKI: `tools/make_test_certs.sh <ordner> rsa` |
++| Die Beispiele `tls_server` und `cs104_redundancy_server` senden die Beendigung der Generalabfrage mit Typkennung 0 und ohne Objekte (`68 0a … 00 00 0a 00 01 00`) | der Client erkennt kein ACTTERM; Selbsttest meldet „no termination (ACTTERM type 100)“ | Fehler der Beispiele, nicht der lib60870-Bibliothek (`cs104_server` sendet korrekt). Der strikte Codec weist die ASDU ab, statt sie falsch zu deuten; Mitschnitt in `tests/data/lib60870_tls_capture.txt`, Test `Capture.ForeignTlsServer` |
++| Das Client-Zertifikat der lib60870-Beispiele ist seit April 2022 abgelaufen | Verbindung zur eigenen Library wird abgewiesen | gewollt; zeigt die Zeitprüfung |
++| `tls_server` verhandelt TLS 1.2 alle 2 s neu | — | Renegotiation (RFC 5746) durch die Gegenstelle funktioniert; im Log als `key renewal: renegotiation complete` |
++| `simple_client` sendet in v2.4.1 keine Befehle (Code mit `#if 0` abgeschaltet) | Befehlsrichtung nur über `tls_client` geprüft | — |
++| lib60870 meldet „CRL not accessible“ | nur Warnung der Gegenstelle | ohne Sperrliste dort keine Sperrprüfung |
++
++## 5. Integrationstest mit einer Gegenstelle
++
++### 5.1 Vorher klären
++
++Alles Folgende steht in der Interoperabilitätsliste der Gegenstelle (Abschnitt 9 der Norm). Abweichungen werden Parameter, nie Code.
++
++| Punkt | Frage | Parameter |
++| --- | --- | --- |
++| Rolle | Wer ist Server, wer Client? Mehrere Verbindungen? | Server oder Client |
++| Adressen | IP-Adressen, Port (2404, mit TLS 19998), gemeinsame Adresse (CA) | `host`, `port`, `--ca` |
++| Timer, Fenster | t0–t3, k, w | `t0` … `t3`, `k`, `w` |
++| Feldlängen | COT 2, CA 2, IOA 3? Originator-Adresse? | `cot_length`, `ca_length`, `ioa_length`, `originator` |
++| Typen | welche Typkennungen je Richtung, mit oder ohne Zeitmarke | Prozessabbild der Anwendung |
++| Befehle | direkt oder Select/Execute, ACTTERM erwartet, maximale Befehlsverzögerung | `iec104_server_add_command`, `max_command_delay`, `expect_termination` |
++| Zeit | UTC oder Ortszeit, SU-Bit, Uhrzeitsynchronisation von wem | Anwendung (docs/05, N13) |
++| Redundanz | Anzahl Verbindungen, Umschaltung per STOPDT/STARTDT, Generalabfrage danach, Puffergröße | `group`, `event_buffer_size`, `overflow` |
++| TLS | ja/nein, Version, Suites, CA, Schlüsseltyp (RSA/EC), Sperrlisten, Renegotiation | `tls_*` |
++| Abweichungen | bekannte Eigenheiten (lange Timer, t3 = 0, Typen mit CP24Time2a) | `tolerant` |
++
++### 5.2 Ablauf
++
++1. Werte aus 5.1 in eine Konfigurationsdatei übernehmen: Vorlage `tools/interop/gegenstelle.conf`.
++2. Verbindung und Abläufe mit den Selbsttest-Programmen prüfen, bevor die Anwendung beteiligt ist:
++
++   | Gegenstelle ist | Aufruf |
++   | --- | --- |
++   | Server | `iec104_selftest_client --config gegenstelle.conf --foreign --ca <CA> --idle 60 --log trace --stats > lauf1.log` |
++   | Client | `iec104_selftest_server --config gegenstelle.conf --log trace --stats --verbose > lauf1.log` |
++   | Client mit Redundanz | zusätzlich `--group <Adressen> --broadcast`; an der Gegenstelle umschalten |
++
++3. Dann die Anwendung mit derselben Konfigurationsdatei.
++4. Je Lauf aufbewahren: Konfigurationsdatei, Log mit `--log trace` (jede APDU als Hexdump), bei TLS die Sicherheitsereignisse, Version (`iec104_version_string()`). Ein Mitschnitt mit Wireshark auf Port 2404 ergänzt das Log (docs/04, Abschnitt 4.8; mit TLS nur verschlüsselt).
++
++### 5.3 Typische Fehlerbilder
++
++| Beobachtung | Ursache meist | Prüfen |
++| --- | --- | --- |
++| `closed: t1 timeout` kurz nach STARTDT | Gegenstelle quittiert spät, t1 zu kurz | Timer der Gegenstelle (oft t1 = 30 s oder mehr) |
++| `closed: unexpected frame` | Gegenstelle sendet I-Rahmen vor STARTDT oder mit anderer Rolle | Rolle, `tolerant` |
++| negative Antworten Ursache 44–47 | Typ, Ursache, CA oder IOA unbekannt | Typenliste, CA, Prozessabbild |
++| Befehl ohne Ergebnis `NO_TERMINATION` | Gegenstelle sendet kein ACTTERM | `expect_termination = 0` |
++| TLS: `peer certificate rejected` | CA, Ablaufdatum, Sperrliste, Name | Zertifikat mit `openssl x509 -noout -text -in …` |
++| TLS: Handshake bricht ohne Grund ab | Schlüsseltyp oder Suite nicht unterstützt | RSA statt EC, `tls_ciphers` |
+diff --git a/examples/julia/IEC104.jl b/examples/julia/IEC104.jl
+index 80f21f1..c09e828 100644
+--- a/examples/julia/IEC104.jl
++++ b/examples/julia/IEC104.jl
+@@ -13,12 +13,15 @@
+ 
+ module IEC104
+ 
+-export LinkConfig, IecTime, Object, AsduInfo, Callbacks, Iec104Error
++export LinkConfig, IecTime, Object, AsduInfo, Callbacks, Iec104Error, TlsConfig
+ export version, tls_available, check
+ export server_create, server_listen, server_port, server_add_point, server_update,
+        server_poll, server_destroy
+ export client_create, client_connect, client_start, client_stop, client_poll,
+-       client_interrogation, client_destroy
++       client_interrogation, client_destroy, client_close, client_state,
++       client_counter_interrogation, client_clock_sync, client_send_command,
++       client_select_execute, client_set_tls, client_set_log, server_set_log,
++       server_connection_count, time_now, settext!
+ 
+ const LIB = let packaged = normpath(joinpath(@__DIR__, "..", "lib", "libiec104.so.0"))
+     get(ENV, "IEC104_LIB", isfile(packaged) ? packaged : "libiec104.so.0")
+@@ -112,9 +115,39 @@ Callbacks(user; on_asdu = C_NULL, on_state = C_NULL, on_object = C_NULL, on_comm
+     Callbacks(pointer_from_objref(user), on_asdu, on_state, on_object, on_command,
+               on_command_result, on_security)
+ 
++"TLS settings (iec104_tls_config); text fields as fixed byte arrays, set them with settext!."
++mutable struct TlsConfig
++    ca_file::NTuple{512,UInt8}
++    certificate_file::NTuple{512,UInt8}
++    private_key_file::NTuple{512,UInt8}
++    key_password::NTuple{128,UInt8}
++    crl_file::NTuple{512,UInt8}
++    peer_name::NTuple{256,UInt8}
++    peer_fingerprint::NTuple{128,UInt8}
++    cipher_list::NTuple{512,UInt8}
++    cipher_suites::NTuple{256,UInt8}
++    min_version::UInt16
++    max_version::UInt16
++    verify_peer::Cint
++    renegotiation::Cint
++    renewal_interval_s::UInt32
++    session_resumption::Cint
++    session_lifetime_s::UInt32
++    TlsConfig() = (c = new(); ccall((:iec104_tls_config_init, LIB), Cvoid, (Ref{TlsConfig},), c); c)
++end
++
++"Sets a text field of a TlsConfig, e.g. settext!(tls, :ca_file, \"/etc/pki/ca.pem\")."
++function settext!(c::TlsConfig, field::Symbol, text::AbstractString)
++    N = length(getfield(c, field))
++    bytes = codeunits(text)
++    length(bytes) < N || throw(ArgumentError("$field: text too long"))
++    setfield!(c, field, ntuple(i -> i <= length(bytes) ? bytes[i] : 0x00, N))
++    return c
++end
++
+ # Sizes must match the C header (checked once when the module is loaded).
+ @assert sizeof(LinkConfig) == 32 && sizeof(IecTime) == 14 && sizeof(Object) == 40 &&
+-        sizeof(AsduInfo) == 8 && sizeof(Callbacks) == 56
++        sizeof(AsduInfo) == 8 && sizeof(Callbacks) == 56 && sizeof(TlsConfig) == 3352
+ 
+ # --- Status ----------------------------------------------------------------
+ 
+@@ -131,6 +164,23 @@ status_string(st::Integer) = unsafe_string(ccall((:iec104_status_string, LIB), C
+ check(st::Integer) = st == OK ? nothing : throw(Iec104Error(st, status_string(st)))
+ 
+ version() = unsafe_string(ccall((:iec104_version_string, LIB), Cstring, ()))
++
++"Texts of the C enums (iec104_*_string)."
++state_string(x::Integer) = unsafe_string(ccall((:iec104_link_state_string, LIB), Cstring, (Cint,), x))
++close_reason_string(x::Integer) =
++    unsafe_string(ccall((:iec104_close_reason_string, LIB), Cstring, (Cint,), x))
++command_result_string(x::Integer) =
++    unsafe_string(ccall((:iec104_command_result_string, LIB), Cstring, (Cint,), x))
++security_event_string(x::Integer) =
++    unsafe_string(ccall((:iec104_security_event_string, LIB), Cstring, (Cint,), x))
++
++"Current time as CP56Time2a (UTC)."
++function time_now()
++    t = Ref{IecTime}()
++    check(ccall((:iec104_time_from_unix_ms, LIB), Cint, (Int64, Ref{IecTime}),
++                round(Int64, time() * 1000), t))
++    return t[]
++end
+ tls_available() = ccall((:iec104_tls_available, LIB), Cint, ()) != 0
+ 
+ # --- Server (controlled station) ----------------------------------------------
+@@ -154,6 +204,11 @@ server_update(s, station::Integer, o::Object) =
+ server_poll(s, timeout_ms::Integer = 100) =
+     ccall((:iec104_server_poll, LIB), Cint, (Ptr{Cvoid}, Cint), s, timeout_ms)
+ server_destroy(s) = ccall((:iec104_server_destroy, LIB), Cvoid, (Ptr{Cvoid},), s)
++server_connection_count(s) = Int(ccall((:iec104_server_connection_count, LIB), Csize_t, (Ptr{Cvoid},), s))
++"Log callback: @p fn from @cfunction with (Ptr{Cvoid}, Cint, UInt32, Cstring) -> Cvoid; level 0..4."
++server_set_log(s, level::Integer, fn::Ptr{Cvoid}, user::Ptr{Cvoid}) =
++    ccall((:iec104_server_set_log, LIB), Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}, Ptr{Cvoid}),
++          s, level, fn, user)
+ 
+ # --- Client (controlling station) -----------------------------------------------
+ 
+@@ -174,5 +229,31 @@ client_interrogation(c, station::Integer, qoi::Integer = 20) =
+     check(ccall((:iec104_client_interrogation, LIB), Cint, (Ptr{Cvoid}, UInt16, UInt8),
+                 c, station, qoi))
+ client_destroy(c) = ccall((:iec104_client_destroy, LIB), Cvoid, (Ptr{Cvoid},), c)
++client_close(c) = ccall((:iec104_client_close, LIB), Cvoid, (Ptr{Cvoid},), c)
++client_state(c) = ccall((:iec104_client_state, LIB), Cint, (Ptr{Cvoid},), c)
++"Counter interrogation: @p rqt 5 = all counters, @p frz 0 = read."
++client_counter_interrogation(c, station::Integer, rqt::Integer = 5, frz::Integer = 0) =
++    check(ccall((:iec104_client_counter_interrogation, LIB), Cint, (Ptr{Cvoid}, UInt16, UInt8, UInt8),
++                c, station, rqt, frz))
++"Clock synchronization with the current UTC time."
++client_clock_sync(c, station::Integer) =
++    check(ccall((:iec104_client_clock_sync, LIB), Cint, (Ptr{Cvoid}, UInt16, Ref{IecTime}),
++                c, station, time_now()))
++"Command (types 45..51, 58..64); the result arrives via on_command_result."
++client_send_command(c, station::Integer, o::Object) =
++    check(ccall((:iec104_client_send_command, LIB), Cint, (Ptr{Cvoid}, UInt16, Ref{Object}),
++                c, station, o))
++"Select, then execute (select before operate)."
++client_select_execute(c, station::Integer, o::Object) =
++    check(ccall((:iec104_client_select_execute, LIB), Cint, (Ptr{Cvoid}, UInt16, Ref{Object}),
++                c, station, o))
++"TLS for the next connect; nothing = plain TCP."
++client_set_tls(c, tls::Union{TlsConfig,Nothing}) =
++    check(ccall((:iec104_client_set_tls, LIB), Cint, (Ptr{Cvoid}, Ptr{Cvoid}), c,
++                tls === nothing ? C_NULL : pointer_from_objref(tls)))
++"Log callback, see server_set_log."
++client_set_log(c, level::Integer, fn::Ptr{Cvoid}, user::Ptr{Cvoid}) =
++    ccall((:iec104_client_set_log, LIB), Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}, Ptr{Cvoid}),
++          c, level, fn, user)
+ 
+ end # module
+diff --git a/examples/julia/gui/iec104_gui.jl b/examples/julia/gui/iec104_gui.jl
+new file mode 100644
+index 0000000..1a34b01
+--- /dev/null
++++ b/examples/julia/gui/iec104_gui.jl
+@@ -0,0 +1,402 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# iec104_gui.jl - test GUI in the browser: controlling station (client) and
++# controlled station (server) of the IEC 104 library, side by side.
++#
++#   julia iec104_gui.jl [port] [address]     default 8080 127.0.0.1
++#   then open http://localhost:8080
++#
++# Only the Julia standard library is used (Sockets); the page is index.html
++# next to this file. The GUI can send commands: it listens on 127.0.0.1 only,
++# unless another address is given explicitly.
++#
++# Design: one Julia thread. A poll task drives client and server every 20 ms;
++# the library calls the callbacks inside that poll and they only store data.
++# HTTP requests are handled in their own tasks between two polls.
++
++include(joinpath(@__DIR__, "..", "IEC104.jl"))
++using .IEC104
++using Sockets
++using Printf
++
++# --- State ---------------------------------------------------------------------
++
++"One received data point of the client."
++mutable struct Row
++    station::UInt16
++    ioa::UInt32
++    type::UInt8
++    cause::UInt8
++    negative::Bool
++    value::Float64
++    bits::UInt32
++    quality::UInt8
++    time::IecTime
++    count::Int
++    updated::Float64
++end
++
++mutable struct Gui
++    # Controlling station (client)
++    client::Ptr{Cvoid}
++    client_state::Cint
++    client_reason::Cint
++    station::UInt16
++    rows::Dict{Tuple{UInt16,UInt32,UInt8},Row}
++    # Controlled station (server)
++    server::Ptr{Cvoid}
++    server_station::UInt16
++    accept_commands::Bool
++    points::Dict{UInt32,Object}
++    connections::Dict{UInt32,Cint}
++    # Event list shown on the page
++    log::Vector{Tuple{Int,Float64,String}}
++    log_seq::Int
++end
++
++const GUI = Gui(C_NULL, IEC104.LINK_CLOSED, 0, 1, Dict(), C_NULL, 1, true, Dict(), Dict(), [], 0)
++const LOG_MAX = 500
++
++note(text::AbstractString) = begin
++    GUI.log_seq += 1
++    push!(GUI.log, (GUI.log_seq, time(), String(text)))
++    length(GUI.log) > LOG_MAX && popfirst!(GUI.log)
++    nothing
++end
++
++# --- Callbacks (run inside the poll, called from C: store only, no I/O) -------
++
++function cb_client_state(::Ptr{Cvoid}, ::UInt32, state::Cint, reason::Cint)::Cvoid
++    GUI.client_state = state
++    GUI.client_reason = reason
++    note("Leitstelle: " * IEC104.state_string(state) *
++         (state == IEC104.LINK_CLOSED ? " (" * IEC104.close_reason_string(reason) * ")" : ""))
++    return nothing
++end
++
++function cb_client_object(::Ptr{Cvoid}, ::UInt32, info::Ptr{AsduInfo}, obj::Ptr{Object})::Cvoid
++    i = unsafe_load(info)
++    o = unsafe_load(obj)
++    key = (i.common_address, o.ioa, i.type)
++    row = get(GUI.rows, key, nothing)
++    if row === nothing
++        GUI.rows[key] = Row(i.common_address, o.ioa, i.type, i.cause, i.negative != 0, o.value,
++                            o.bits, o.quality, o.time, 1, time())
++    else
++        row.cause = i.cause
++        row.negative = i.negative != 0
++        row.value = o.value
++        row.bits = o.bits
++        row.quality = o.quality
++        row.time = o.time
++        row.count += 1
++        row.updated = time()
++    end
++    return nothing
++end
++
++function cb_command_result(::Ptr{Cvoid}, station::UInt16, cmd::Ptr{Object}, result::Cint)::Cvoid
++    c = unsafe_load(cmd)
++    note("Befehl Typ $(c.type) an $station/$(c.ioa), Wert $(c.value): " *
++         IEC104.command_result_string(result))
++    return nothing
++end
++
++function cb_server_state(::Ptr{Cvoid}, conn::UInt32, state::Cint, reason::Cint)::Cvoid
++    if state == IEC104.LINK_CLOSED
++        delete!(GUI.connections, conn)
++        note("Station: Verbindung $conn geschlossen (" * IEC104.close_reason_string(reason) * ")")
++    else
++        GUI.connections[conn] = state
++        note("Station: Verbindung $conn " * IEC104.state_string(state))
++    end
++    return nothing
++end
++
++function cb_server_command(::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd::Ptr{Object})::Cint
++    i = unsafe_load(info)
++    c = unsafe_load(cmd)
++    what = i.type == 103 ? "Uhrzeit" : "Befehl Typ $(i.type) IOA $(c.ioa) Wert $(c.value)" *
++                                       (c.select != 0 ? " (Auswahl)" : "")
++    note("Station: $what von Verbindung $conn: " * (GUI.accept_commands ? "angenommen" : "abgelehnt"))
++    return Cint(GUI.accept_commands ? 1 : 0)
++end
++
++function cb_security(::Ptr{Cvoid}, conn::UInt32, event::Cint, detail::Cstring)::Cvoid
++    note("TLS $conn: " * IEC104.security_event_string(event) * ": " * unsafe_string(detail))
++    return nothing
++end
++
++function cb_log(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid
++    level <= 1 && note("Library $conn: " * unsafe_string(message))   # errors and warnings
++    return nothing
++end
++
++# --- Actions ---------------------------------------------------------------------
++
++p_int(p, k, d) = haskey(p, k) && !isempty(p[k]) ? parse(Int, p[k]) : d
++p_num(p, k, d) = haskey(p, k) && !isempty(p[k]) ? parse(Float64, replace(p[k], ',' => '.')) : d
++p_str(p, k) = get(p, k, "")
++
++function gui_client_connect(p)
++    GUI.client != C_NULL && (client_destroy(GUI.client); GUI.client = C_NULL)
++    cfg = LinkConfig()
++    for (k, f) in (("t0", :t0_ms), ("t1", :t1_ms), ("t2", :t2_ms), ("t3", :t3_ms))
++        haskey(p, k) && !isempty(p[k]) && setfield!(cfg, f, UInt32(round(p_num(p, k, 0) * 1000)))
++    end
++    haskey(p, "k") && !isempty(p["k"]) && (cfg.k = UInt16(p_int(p, "k", 12)))
++    haskey(p, "w") && !isempty(p["w"]) && (cfg.w = UInt16(p_int(p, "w", 8)))
++    cfg.tolerant = get(p, "tolerant", "") == "1" ? 1 : 0
++    cb = Callbacks(GUI;
++        on_state = @cfunction(cb_client_state, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cint)),
++        on_object = @cfunction(cb_client_object, Cvoid, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})),
++        on_command_result = @cfunction(cb_command_result, Cvoid, (Ptr{Cvoid}, UInt16, Ptr{Object}, Cint)),
++        on_security = @cfunction(cb_security, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cstring)))
++    GUI.client = client_create(cfg, cb)
++    client_set_log(GUI.client, 1, @cfunction(cb_log, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
++    if get(p, "tls", "") == "1"
++        t = TlsConfig()
++        for (k, f) in (("ca", :ca_file), ("cert", :certificate_file), ("key", :private_key_file),
++                       ("peer", :peer_name))
++            isempty(p_str(p, k)) || settext!(t, f, p_str(p, k))
++        end
++        client_set_tls(GUI.client, t)
++    end
++    GUI.station = UInt16(p_int(p, "station", 1))
++    host = isempty(p_str(p, "host")) ? "127.0.0.1" : p_str(p, "host")
++    port = p_int(p, "port", get(p, "tls", "") == "1" ? 19998 : 2404)
++    IEC104.client_connect(GUI.client, host, port)
++    GUI.client_state = IEC104.LINK_CONNECTING
++    note("Leitstelle: verbinde mit $host:$port" * (get(p, "tls", "") == "1" ? " (TLS)" : ""))
++end
++
++need_client() = GUI.client == C_NULL && throw(ArgumentError("keine Verbindung"))
++
++function gui_client_command(p)
++    need_client()
++    type = p_int(p, "type", 45)
++    o = Object(type, p_int(p, "ioa", 0), p_num(p, "value", 0.0))
++    if type >= 58   # with time tag: now
++        o = Object(o.type, o.ioa, o.value, 0, 0, 0, 0, 0, time_now())
++    end
++    if get(p, "mode", "direct") == "sbo"
++        client_select_execute(GUI.client, GUI.station, o)
++        note("Leitstelle: Auswahl und Ausführung Typ $type IOA $(o.ioa) Wert $(o.value)")
++    else
++        client_send_command(GUI.client, GUI.station, o)
++        note("Leitstelle: Befehl Typ $type IOA $(o.ioa) Wert $(o.value)")
++    end
++end
++
++function gui_server_listen(p)
++    GUI.server != C_NULL && (server_destroy(GUI.server); GUI.server = C_NULL)
++    empty!(GUI.connections)
++    cb = Callbacks(GUI;
++        on_state = @cfunction(cb_server_state, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cint)),
++        on_command = @cfunction(cb_server_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})),
++        on_security = @cfunction(cb_security, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cstring)))
++    GUI.server = server_create(LinkConfig(), cb)
++    server_set_log(GUI.server, 1, @cfunction(cb_log, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
++    GUI.server_station = UInt16(p_int(p, "station", 1))
++    for o in values(GUI.points)
++        server_add_point(GUI.server, GUI.server_station, o)
++    end
++    IEC104.server_listen(GUI.server, p_int(p, "port", 2404))
++    note("Station: lauscht auf Port $(server_port(GUI.server)), gemeinsame Adresse $(GUI.server_station)")
++end
++
++function gui_server_point(p)
++    o = Object(p_int(p, "type", 13), p_int(p, "ioa", 100), p_num(p, "value", 0.0))
++    known = haskey(GUI.points, o.ioa)
++    GUI.points[o.ioa] = o
++    GUI.server == C_NULL && return
++    if known
++        check(server_update(GUI.server, GUI.server_station, o))   # spontaneous
++    else
++        server_add_point(GUI.server, GUI.server_station, o)
++        note("Station: Datenpunkt IOA $(o.ioa) Typ $(o.type) angelegt")
++    end
++end
++
++const ACTIONS = Dict{String,Function}(
++    "/api/client/connect" => gui_client_connect,
++    "/api/client/start" => p -> (need_client(); client_start(GUI.client)),
++    "/api/client/stop" => p -> (need_client(); client_stop(GUI.client)),
++    "/api/client/close" => p -> (need_client(); client_close(GUI.client)),
++    "/api/client/gi" => p -> (need_client(); client_interrogation(GUI.client, GUI.station, p_int(p, "qoi", 20))),
++    "/api/client/ci" => p -> (need_client(); client_counter_interrogation(GUI.client, GUI.station)),
++    "/api/client/clock" => p -> (need_client(); client_clock_sync(GUI.client, GUI.station)),
++    "/api/client/command" => gui_client_command,
++    "/api/client/clear" => p -> empty!(GUI.rows),
++    "/api/server/listen" => gui_server_listen,
++    "/api/server/stop" => p -> (GUI.server != C_NULL && server_destroy(GUI.server); GUI.server = C_NULL;
++                                empty!(GUI.connections); note("Station: beendet")),
++    "/api/server/point" => gui_server_point,
++    "/api/server/accept" => p -> (GUI.accept_commands = get(p, "on", "1") == "1"),
++)
++
++# --- JSON (hand-made, the page needs little) -------------------------------------
++
++function jstr(io, s::AbstractString)
++    print(io, '"')
++    for c in s
++        c == '"' ? print(io, "\\\"") : c == '\\' ? print(io, "\\\\") :
++        c < ' ' ? @printf(io, "\\u%04x", UInt32(c)) : print(io, c)
++    end
++    print(io, '"')
++end
++jnum(io, x) = isfinite(x) ? print(io, x) : print(io, "null")
++
++function quality_text(q::UInt8)
++    names = ((0x80, "IV"), (0x40, "NT"), (0x20, "SB"), (0x10, "BL"), (0x01, "OV"))
++    join([n for (b, n) in names if q & b != 0], " ")
++end
++time_text(t::IecTime) = t.year == 0 ? "" :
++    @sprintf("%04d-%02d-%02d %02d:%02d:%02d.%03d%s%s", t.year, t.month, t.day, t.hour, t.minute,
++             t.second, t.millisecond, t.summer_time != 0 ? " SU" : "", t.invalid != 0 ? " IV" : "")
++
++function state_json(since::Int)
++    io = IOBuffer()
++    print(io, "{\"client\":{\"state\":")
++    jstr(io, GUI.client == C_NULL ? "–" : IEC104.state_string(GUI.client_state))
++    print(io, ",\"station\":", GUI.station, ",\"rows\":[")
++    rows = sort!(collect(values(GUI.rows)); by = r -> (r.station, r.ioa, r.type))
++    for (n, r) in enumerate(rows)
++        n > 1 && print(io, ',')
++        print(io, "{\"station\":", r.station, ",\"ioa\":", r.ioa, ",\"type\":", r.type,
++              ",\"cause\":", r.cause, ",\"negative\":", r.negative, ",\"value\":")
++        jnum(io, r.value)
++        print(io, ",\"bits\":", r.bits, ",\"quality\":")
++        jstr(io, quality_text(r.quality))
++        print(io, ",\"time\":")
++        jstr(io, time_text(r.time))
++        print(io, ",\"count\":", r.count, ",\"age\":")
++        jnum(io, round(time() - r.updated; digits = 1))
++        print(io, '}')
++    end
++    print(io, "]},\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
++          GUI.server == C_NULL ? 0 : server_port(GUI.server), ",\"station\":", GUI.server_station,
++          ",\"accept\":", GUI.accept_commands, ",\"connections\":[")
++    for (n, (id, st)) in enumerate(sort!(collect(GUI.connections)))
++        n > 1 && print(io, ',')
++        print(io, "{\"id\":", id, ",\"state\":")
++        jstr(io, IEC104.state_string(st))
++        print(io, '}')
++    end
++    print(io, "],\"points\":[")
++    for (n, o) in enumerate(sort!(collect(values(GUI.points)); by = o -> o.ioa))
++        n > 1 && print(io, ',')
++        print(io, "{\"ioa\":", o.ioa, ",\"type\":", o.type, ",\"value\":")
++        jnum(io, o.value)
++        print(io, '}')
++    end
++    print(io, "]},\"log\":[")
++    first = true
++    for (seq, t, text) in GUI.log
++        seq <= since && continue
++        first || print(io, ',')
++        first = false
++        print(io, "{\"seq\":", seq, ",\"time\":")
++        jstr(io, Libc.strftime("%H:%M:%S", t))
++        print(io, ",\"text\":")
++        jstr(io, text)
++        print(io, '}')
++    end
++    print(io, "]}")
++    return String(take!(io))
++end
++
++# --- HTTP (only what the page needs: GET, query string) -------------------------
++
++function urldecode(s::AbstractString)
++    out = IOBuffer()
++    i = 1
++    b = codeunits(s)
++    while i <= length(b)
++        if b[i] == UInt8('+')
++            write(out, ' ')
++        elseif b[i] == UInt8('%') && i + 2 <= length(b)
++            write(out, parse(UInt8, String(b[i+1:i+2]); base = 16))
++            i += 2
++        else
++            write(out, b[i])
++        end
++        i += 1
++    end
++    return String(take!(out))
++end
++
++function parse_query(q::AbstractString)
++    p = Dict{String,String}()
++    for part in split(q, '&'; keepempty = false)
++        kv = split(part, '='; limit = 2)
++        p[urldecode(kv[1])] = length(kv) == 2 ? urldecode(kv[2]) : ""
++    end
++    return p
++end
++
++const PAGE = read(joinpath(@__DIR__, "index.html"), String)
++
++function route(path, p)
++    path == "/" && return ("200 OK", "text/html; charset=utf-8", PAGE)
++    path == "/api/state" && return ("200 OK", "application/json", state_json(p_int(p, "since", 0)))
++    action = get(ACTIONS, path, nothing)
++    action === nothing && return ("404 Not Found", "text/plain", "not found")
++    try
++        action(p)
++        return ("200 OK", "application/json", "{\"ok\":true}")
++    catch e
++        msg = e isa Iec104Error ? e.msg : sprint(showerror, e)
++        note("Fehler: $msg")
++        io = IOBuffer()
++        print(io, "{\"ok\":false,\"error\":")
++        jstr(io, msg)
++        print(io, '}')
++        return ("200 OK", "application/json", String(take!(io)))
++    end
++end
++
++function handle(sock)
++    try
++        request = readline(sock)
++        while !isempty(strip(readline(sock))) end   # headers are not needed
++        parts = split(request)
++        length(parts) >= 2 || return
++        target = parts[2]
++        path, query = occursin('?', target) ? split(target, '?'; limit = 2) : (target, "")
++        status, type, body = route(String(path), parse_query(query))
++        write(sock, "HTTP/1.1 $status\r\nContent-Type: $type\r\nContent-Length: $(sizeof(body))\r\n" *
++                    "Cache-Control: no-store\r\nConnection: close\r\n\r\n", body)
++    catch e
++        e isa Base.IOError || @warn "request failed" exception = e
++    finally
++        close(sock)
++    end
++end
++
++# --- Main ----------------------------------------------------------------------------
++
++function main(port = 8080, address = "127.0.0.1")
++    address == "127.0.0.1" ||
++        @warn "Die GUI ist ohne Anmeldung von $address aus erreichbar und kann Befehle senden."
++    server = listen(parse(IPAddr, address), port)
++    println("IEC 104 Test-GUI (Library ", IEC104.version(), "): http://localhost:$port")
++    flush(stdout)
++    note("GUI gestartet, Library " * IEC104.version())
++    @async while true   # poll task: the library runs here, callbacks included
++        GUI.client != C_NULL && client_poll(GUI.client, 0)
++        GUI.server != C_NULL && server_poll(GUI.server, 0)
++        sleep(0.02)
++    end
++    while true
++        sock = accept(server)
++        @async handle(sock)
++    end
++end
++
++if abspath(PROGRAM_FILE) == @__FILE__
++    main(parse(Int, get(ARGS, 1, "8080")), get(ARGS, 2, "127.0.0.1"))
++end
+diff --git a/examples/julia/gui/index.html b/examples/julia/gui/index.html
+new file mode 100644
+index 0000000..b4402b9
+--- /dev/null
++++ b/examples/julia/gui/index.html
+@@ -0,0 +1,202 @@
++<!doctype html>
++<!--
++SPDX-FileCopyrightText: 2026 SOPTIM AG
++SPDX-License-Identifier: LicenseRef-Proprietary
++Author: Udo Schmitz (SOPTIM AG)
++All rights reserved by SOPTIM AG.
++
++Test GUI of the IEC 104 library; served by iec104_gui.jl.
++-->
++<html lang="de">
++<head>
++<meta charset="utf-8">
++<title>IEC 104 Test-GUI</title>
++<style>
++  body { font: 14px system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #222; }
++  header { background: #2c3e50; color: #fff; padding: 8px 16px; display: flex; gap: 16px; align-items: baseline; }
++  header h1 { font-size: 17px; margin: 0; }
++  main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; }
++  section { background: #fff; border: 1px solid #d8dbe0; border-radius: 6px; padding: 10px 12px; min-width: 0; }
++  section.wide { grid-column: 1 / 3; }
++  h2 { font-size: 15px; margin: 0 0 8px; display: flex; justify-content: space-between; }
++  .state { font-weight: normal; font-size: 13px; padding: 1px 8px; border-radius: 10px; background: #e3e6ea; }
++  .state.started { background: #c9f0d2; } .state.closed { background: #f6d2d2; }
++  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
++  label { font-size: 12px; color: #555; display: flex; flex-direction: column; }
++  input, select { font: inherit; padding: 3px 5px; border: 1px solid #c4c8ce; border-radius: 4px; }
++  input.s { width: 60px; } input.m { width: 110px; } input.l { width: 220px; }
++  button { font: inherit; padding: 4px 10px; border: 1px solid #8a94a3; border-radius: 4px; background: #eef1f5; cursor: pointer; }
++  button:hover { background: #dfe5ec; } button.main { background: #2c6fb3; color: #fff; border-color: #2c6fb3; }
++  table { border-collapse: collapse; width: 100%; font-size: 13px; }
++  th, td { border-bottom: 1px solid #eceef1; padding: 3px 6px; text-align: left; white-space: nowrap; }
++  th { background: #f0f2f5; position: sticky; top: 0; }
++  td.num { text-align: right; font-variant-numeric: tabular-nums; }
++  .scroll { max-height: 340px; overflow: auto; }
++  .neg { color: #b02a2a; } .fresh { background: #fff6cc; }
++  #log { font: 12px ui-monospace, monospace; max-height: 220px; overflow: auto; white-space: pre-wrap; }
++  #err { color: #b02a2a; }
++  details { margin: 4px 0; }
++</style>
++</head>
++<body>
++<header><h1>IEC 60870-5-104 Test-GUI</h1><span id="err"></span></header>
++<main>
++
++<section>
++  <h2>Leitstelle (Client) <span id="cstate" class="state">–</span></h2>
++  <div class="row">
++    <label>Adresse<input id="host" class="m" value="127.0.0.1"></label>
++    <label>Port<input id="port" class="s" value="2404"></label>
++    <label>Station (CA)<input id="station" class="s" value="1"></label>
++    <label>&nbsp;<button class="main" onclick="connect()">Verbinden</button></label>
++    <label>&nbsp;<button onclick="act('client/start')">STARTDT</button></label>
++    <label>&nbsp;<button onclick="act('client/stop')">STOPDT</button></label>
++    <label>&nbsp;<button onclick="act('client/close')">Trennen</button></label>
++  </div>
++  <details><summary>Timer, Fenster, TLS</summary>
++    <div class="row">
++      <label>t0 s<input id="t0" class="s" placeholder="30"></label>
++      <label>t1 s<input id="t1" class="s" placeholder="15"></label>
++      <label>t2 s<input id="t2" class="s" placeholder="10"></label>
++      <label>t3 s<input id="t3" class="s" placeholder="20"></label>
++      <label>k<input id="k" class="s" placeholder="12"></label>
++      <label>w<input id="w" class="s" placeholder="8"></label>
++      <label>tolerant<input id="tolerant" type="checkbox"></label>
++    </div>
++    <div class="row">
++      <label>TLS<input id="tls" type="checkbox"></label>
++      <label>CA (PEM)<input id="ca" class="l"></label>
++      <label>Zertifikat<input id="cert" class="l"></label>
++      <label>Schlüssel<input id="key" class="l"></label>
++      <label>Name der Gegenstelle<input id="peer" class="m"></label>
++    </div>
++  </details>
++  <div class="row">
++    <button onclick="act('client/gi', {qoi: document.getElementById('qoi').value})">Generalabfrage</button>
++    <select id="qoi"><option value="20">Station</option></select>
++    <button onclick="act('client/ci')">Zählerabfrage</button>
++    <button onclick="act('client/clock')">Uhrzeit setzen</button>
++    <button onclick="act('client/clear')">Tabelle leeren</button>
++  </div>
++  <div class="row">
++    <label>Befehl<select id="ctype"></select></label>
++    <label>IOA<input id="cioa" class="m" value="6000"></label>
++    <label>Wert<input id="cvalue" class="s" value="1"></label>
++    <label>Ablauf<select id="cmode"><option value="direct">direkt</option><option value="sbo">Select/Execute</option></select></label>
++    <label>&nbsp;<button class="main" onclick="command()">Senden</button></label>
++  </div>
++  <div class="scroll"><table>
++    <thead><tr><th>Stat.</th><th>IOA</th><th>Typ</th><th>Wert</th><th>Qualität</th><th>Ursache</th><th>Zeitmarke</th><th>Anz.</th><th>Alter s</th></tr></thead>
++    <tbody id="rows"></tbody>
++  </table></div>
++</section>
++
++<section>
++  <h2>Station (Server) <span id="sstate" class="state">aus</span></h2>
++  <div class="row">
++    <label>Port<input id="sport" class="s" value="2404"></label>
++    <label>Station (CA)<input id="sstation" class="s" value="1"></label>
++    <label>&nbsp;<button class="main" onclick="act('server/listen', {port: v('sport'), station: v('sstation')})">Starten</button></label>
++    <label>&nbsp;<button onclick="act('server/stop')">Beenden</button></label>
++    <label>Befehle annehmen<input id="accept" type="checkbox" checked onchange="act('server/accept', {on: this.checked ? 1 : 0})"></label>
++  </div>
++  <div class="row">
++    <label>Datenpunkt<select id="ptype"></select></label>
++    <label>IOA<input id="pioa" class="m" value="100"></label>
++    <label>Wert<input id="pvalue" class="s" value="0"></label>
++    <label>&nbsp;<button class="main" onclick="act('server/point', {type: v('ptype'), ioa: v('pioa'), value: v('pvalue')})">Anlegen / senden</button></label>
++  </div>
++  <div class="scroll"><table>
++    <thead><tr><th>IOA</th><th>Typ</th><th>Wert</th><th></th></tr></thead>
++    <tbody id="points"></tbody>
++  </table></div>
++  <p>Verbindungen: <span id="conns">keine</span></p>
++</section>
++
++<section class="wide">
++  <h2>Ereignisse</h2>
++  <div id="log"></div>
++</section>
++</main>
++
++<script>
++const TYPES = {1:'M_SP_NA_1 Einzelmeldung', 3:'M_DP_NA_1 Doppelmeldung', 5:'M_ST_NA_1 Stufenstellung',
++  7:'M_BO_NA_1 Bitmuster', 9:'M_ME_NA_1 Messwert normiert', 11:'M_ME_NB_1 Messwert skaliert',
++  13:'M_ME_NC_1 Messwert Gleitkomma', 15:'M_IT_NA_1 Zählwert', 30:'M_SP_TB_1 Einzelmeldung+Zeit',
++  31:'M_DP_TB_1 Doppelmeldung+Zeit', 34:'M_ME_TD_1 normiert+Zeit', 35:'M_ME_TE_1 skaliert+Zeit',
++  36:'M_ME_TF_1 Gleitkomma+Zeit', 37:'M_IT_TB_1 Zählwert+Zeit', 45:'C_SC_NA_1 Einzelbefehl',
++  46:'C_DC_NA_1 Doppelbefehl', 47:'C_RC_NA_1 Stufenbefehl', 48:'C_SE_NA_1 Sollwert normiert',
++  49:'C_SE_NB_1 Sollwert skaliert', 50:'C_SE_NC_1 Sollwert Gleitkomma', 58:'C_SC_TA_1 Einzelbefehl+Zeit',
++  59:'C_DC_TA_1 Doppelbefehl+Zeit', 61:'C_SE_TA_1 Sollwert normiert+Zeit', 62:'C_SE_TB_1 Sollwert skaliert+Zeit',
++  63:'C_SE_TC_1 Sollwert Gleitkomma+Zeit', 70:'M_EI_NA_1 Ende Initialisierung', 100:'C_IC_NA_1 Generalabfrage',
++  101:'C_CI_NA_1 Zählerabfrage', 103:'C_CS_NA_1 Uhrzeit', 107:'C_TS_TA_1 Test'};
++const CAUSES = {1:'zyklisch', 2:'Hintergrund', 3:'spontan', 4:'initialisiert', 5:'Abfrage', 6:'Aktivierung',
++  7:'Bestätigung', 8:'Abbruch', 9:'Abbruch bestätigt', 10:'Beendigung', 11:'Rückmeldung fern',
++  12:'Rückmeldung lokal', 20:'Generalabfrage', 37:'Zählerabfrage', 44:'Typ unbekannt',
++  45:'Ursache unbekannt', 46:'Station unbekannt', 47:'IOA unbekannt'};
++for (let g = 1; g <= 16; g++) CAUSES[20 + g] = 'Gruppe ' + g;
++const opt = (sel, keys) => keys.forEach(k => sel.add(new Option(k + ' ' + TYPES[k], k)));
++opt(document.getElementById('ctype'), [45, 46, 47, 48, 49, 50, 58, 59, 61, 62, 63]);
++opt(document.getElementById('ptype'), [1, 3, 5, 9, 11, 13, 15]);
++document.getElementById('ptype').value = 13;
++const qoi = document.getElementById('qoi');
++for (let g = 1; g <= 16; g++) qoi.add(new Option('Gruppe ' + g, 20 + g));
++
++const v = id => document.getElementById(id).value;
++const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
++const typeName = t => TYPES[t] ? TYPES[t].split(' ')[0] : t;
++
++async function act(path, params = {}) {
++  const r = await fetch('/api/' + path + '?' + new URLSearchParams(params));
++  const j = await r.json();
++  document.getElementById('err').textContent = j.ok ? '' : j.error;
++  refresh();
++}
++function connect() {
++  const checked = id => document.getElementById(id).checked ? 1 : 0;
++  const p = {host: v('host'), port: v('port'), station: v('station'), tls: checked('tls'),
++             tolerant: checked('tolerant')};
++  for (const k of ['t0', 't1', 't2', 't3', 'k', 'w', 'ca', 'cert', 'key', 'peer']) p[k] = v(k);
++  act('client/connect', p);
++}
++function command() { act('client/command', {type: v('ctype'), ioa: v('cioa'), value: v('cvalue'), mode: v('cmode')}); }
++function sendPoint(ioa, type, delta) {
++  const input = document.getElementById('pv' + ioa);
++  const value = delta === undefined ? input.value : String(Number(input.value) + delta);
++  act('server/point', {ioa, type, value});
++}
++
++let since = 0;
++async function refresh() {
++  let s;
++  try { s = await (await fetch('/api/state?since=' + since)).json(); }
++  catch (e) { document.getElementById('err').textContent = 'GUI-Programm nicht erreichbar'; return; }
++  const cs = document.getElementById('cstate');
++  cs.textContent = s.client.state;
++  cs.className = 'state ' + (s.client.state === 'started' ? 'started' : s.client.state === 'closed' ? 'closed' : '');
++  document.getElementById('rows').innerHTML = s.client.rows.map(r =>
++    `<tr class="${r.age < 2 ? 'fresh' : ''}"><td>${r.station}</td><td class="num">${r.ioa}</td>` +
++    `<td title="${esc(TYPES[r.type] || '')}">${r.type} ${esc(typeName(r.type))}</td>` +
++    `<td class="num">${r.type === 7 ? '0x' + r.bits.toString(16) : r.value}</td><td>${esc(r.quality)}</td>` +
++    `<td class="${r.negative ? 'neg' : ''}">${r.cause} ${esc(CAUSES[r.cause] || '')}${r.negative ? ' negativ' : ''}</td>` +
++    `<td>${esc(r.time)}</td><td class="num">${r.count}</td><td class="num">${r.age}</td></tr>`).join('');
++  const ss = document.getElementById('sstate');
++  ss.textContent = s.server.running ? 'Port ' + s.server.port + ', Station ' + s.server.station : 'aus';
++  ss.className = 'state ' + (s.server.running ? 'started' : '');
++  if (document.activeElement === null || !document.activeElement.id.startsWith('pv'))
++    document.getElementById('points').innerHTML = s.server.points.map(p =>
++      `<tr><td class="num">${p.ioa}</td><td>${p.type} ${esc(typeName(p.type))}</td>` +
++      `<td><input id="pv${p.ioa}" class="s" value="${p.value}"></td>` +
++      `<td><button onclick="sendPoint(${p.ioa}, ${p.type})">Senden</button> ` +
++      `<button onclick="sendPoint(${p.ioa}, ${p.type}, 1)">+1</button></td></tr>`).join('');
++  document.getElementById('conns').textContent =
++    s.server.connections.map(c => c.id + ': ' + c.state).join(', ') || 'keine';
++  const log = document.getElementById('log');
++  for (const e of s.log) { log.textContent += e.time + '  ' + e.text + '\n'; since = e.seq; }
++  if (s.log.length) log.scrollTop = log.scrollHeight;
++}
++setInterval(refresh, 500);
++refresh();
++</script>
++</body>
++</html>
+diff --git a/include/iec104/iec104.h b/include/iec104/iec104.h
+index 57b32de..42db814 100644
+--- a/include/iec104/iec104.h
++++ b/include/iec104/iec104.h
+@@ -61,7 +61,7 @@ extern "C" {
+ /** @brief Major version of this header. Incompatible API changes increment it. */
+ #define IEC104_VERSION_MAJOR 0
+ /** @brief Minor version of this header. Compatible additions increment it. */
+-#define IEC104_VERSION_MINOR 4
++#define IEC104_VERSION_MINOR 5
+ /** @brief Patch version of this header. Fixes without API change increment it. */
+ #define IEC104_VERSION_PATCH 0
+ 
+@@ -280,7 +280,8 @@ typedef enum iec104_security_event {
+     IEC104_SECURITY_CERTIFICATE_REJECTED = 2,
+     /** TLS error on an open connection, e.g. an alert of the peer; detail: reason. */
+     IEC104_SECURITY_TLS_ERROR = 3,
+-    /** This side started a key renewal; detail: "key update" or "renegotiation". */
++    /** Key renewal: this side started one ("key update", "renegotiation"), or a TLS 1.2
++     *  renegotiation by either side completed ("renegotiation complete"). */
+     IEC104_SECURITY_KEY_RENEWAL = 4
+ } iec104_security_event;
+ 
+diff --git a/packaging/README-binary.md b/packaging/README-binary.md
+index bb1f417..f8d8af6 100644
+--- a/packaging/README-binary.md
++++ b/packaging/README-binary.md
+@@ -7,7 +7,7 @@ Geteilte Library für Linux x86-64 (Release, mit TLS).
+ | `lib/libiec104.so.0` | Library |
+ | `include/iec104/iec104.h` | C-Schnittstelle mit Beschreibung jeder Funktion |
+ | `LICENSES/` | Lizenzen: Header Apache-2.0, Library proprietär |
+-| `julia/` | Anbindung für Julia (`IEC104.jl`) mit Client- und Server-Beispiel |
++| `julia/` | Anbindung für Julia (`IEC104.jl`) mit Client- und Server-Beispiel, Test-GUI im Browser (`gui/`) |
+ 
+ ## Voraussetzungen
+ 
+@@ -49,6 +49,8 @@ julia julia/server.jl 2404 &          # Station 1, Messwert IOA 100, steigt jede
+ julia julia/client.jl 127.0.0.1 2404  # Generalabfrage, drei spontane Werte
+ ```
+ 
++Test-GUI im Browser: `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080` öffnen (Leitstelle und Station, Abfragen, Befehle, TLS).
++
+ `IEC104.jl` findet die Library in `lib/` von selbst. Anleitung: `docs/07_Julia.md` im Quellpaket.
+ 
+ Server und Client mit Messwerten, Befehlen, Redundanz und TLS: Anleitung `docs/06_Anleitung.md` im Quellpaket `iec104-@VERSION@.zip`.
+diff --git a/src/transport/link.cpp b/src/transport/link.cpp
+index 10d7add..fd3fcb2 100644
+--- a/src/transport/link.cpp
++++ b/src/transport/link.cpp
+@@ -120,6 +120,10 @@ void Link::service(short revents, apci::TimeMs now, LinkSink& sink) noexcept {
+     if (tls_ != nullptr && now >= next_renewal_) {
+         renew_keys(now, sink);
+     }
++    if (tls_ != nullptr && tls_->handshakes() > handshakes_seen_) {
++        handshakes_seen_ = tls_->handshakes();
++        sink.on_tls(id_, TlsEvent::Renewal, "renegotiation complete");
++    }
+     conn_.tick(now);
+     dispatch_events(sink);
+     flush_output();
+@@ -179,6 +183,7 @@ bool Link::continue_handshake(apci::TimeMs now, LinkSink& sink) noexcept {
+         text += ", resumed";
+     }
+     sink.on_tls(id_, TlsEvent::Established, text);
++    handshakes_seen_ = tls_->handshakes();
+     const std::uint32_t interval = tls_context_->renewal_interval_ms();
+     next_renewal_ = interval > 0U ? now + interval : apci::kNoDeadline;
+     (void)conn_.open(now);
+diff --git a/src/transport/link.hpp b/src/transport/link.hpp
+index 7e6b6c3..3c13613 100644
+--- a/src/transport/link.hpp
++++ b/src/transport/link.hpp
+@@ -60,7 +60,7 @@ enum class TlsEvent : std::uint8_t {
+     HandshakeFailed,     ///< Handshake failed or did not complete within t0.
+     CertificateRejected, ///< The peer certificate was rejected; text: reason.
+     Error,               ///< TLS error on the open connection; text: reason.
+-    Renewal,             ///< This side started a key update or renegotiation.
++    Renewal,             ///< Key renewal started by this side, or a renegotiation completed.
+ };
+ 
+ /** @brief Receiver of what happens on a link (implemented by the API layer). */
+@@ -179,6 +179,7 @@ class Link {
+     std::shared_ptr<TlsContext> tls_context_;
+     std::unique_ptr<TlsSession> tls_;
+     apci::TimeMs next_renewal_{apci::kNoDeadline};
++    std::uint32_t handshakes_seen_{0}; // TLS 1.2: completed handshakes already reported
+     LinkCloseReason close_reason_{LinkCloseReason::None};
+     apci::CloseReason protocol_reason_{apci::CloseReason::None};
+     bool reported_closed_{false};
+diff --git a/src/transport/tls.hpp b/src/transport/tls.hpp
+index b8b86ab..b091381 100644
+--- a/src/transport/tls.hpp
++++ b/src/transport/tls.hpp
+@@ -125,6 +125,12 @@ class TlsSession {
+     /** @brief Sends close_notify once (best effort, never blocks). */
+     virtual void shutdown() noexcept = 0;
+ 
++    /**
++     * @brief Completed TLS 1.2 handshakes of this connection: 1 after the
++     *        first, +1 for every renegotiation (by either side).
++     */
++    [[nodiscard]] virtual std::uint32_t handshakes() const noexcept = 0;
++
+     /** @brief Version, suite, peer certificate; valid after the handshake. */
+     [[nodiscard]] virtual TlsInfo info() const = 0;
+ 
+diff --git a/src/transport/tls_openssl.cpp b/src/transport/tls_openssl.cpp
+index 31a08d2..41356f8 100644
+--- a/src/transport/tls_openssl.cpp
++++ b/src/transport/tls_openssl.cpp
+@@ -177,6 +177,9 @@ class OpenSslSession final : public TlsSession {
+         BIO_set_init(bio.get(), 1);
+         BIO* raw = bio.release();
+         SSL_set_bio(ssl_.get(), raw, raw); // the SSL object owns the BIO now
++        // Counts completed handshakes, so that a renegotiation by the peer is seen.
++        (void)SSL_set_app_data(ssl_.get(), this);
++        SSL_set_info_callback(ssl_.get(), &OpenSslSession::on_info);
+         if (role == TlsRole::Server) {
+             SSL_set_accept_state(ssl_.get());
+         } else {
+@@ -301,6 +304,8 @@ class OpenSslSession final : public TlsSession {
+         return i;
+     }
+ 
++    [[nodiscard]] std::uint32_t handshakes() const noexcept override { return handshakes_; }
++
+     [[nodiscard]] TlsFailure failure() const noexcept override { return failure_; }
+     [[nodiscard]] const std::string& error() const noexcept override { return error_; }
+ 
+@@ -333,6 +338,17 @@ class OpenSslSession final : public TlsSession {
+     }
+ 
+   private:
++    // TLS 1.2 only: in TLS 1.3 post-handshake messages (tickets, key
++    // updates) also end with "handshake done".
++    static void on_info(const SSL* ssl, int where, int /*ret*/) {
++        if ((where & SSL_CB_HANDSHAKE_DONE) != 0 && SSL_version(ssl) < TLS1_3_VERSION) {
++            auto* self = static_cast<OpenSslSession*>(SSL_get_app_data(ssl));
++            if (self != nullptr) {
++                ++self->handshakes_;
++            }
++        }
++    }
++
+     static bool is_want(int e) noexcept {
+         return e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE;
+     }
+@@ -397,6 +413,7 @@ class OpenSslSession final : public TlsSession {
+     SslPtr ssl_;
+     short want_{POLLIN};
+     bool fatal_{false};
++    std::uint32_t handshakes_{0};
+     bool renegotiation_;
+     std::string fingerprint_;
+     TlsFailure failure_{TlsFailure::None};
+diff --git a/tests/data/lib60870_tls_capture.txt b/tests/data/lib60870_tls_capture.txt
+new file mode 100644
+index 0000000..2971c36
+--- /dev/null
++++ b/tests/data/lib60870_tls_capture.txt
+@@ -0,0 +1,38 @@
++# Reference capture: APDUs between this library's client and a foreign server over TLS.
++#
++# Source:   lib60870-C v2.4.1 with mbedTLS 3.6.8 (external test peer only, not
++#           linked, no code copied), server: examples/tls_server (unmodified,
++#           started with the test certificates of tools/make_test_certs.sh, RSA)
++# Client:   iec104_selftest_client --foreign over TLS 1.3, APDUs from its
++#           trace log (--log trace), i.e. after decryption
++# Date:     2026-11-25, localhost:19998
++# Format:   SEND = client -> server, RCVD = server -> client, octets in hex
++#
++# Known deviation of the peer: the termination of the general interrogation
++# is sent with type identification 0 and VSQ 0 (line marked "deviation").
++# Used by the unit tests; do not edit.
++#
++SEND: 68 04 07 00 00 00
++RCVD: 68 04 0b 00 00 00
++RCVD: 68 10 00 00 00 00 0b 01 01 00 01 00 6e 00 00 00 00 00
++RCVD: 68 10 02 00 00 00 0b 01 01 00 01 00 6e 00 00 01 00 00
++SEND: 68 0e 00 00 04 00 64 01 06 00 01 00 00 00 00 14
++RCVD: 68 0e 04 00 02 00 64 01 07 00 01 00 00 00 00 14
++RCVD: 68 1c 06 00 02 00 0b 03 14 00 01 00 64 00 00 ff ff 00 65 00 00 17 00 00 66 00 00 fc 08 00
++RCVD: 68 12 08 00 02 00 01 02 14 00 01 00 68 00 00 01 69 00 00 00
++RCVD: 68 15 0a 00 02 00 01 88 14 00 01 00 2c 01 00 01 00 01 00 01 00 01 00
++RCVD: 68 0a 0c 00 02 00 00 00 0a 00 01 00   # deviation: termination with type 0
++RCVD: 68 10 0e 00 02 00 0b 01 01 00 01 00 6e 00 00 02 00 00
++RCVD: 68 10 10 00 02 00 0b 01 01 00 01 00 6e 00 00 03 00 00
++RCVD: 68 10 12 00 02 00 0b 01 01 00 01 00 6e 00 00 04 00 00
++SEND: 68 04 01 00 14 00
++RCVD: 68 10 14 00 02 00 0b 01 01 00 01 00 6e 00 00 05 00 00
++SEND: 68 14 02 00 16 00 67 01 06 00 01 00 00 00 00 b0 b3 24 10 79 0b 1a
++RCVD: 68 14 16 00 04 00 67 01 07 00 01 00 00 00 00 b0 b3 24 10 79 0b 1a
++SEND: 68 0e 04 00 18 00 65 01 06 00 01 00 00 00 00 05
++RCVD: 68 0e 18 00 06 00 65 01 6c 00 01 00 00 00 00 05
++SEND: 68 04 01 00 1a 00
++SEND: 68 04 13 00 00 00
++RCVD: 68 10 1a 00 06 00 0b 01 01 00 01 00 6e 00 00 06 00 00
++SEND: 68 04 01 00 1c 00
++RCVD: 68 04 23 00 00 00
+diff --git a/tests/test_capture.cpp b/tests/test_capture.cpp
+index c1058d5..3cea6f1 100644
+--- a/tests/test_capture.cpp
++++ b/tests/test_capture.cpp
+@@ -14,6 +14,10 @@
+  * byte-identical APCIs, ASDU headers and complete ASDUs when re-encoding the
+  * decoded values.
+  * New frames added to the capture are covered automatically.
++ *
++ * tests/data/lib60870_tls_capture.txt holds the APDUs of this library's
++ * client with the lib60870 TLS example server; frames marked "deviation"
++ * are known errors of the peer and must be rejected by the strict codec.
+  */
+ #include "codec/apci.hpp"
+ #include "codec/asdu.hpp"
+@@ -36,12 +40,14 @@ namespace {
+ struct CapturedApdu {
+     int line = 0;                    // line number in the capture file, for messages
+     std::vector<std::uint8_t> bytes; // the complete APDU
++    bool deviation = false;          // marked as known error of the peer
+ };
+ 
+-// Reads all "SEND:" and "RCVD:" lines. Lines starting with '#' are comments.
+-std::vector<CapturedApdu> load_capture() {
++// Reads all "SEND:" and "RCVD:" lines. Lines starting with '#' are comments;
++// "# deviation" after the octets marks a known error of the peer.
++std::vector<CapturedApdu> load_capture(const std::string& name = "lib60870_capture.txt") {
+     std::vector<CapturedApdu> result;
+-    std::ifstream in(IEC104_TEST_DATA_DIR "/lib60870_capture.txt");
++    std::ifstream in(std::string(IEC104_TEST_DATA_DIR) + "/" + name);
+     std::string text;
+     int line = 0;
+     while (std::getline(in, text)) {
+@@ -51,6 +57,7 @@ std::vector<CapturedApdu> load_capture() {
+         }
+         CapturedApdu apdu;
+         apdu.line = line;
++        apdu.deviation = text.find("# deviation") != std::string::npos;
+         std::istringstream hex(text.substr(5));
+         unsigned value = 0;
+         while (hex >> std::hex >> value) {
+@@ -63,13 +70,12 @@ std::vector<CapturedApdu> load_capture() {
+ 
+ } // namespace
+ 
++namespace {
++
+ // Rule: every APDU of a foreign implementation is framed, decoded and
+ // re-encoded to identical bytes (APCI for all formats, ASDU header for I-frames).
+ // Source: capture (whole file).
+-TEST(Capture, EveryApduRoundTrips) {
+-    const std::vector<CapturedApdu> apdus = load_capture();
+-    ASSERT_GE(apdus.size(), 10U) << "capture file missing or truncated";
+-
++void check_round_trip(const std::vector<CapturedApdu>& apdus) {
+     for (const CapturedApdu& c : apdus) {
+         SCOPED_TRACE("capture line " + std::to_string(c.line));
+         const std::uint8_t* data = c.bytes.data();
+@@ -117,6 +123,13 @@ TEST(Capture, EveryApduRoundTrips) {
+         // Complete ASDU (strict IEC 104 profile): decode and re-encode.
+         std::array<InformationObject, 127> objects{};
+         DecodedAsdu d{};
++        if (c.deviation) {
++            // Known error of the peer: rejected, not misread.
++            EXPECT_NE(decode_asdu(asdu, apci.asdu_length, kIec104Profile, objects.data(),
++                                  objects.size(), d),
++                      IEC104_OK);
++            continue;
++        }
+         ASSERT_EQ(
+             decode_asdu(asdu, apci.asdu_length, kIec104Profile, objects.data(), objects.size(), d),
+             IEC104_OK);
+@@ -130,3 +143,23 @@ TEST(Capture, EveryApduRoundTrips) {
+             std::equal(ab.begin(), ab.begin() + static_cast<std::ptrdiff_t>(asdu_written), asdu));
+     }
+ }
++
++} // namespace
++
++TEST(Capture, EveryApduRoundTrips) {
++    const std::vector<CapturedApdu> apdus = load_capture();
++    ASSERT_GE(apdus.size(), 10U) << "capture file missing or truncated";
++    check_round_trip(apdus);
++}
++
++// Rule: the APDUs of a foreign server over TLS (decrypted) round-trip as
++// well; its malformed termination (type 0, VSQ 0) is rejected by the strict
++// codec. Source: tests/data/lib60870_tls_capture.txt.
++TEST(Capture, ForeignTlsServer) {
++    const std::vector<CapturedApdu> apdus = load_capture("lib60870_tls_capture.txt");
++    ASSERT_GE(apdus.size(), 20U) << "capture file missing or truncated";
++    EXPECT_EQ(std::count_if(apdus.begin(), apdus.end(),
++                            [](const CapturedApdu& c) { return c.deviation; }),
++              1);
++    check_round_trip(apdus);
++}
+diff --git a/tools/interop/gegenstelle.conf b/tools/interop/gegenstelle.conf
+new file mode 100644
+index 0000000..cd12e77
+--- /dev/null
++++ b/tools/interop/gegenstelle.conf
+@@ -0,0 +1,61 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# Vorlage: Parameter einer Gegenstelle für den Integrationstest (docs/08_Interop.md).
++# Werte aus der Interoperabilitätsliste der Gegenstelle übernehmen. Eingetragen
++# sind die Normwerte; auskommentierte Zeilen nur bei Bedarf einschalten.
++# Zeiten in Sekunden. Relative Dateinamen gelten ab dem Ordner dieser Datei.
++#
++# Verwendung: iec104_selftest_client --config gegenstelle.conf --foreign ...
++#             iec104_selftest_server --config gegenstelle.conf ...
++#             iec104_config_load("gegenstelle.conf", &cfg, &zeile)
++
++# --- Verbindung --------------------------------------------------------------
++host = 127.0.0.1            # Client: Adresse der Gegenstelle; Server: eigene Adresse
++port = 2404                 # mit TLS üblich 19998
++
++# --- Timer und Fenster ----------------------------------------------------------
++t0 = 30                     # Verbindungsaufbau (mit TLS inkl. Handshake)
++t1 = 15                     # Quittung gesendeter Rahmen
++t2 = 10                     # spätestens eigene Quittung (< t1)
++t3 = 20                     # Testrahmen nach Ruhe
++k = 12                      # unquittierte gesendete I-Rahmen
++w = 8                       # Quittung nach w empfangenen I-Rahmen (<= 2/3 k)
++tolerant = no               # yes: bekannte Abweichungen zulassen (z. B. t3 = 0)
++
++# --- ASDU-Profil --------------------------------------------------------------
++cot_length = 2
++ca_length = 2
++ioa_length = 3
++max_asdu_length = 249
++originator = 0
++
++# --- Server (gesteuerte Station) ---------------------------------------------
++send_end_of_init = yes      # Typ 70 nach dem ersten STARTDT
++command_termination = yes   # ACTTERM nach ausgeführtem Befehl
++cause_of_init = 0
++max_command_delay = 0       # Befehle mit Zeitmarke älter als n s verwerfen, 0 = aus
++event_buffer_size = 1000
++overflow = drop_oldest      # oder reject
++# group = 192.0.2.10, 192.0.2.11   # Redundanzgruppe: Adressen der Leitstelle, je Zeile eine Gruppe
++
++# --- Client (Leitstelle) ------------------------------------------------------
++confirmation_timeout = 10   # ACTCON eines Befehls
++termination_timeout = 10    # ACTTERM eines Befehls
++expect_termination = yes    # no, wenn die Gegenstelle kein ACTTERM sendet
++
++# --- TLS (IEC 62351-3) -------------------------------------------------------
++tls = no
++# tls_ca = pki/ca.pem
++# tls_certificate = pki/eigenes.pem
++# tls_key = pki/eigenes.key
++# tls_key_password =
++# tls_crl = pki/crl.pem
++# tls_peer_name = gegenstelle.example     # Name oder Adresse im Zertifikat der Gegenstelle
++# tls_peer_fingerprint =                  # SHA-256, alternativ zum Namen
++# tls_min_version = 1.2
++# tls_max_version = 1.3
++# tls_renegotiation = yes
++# tls_renewal_interval = 0                # eigene Schlüsselerneuerung alle n s, 0 = aus
+diff --git a/tools/interop/run_lib60870.sh b/tools/interop/run_lib60870.sh
+new file mode 100755
+index 0000000..2ce31f1
+--- /dev/null
++++ b/tools/interop/run_lib60870.sh
+@@ -0,0 +1,216 @@
++#!/usr/bin/env bash
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++# run_lib60870.sh – Interop-Tests gegen lib60870-C als fremde Gegenstelle.
++#
++# Aufruf: tools/interop/run_lib60870.sh LIB60870_C BUILD [AUSGABE]
++#
++#   LIB60870_C  Ordner lib60870-C einer gebauten lib60870 (v2.4.1 geprüft):
++#               build/examples      ohne TLS (Pflicht)
++#               build-tls/examples  mit mbedTLS 3.6 (optional, sonst ohne TLS-Fälle)
++#   BUILD       eigener Build-Ordner (Selbsttest-Programme, examples/hello_server)
++#   AUSGABE     Logs und Mitschnitte, Default BUILD/interop
++#
++# lib60870 ist nur Gegenstelle: Es laufen die unveränderten Beispielprogramme
++# über TCP, nichts wird gelinkt. Die Beispiele nutzen feste Ports (2404, 19998);
++# die müssen frei sein. Die TLS-Beispiele lesen ihre Zertifikate unter festen
++# Namen aus dem Arbeitsordner; das Skript legt dort die RSA-Test-PKI ab
++# (tools/make_test_certs.sh ... rsa).
++#
++# Ergebnis je Fall: bestanden | Abweichung Gegenstelle (bekannter Fehler des
++# Beispielprogramms, eigenes Verhalten korrekt) | FEHLER. Rückgabe 1 bei FEHLER.
++
++set -u
++
++LIB="${1:?Ordner lib60870-C fehlt}"
++BUILD="$(cd "${2:?Build-Ordner fehlt}" && pwd)"
++OUT="${3:-$BUILD/interop}"
++ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
++PLAIN="$LIB/build/examples"
++TLS="$LIB/build-tls/examples"
++SERVER="$BUILD/iec104_selftest_server"
++CLIENT="$BUILD/iec104_selftest_client"
++HELLO="$BUILD/examples/hello_server"
++
++[ -x "$PLAIN/cs104_server/cs104_server" ] || { echo "lib60870 nicht gebaut: $PLAIN" >&2; exit 2; }
++[ -x "$CLIENT" ] || { echo "Selbsttest nicht gebaut: $BUILD" >&2; exit 2; }
++mkdir -p "$OUT"
++
++RESULTS=()
++FAILED=0
++result() { # Fall, Ergebnis, Notiz
++    RESULTS+=("$(printf '%-28s %-24s %s' "$1" "$2" "$3")")
++    [ "$2" = "FEHLER" ] && FAILED=1
++}
++has() { grep -q -E -- "$2" "$1"; }
++count() { grep -c -E -- "$2" "$1"; }
++
++port_free() { ! ss -ltn 2>/dev/null | grep -q -E "[:.]$1[[:space:]]"; }
++for p in 2404 2441 19998; do
++    port_free "$p" || { echo "Port $p ist belegt (läuft noch eine Gegenstelle?)" >&2; exit 2; }
++done
++
++PID=""
++start_peer() { # Ordner, Programm, Log, Argumente...
++    local dir="$1" prog="$2" log="$3"
++    shift 3
++    (cd "$dir" && exec "$prog" "$@" < /dev/null > "$log" 2>&1) &
++    PID=$!
++    sleep 1
++    kill -0 "$PID" 2>/dev/null || echo "Gegenstelle $prog läuft nicht, siehe $log" >&2
++}
++stop_peer() {
++    [ -n "$PID" ] && kill "$PID" 2>/dev/null && wait "$PID" 2>/dev/null
++    PID=""
++}
++trap stop_peer EXIT
++
++# --- 1. Eigener Client gegen lib60870-Server ---------------------------------
++start_peer "$OUT" "$PLAIN/cs104_server/cs104_server" "$OUT/1_peer.log"
++"$CLIENT" --port 2404 --foreign --idle 3 --t3 1 --timeout 5 --log trace > "$OUT/1_client.log" 2>&1
++stop_peer
++if has "$OUT/1_client.log" '^result: PASSED'; then
++    result "Client -> Server" "bestanden" "GA, Uhrzeit, Zähler (Ursache 44), TESTFR, STOPDT"
++else
++    result "Client -> Server" "FEHLER" "$OUT/1_client.log"
++fi
++
++# --- 2. lib60870-Client gegen eigenen Server -----------------------------------
++"$HELLO" 2441 < /dev/null > "$OUT/2_server.log" 2>&1 &
++PID=$!
++sleep 0.5
++timeout 30 "$PLAIN/cs104_client/simple_client" 127.0.0.1 2441 > "$OUT/2_peer.log" 2>&1
++stop_peer
++if has "$OUT/2_peer.log" 'Received STARTDT_CON' && has "$OUT/2_peer.log" 'M_EI_NA_1\(70\)' &&
++   [ "$(count "$OUT/2_peer.log" 'C_IC_NA_1\(100\)')" -ge 2 ] && has "$OUT/2_peer.log" 'C_TS_TA_1\(107\)'; then
++    result "Server <- Client" "bestanden" "STARTDT, Typ 70, GA mit ACTCON/ACTTERM, Testbefehl 107"
++else
++    result "Server <- Client" "FEHLER" "$OUT/2_peer.log"
++fi
++
++# --- 3. Umschaltung gegen lib60870-Redundanzserver ----------------------------
++# Server puffert den zyklischen Wert IOA 110 je Gruppe; nach STOPDT/STARTDT
++# muss die Reihe lückenlos weitergehen.
++start_peer "$OUT" "$PLAIN/cs104_redundancy_server/cs104_redundancy_server" "$OUT/3_peer.log"
++"$CLIENT" --port 2404 --foreign --switchover --series-ioa 110 --expect 5 --timeout 8 \
++    > "$OUT/3_client.log" 2>&1
++stop_peer
++if has "$OUT/3_client.log" 'switch-over.*values before' && ! has "$OUT/3_client.log" 'switch-over.*FAILED' &&
++   has "$OUT/3_client.log" 'series after switch-over.*in order' && ! has "$OUT/3_client.log" 'series after.*FAILED'; then
++    if has "$OUT/3_client.log" 'no termination'; then
++        result "Umschaltung (Redundanz)" "Abweichung Gegenstelle" "Reihe lückenlos; GA ohne gültiges ACTTERM (Typ 0)"
++    else
++        result "Umschaltung (Redundanz)" "bestanden" "Reihe lückenlos"
++    fi
++else
++    result "Umschaltung (Redundanz)" "FEHLER" "$OUT/3_client.log"
++fi
++
++# --- TLS ----------------------------------------------------------------------
++if [ ! -x "$TLS/tls_server/tls_server" ]; then
++    result "TLS" "übersprungen" "lib60870 ohne TLS gebaut ($TLS fehlt)"
++else
++    PKI="$OUT/pki_rsa"
++    "$ROOT/tools/make_test_certs.sh" "$PKI" rsa > /dev/null
++    SRVDIR="$OUT/tls_server_dir"
++    CLIDIR="$OUT/tls_client_dir"
++    mkdir -p "$SRVDIR" "$CLIDIR"
++    cp "$PKI/server.key" "$SRVDIR/server_CA1_1.key"
++    cp "$PKI/server.pem" "$SRVDIR/server_CA1_1.pem"
++    cp "$PKI/ca.pem" "$SRVDIR/root_CA1.pem"
++    cp "$PKI/client.pem" "$SRVDIR/client_CA1_1.pem"
++    cp "$PKI/client.key" "$CLIDIR/client_CA1_1.key"
++    cp "$PKI/client.pem" "$CLIDIR/client_CA1_1.pem"
++    cp "$PKI/ca.pem" "$CLIDIR/root_CA1.pem"
++    cp "$PKI/server.pem" "$CLIDIR/server_CA1_1.pem"
++    OWN=(--tls-ca "$PKI/ca.pem" --tls-cert "$PKI/client.pem" --tls-key "$PKI/client.key"
++         --tls-peer-name localhost)
++
++    # 4./5. Eigener TLS-Client gegen lib60870-TLS-Server (er verhandelt alle 2 s neu).
++    for V in 1.3 1.2; do
++        N="tls${V/./}"
++        start_peer "$SRVDIR" "$TLS/tls_server/tls_server" "$OUT/${N}_peer.log"
++        "$CLIENT" --port 19998 --foreign "${OWN[@]}" --tls-version "$V" --idle 7 --t3 2 \
++            --timeout 4 --log trace > "$OUT/${N}_client.log" 2>&1
++        stop_peer
++        L="$OUT/${N}_client.log"
++        if has "$L" "TLS \.+ TLSv$V" && has "$L" 'STARTDT\) \.+ ok' &&
++           has "$L" 'clock synchronization \.+ confirmed' && has "$L" 'idle period.*ok' &&
++           { [ "$V" = 1.3 ] || has "$L" 'renegotiation complete'; }; then
++            NOTE="Handshake, Uhrzeit, TESTFR"
++            [ "$V" = 1.2 ] && NOTE="$NOTE, $(count "$L" 'renegotiation complete')x Renegotiation der Gegenstelle"
++            if has "$L" 'no termination'; then
++                result "TLS $V Client -> Server" "Abweichung Gegenstelle" "$NOTE; GA ohne gültiges ACTTERM"
++            else
++                result "TLS $V Client -> Server" "bestanden" "$NOTE"
++            fi
++        else
++            result "TLS $V Client -> Server" "FEHLER" "$L"
++        fi
++    done
++
++    # 6. lib60870-TLS-Client gegen eigenen TLS-Server (verbindet sich zweimal).
++    "$SERVER" --host 127.0.0.1 --port 19998 --tls-ca "$PKI/ca.pem" --tls-cert "$PKI/server.pem" \
++        --tls-key "$PKI/server.key" --log info --duration 16 < /dev/null > "$OUT/6_server.log" 2>&1 &
++    PID=$!
++    sleep 0.5
++    (cd "$CLIDIR" && timeout 15 "$TLS/tls_client/tls_client" 127.0.0.1 > "$OUT/6_peer.log" 2>&1)
++    wait "$PID" 2>/dev/null
++    PID=""
++    if [ "$(count "$OUT/6_server.log" '\[info\].*TLS established')" -eq 2 ] &&
++       [ "$(count "$OUT/6_server.log" 'command type 103 ioa 0: accepted')" -eq 2 ] &&
++       [ "$(count "$OUT/6_peer.log" 'C_IC_NA_1\(100\)')" -ge 4 ]; then
++        result "TLS Server <- Client" "bestanden" "2 Verbindungen: GA, Befehl 45 (negativ: IOA 5000 ist Sollwert), Uhrzeit"
++    else
++        result "TLS Server <- Client" "FEHLER" "$OUT/6_server.log"
++    fi
++
++    # 7. Befund: lib60870 lehnt EC-Schlüssel ab (misst sie an einer RSA-Mindestlänge).
++    ECDIR="$OUT/tls_client_ec"
++    "$ROOT/tools/make_test_certs.sh" "$OUT/pki_ec" > /dev/null
++    mkdir -p "$ECDIR"
++    cp "$OUT/pki_ec/client.key" "$ECDIR/client_CA1_1.key"
++    cp "$OUT/pki_ec/client.pem" "$ECDIR/client_CA1_1.pem"
++    cp "$OUT/pki_ec/ca.pem" "$ECDIR/root_CA1.pem"
++    cp "$OUT/pki_ec/server.pem" "$ECDIR/server_CA1_1.pem"
++    P="$OUT/pki_ec"
++    "$SERVER" --host 127.0.0.1 --port 19998 --tls-ca "$P/ca.pem" --tls-cert "$P/server.pem" \
++        --tls-key "$P/server.key" --log info --duration 8 < /dev/null > "$OUT/7_server.log" 2>&1 &
++    PID=$!
++    sleep 0.5
++    (cd "$ECDIR" && timeout 7 "$TLS/tls_client/tls_client" 127.0.0.1 > "$OUT/7_peer.log" 2>&1)
++    wait "$PID" 2>/dev/null
++    PID=""
++    if has "$OUT/7_peer.log" 'insufficient key length'; then
++        result "TLS mit EC-Schlüsseln" "Abweichung Gegenstelle" "lib60870: insufficient key length -> RSA-Zertifikate verwenden"
++    else
++        result "TLS mit EC-Schlüsseln" "bestanden" "EC-Schlüssel akzeptiert"
++    fi
++
++    # 8. Abgelaufenes Client-Zertifikat der lib60870-Beispiele wird abgewiesen.
++    # Der eigene Server nutzt dafür Zertifikat und Schlüssel des lib60870-
++    # Beispielservers, denn der lib60870-Client akzeptiert nur dieses.
++    E="$TLS/tls_server"
++    "$SERVER" --host 127.0.0.1 --port 19998 --tls-ca "$E/root_CA1.pem" \
++        --tls-cert "$E/server_CA1_1.pem" --tls-key "$E/server_CA1_1.key" --log info --duration 8 \
++        < /dev/null > "$OUT/8_server.log" 2>&1 &
++    PID=$!
++    sleep 0.5
++    (cd "$TLS/tls_client" && timeout 7 ./tls_client 127.0.0.1 > "$OUT/8_peer.log" 2>&1)
++    wait "$PID" 2>/dev/null
++    PID=""
++    if has "$OUT/8_server.log" 'certificate has expired'; then
++        result "Abgelaufenes Zertifikat" "bestanden" "abgewiesen: certificate has expired"
++    else
++        result "Abgelaufenes Zertifikat" "FEHLER" "$OUT/8_server.log"
++    fi
++fi
++
++echo
++printf '%-28s %-24s %s\n' "Fall" "Ergebnis" "Notiz"
++printf '%s\n' "${RESULTS[@]}"
++echo
++echo "Logs: $OUT"
++exit "$FAILED"
+diff --git a/tools/make_test_certs.sh b/tools/make_test_certs.sh
+index 2222559..ce83960 100755
+--- a/tools/make_test_certs.sh
++++ b/tools/make_test_certs.sh
+@@ -5,7 +5,11 @@
+ # All rights reserved by SOPTIM AG.
+ # make_test_certs.sh – erzeugt eine kleine Test-PKI für die TLS-Tests.
+ #
+-# Aufruf: tools/make_test_certs.sh <zielverzeichnis>
++# Aufruf: tools/make_test_certs.sh <zielverzeichnis> [ec|rsa]
++#
++# Schlüssel: ec = P-256 (Default), rsa = RSA 3072. Manche Gegenstellen
++# prüfen jede Schlüssellänge gegen eine RSA-Mindestlänge und lehnen
++# EC-Schlüssel ab; für solche Tests die RSA-Variante.
+ #
+ # Nur für Tests: Schlüssel ohne Schutz, Namen localhost/127.0.0.1. Der Build
+ # ruft das Skript selbst auf (Verzeichnis build/<preset>/tls).
+@@ -26,13 +30,21 @@
+ set -eu
+ 
+ OUT="${1:?Zielverzeichnis fehlt}"
++KEYTYPE="${2:-ec}"
++case "$KEYTYPE" in ec|rsa) ;; *) echo "Schlüsseltyp ec oder rsa" >&2; exit 2 ;; esac
+ mkdir -p "$OUT"
+ OUT="$(cd "$OUT" && pwd)"
+ WORK="$OUT/work"
+ rm -rf "$WORK"
+ mkdir -p "$WORK/new"
+ 
+-key() { openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$OUT/$1.key" 2>/dev/null; }
++key() {
++    if [ "$KEYTYPE" = rsa ]; then
++        openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$OUT/$1.key" 2>/dev/null
++    else
++        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$OUT/$1.key" 2>/dev/null
++    fi
++}
+ 
+ make_ca() { # name, common name
+     key "$1"
+@@ -65,13 +77,15 @@ commonName = supplied
+ 
+ [ leaf ]
+ basicConstraints       = CA:FALSE
+-keyUsage               = critical,digitalSignature,keyAgreement
++keyUsage               = critical,digitalSignature,\$ENV::KU
+ extendedKeyUsage       = serverAuth,clientAuth
+ subjectAltName         = \$ENV::SAN
+ subjectKeyIdentifier   = hash
+ authorityKeyIdentifier = keyid
+ EOF
+ export SAN="DNS:localhost" # wird von der Konfiguration immer gelesen, auch beim Sperren
++# Schlüsselverwendung passend zum Schlüsseltyp (RSA: Verschlüsselung, EC: Schlüsselvereinbarung).
++if [ "$KEYTYPE" = rsa ]; then export KU=keyEncipherment; else export KU=keyAgreement; fi
+ : > "$WORK/index.txt"
+ echo 1000 > "$WORK/serial"
+ echo 1000 > "$WORK/crlnumber"
+diff --git a/tools/selftest/selftest_client.cpp b/tools/selftest/selftest_client.cpp
+index 2fb6ebe..382fd28 100644
+--- a/tools/selftest/selftest_client.cpp
++++ b/tools/selftest/selftest_client.cpp
+@@ -30,7 +30,8 @@
+  *   unknown command IOA          rejected (cause 47)           -
+  *   unknown station              negative, cause 46            -
+  *   spontaneous values           N values in order             -
+- *   switch-over (--switchover)   STOPDT old, STARTDT standby, the series continues
++ *   switch-over (--switchover)   STOPDT old, STARTDT standby,  same, series of --series-ioa
++ *                                the series continues          (periodic allowed)
+  *   idle period, STOPDT          yes                           yes
+  *
+  * Exit code: 0 = all steps passed, 1 = a step failed, 2 = usage error.
+@@ -52,6 +53,7 @@ struct Options {
+     unsigned long ca{selftest::kStation};
+     bool foreign{false};
+     bool switchover{false}; // second connection as standby, switch in the middle of the series
++    std::uint32_t series_ioa{selftest::kMeasurementIoa}; // IOA of the series (--series-ioa)
+ };
+ 
+ /** @brief One received object with the parts of its ASDU the checks need. */
+@@ -137,11 +139,18 @@ bool wait_for(Client& c, std::uint64_t ms, const std::function<bool()>& done) {
+     return done();
+ }
+ 
+-/** @brief Values of IOA 100 with cause spontaneous, in order of arrival. */
++/**
++ * @brief Values of the series IOA (--series-ioa, default 100) in order of arrival.
++ *
++ * Self-test server: cause spontaneous. Foreign server (--foreign): also
++ * cause periodic, which some servers buffer for their redundancy group.
++ */
+ std::vector<double> series(const Client& c) {
+     std::vector<double> v;
+     for (const Received& r : c.received) {
+-        if (r.info.cause == IEC104_COT_SPONTANEOUS && r.object.ioa == selftest::kMeasurementIoa) {
++        const bool cause = r.info.cause == IEC104_COT_SPONTANEOUS ||
++                           (c.opt.foreign && r.info.cause == IEC104_COT_PERIODIC);
++        if (cause && r.object.ioa == c.opt.series_ioa) {
+             v.push_back(r.object.value);
+         }
+     }
+@@ -149,7 +158,7 @@ std::vector<double> series(const Client& c) {
+ }
+ 
+ /**
+- * @brief The series 0, 1, 2, ... received over two connections one after the other.
++ * @brief The series received over two connections one after the other.
+  *
+  * Events not acknowledged before the switch-over may arrive again on the
+  * second connection; such repetitions are skipped.
+@@ -167,8 +176,10 @@ long merged_series(const Client& first, const Client& second, unsigned long& rep
+         }
+         all.push_back(v);
+     }
++    // Self-test server: 0, 1, 2, ...; foreign server: any start, then +1.
++    const double start = first.opt.foreign && !all.empty() ? all.front() : 0.0;
+     for (std::size_t i = 0; i < all.size(); ++i) {
+-        if (all[i] != static_cast<double>(i)) {
++        if (all[i] != start + static_cast<double>(i)) {
+             return -1;
+         }
+     }
+@@ -316,7 +327,9 @@ void print_help() {
+                 "                   (default 0; choose more than t3)\n"
+                 "  --timeout S      limit for each step in seconds (default 20)\n"
+                 "  --switchover     open a second connection as standby and switch to it\n"
+-                "                   while the series runs (server with --broadcast)\n");
++                "                   while the series runs (server with --broadcast)\n"
++                "  --series-ioa N   IOA of the series for --switchover (default 100); with\n"
++                "                   --foreign any start value, spontaneous or periodic\n");
+     selftest::print_common_help();
+ }
+ 
+@@ -375,6 +388,9 @@ int main(int argc, char** argv) {
+             c.opt.foreign = true;
+         } else if (arg == "--switchover") {
+             c.opt.switchover = true;
++        } else if (arg == "--series-ioa") {
++            c.opt.series_ioa = static_cast<std::uint32_t>(
++                selftest::parse_number("--series-ioa", value(), 16777215));
+         } else if (arg == "--help" || arg == "-h") {
+             print_help();
+             return 0;
+@@ -480,8 +496,16 @@ int main(int argc, char** argv) {
+              confirmed(mark, 100, true);
+         const std::size_t points = count_cause(c, mark, IEC104_COT_INTERROGATED_STATION);
+         if (c.opt.foreign) {
+-            step("general interrogation", ok && positive(mark, 100),
+-                 std::to_string(points) + " objects");
++            // Say what is missing, so that a deviation of the peer is visible.
++            std::string detail = std::to_string(points) + " objects";
++            if (find(c, mark, 100, IEC104_COT_ACTIVATION_CON) < 0) {
++                detail += ", no confirmation (ACTCON)";
++            } else if (!positive(mark, 100)) {
++                detail += ", negative confirmation";
++            } else if (find(c, mark, 100, IEC104_COT_ACTIVATION_TERMINATION) < 0) {
++                detail += ", no termination (ACTTERM type 100)";
++            }
++            step("general interrogation", ok && positive(mark, 100), detail);
+         } else {
+             step("general interrogation", ok && positive(mark, 100) && points == 3U,
+                  std::to_string(points) + "/3 objects");
+@@ -542,30 +566,7 @@ int main(int argc, char** argv) {
+                  });
+             step("unknown station (cause 46)", ok);
+ 
+-            if (c.opt.switchover) {
+-                // Switch while the series is running: STOPDT on the first
+-                // connection, STARTDT on the standby; the series must go on
+-                // without a gap (the server sends it with --broadcast).
+-                ok = wait_for(c, step_ms, [&] { return !series(c).empty(); }) &&
+-                     series(c).size() < c.opt.expect && iec104_client_stop(c.handle) == IEC104_OK &&
+-                     wait_for(
+-                         c, step_ms, [&] { return c.state == IEC104_LINK_STOPPED; }) &&
+-                     iec104_client_start(standby.handle) == IEC104_OK &&
+-                     wait_for(
+-                         standby, step_ms, [&] { return standby.state == IEC104_LINK_STARTED; });
+-                step("switch-over (STOPDT, STARTDT standby)", ok,
+-                     std::to_string(series(c).size()) + " values before");
+-                unsigned long repeated = 0;
+-                const auto expect = static_cast<long>(c.opt.expect);
+-                ok = ok && wait_for(standby, step_ms,
+-                                    [&] { return merged_series(c, standby, repeated) >= expect; });
+-                const long n = merged_series(c, standby, repeated);
+-                step("spontaneous values", ok && n == expect,
+-                     n < 0 ? "gap or NOT in order"
+-                           : std::to_string(n) + "/" + std::to_string(expect) + ", in order" +
+-                                 (repeated > 0U ? ", " + std::to_string(repeated) + " repeated"
+-                                                : ""));
+-            } else {
++            if (!c.opt.switchover) {
+                 // Spontaneous values of IOA 100 in order.
+                 auto spontaneous = [&](bool& in_order) {
+                     unsigned long n = 0;
+@@ -588,6 +589,34 @@ int main(int argc, char** argv) {
+             }
+         }
+ 
++        if (c.opt.switchover) {
++            // Switch while the series is running: STOPDT on the first
++            // connection, STARTDT on the standby; the series must go on
++            // without a gap (self-test server with --broadcast, or a
++            // foreign server whose series is buffered by its redundancy group).
++            // Self-test server: the series has --expect values in all and must not
++            // be complete yet. Foreign server: --expect values after the switch.
++            ok = wait_for(c, step_ms, [&] { return !series(c).empty(); }) &&
++                 (c.opt.foreign || series(c).size() < c.opt.expect) &&
++                 iec104_client_stop(c.handle) == IEC104_OK &&
++                 wait_for(c, step_ms, [&] { return c.state == IEC104_LINK_STOPPED; }) &&
++                 iec104_client_start(standby.handle) == IEC104_OK &&
++                 wait_for(standby, step_ms, [&] { return standby.state == IEC104_LINK_STARTED; });
++            const auto before = static_cast<long>(series(c).size());
++            step("switch-over (STOPDT, STARTDT standby)", ok,
++                 std::to_string(before) + " values before");
++            unsigned long repeated = 0;
++            const long expect = static_cast<long>(c.opt.expect) + (c.opt.foreign ? before : 0L);
++            ok = ok && wait_for(standby, step_ms,
++                                [&] { return merged_series(c, standby, repeated) >= expect; });
++            const long n = merged_series(c, standby, repeated);
++            step(c.opt.foreign ? "series after switch-over" : "spontaneous values",
++                 ok && n >= expect && (c.opt.foreign || n == expect),
++                 n < 0 ? "gap or NOT in order"
++                       : std::to_string(n) + "/" + std::to_string(expect) + ", in order" +
++                             (repeated > 0U ? ", " + std::to_string(repeated) + " repeated" : ""));
++        }
++
+         // After a switch-over the standby carries the data.
+         Client& m = c.opt.switchover && standby.state == IEC104_LINK_STARTED ? standby : c;
+ 
