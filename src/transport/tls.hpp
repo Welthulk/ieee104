@@ -125,6 +125,12 @@ class TlsSession {
     /** @brief Sends close_notify once (best effort, never blocks). */
     virtual void shutdown() noexcept = 0;
 
+    /**
+     * @brief Completed TLS 1.2 handshakes of this connection: 1 after the
+     *        first, +1 for every renegotiation (by either side).
+     */
+    [[nodiscard]] virtual std::uint32_t handshakes() const noexcept = 0;
+
     /** @brief Version, suite, peer certificate; valid after the handshake. */
     [[nodiscard]] virtual TlsInfo info() const = 0;
 

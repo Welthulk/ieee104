@@ -5,7 +5,11 @@
 # All rights reserved by SOPTIM AG.
 # make_test_certs.sh – erzeugt eine kleine Test-PKI für die TLS-Tests.
 #
-# Aufruf: tools/make_test_certs.sh <zielverzeichnis>
+# Aufruf: tools/make_test_certs.sh <zielverzeichnis> [ec|rsa]
+#
+# Schlüssel: ec = P-256 (Default), rsa = RSA 3072. Manche Gegenstellen
+# prüfen jede Schlüssellänge gegen eine RSA-Mindestlänge und lehnen
+# EC-Schlüssel ab; für solche Tests die RSA-Variante.
 #
 # Nur für Tests: Schlüssel ohne Schutz, Namen localhost/127.0.0.1. Der Build
 # ruft das Skript selbst auf (Verzeichnis build/<preset>/tls).
@@ -26,13 +30,21 @@
 set -eu
 
 OUT="${1:?Zielverzeichnis fehlt}"
+KEYTYPE="${2:-ec}"
+case "$KEYTYPE" in ec|rsa) ;; *) echo "Schlüsseltyp ec oder rsa" >&2; exit 2 ;; esac
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 WORK="$OUT/work"
 rm -rf "$WORK"
 mkdir -p "$WORK/new"
 
-key() { openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$OUT/$1.key" 2>/dev/null; }
+key() {
+    if [ "$KEYTYPE" = rsa ]; then
+        openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$OUT/$1.key" 2>/dev/null
+    else
+        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$OUT/$1.key" 2>/dev/null
+    fi
+}
 
 make_ca() { # name, common name
     key "$1"
@@ -65,13 +77,15 @@ commonName = supplied
 
 [ leaf ]
 basicConstraints       = CA:FALSE
-keyUsage               = critical,digitalSignature,keyAgreement
+keyUsage               = critical,digitalSignature,\$ENV::KU
 extendedKeyUsage       = serverAuth,clientAuth
 subjectAltName         = \$ENV::SAN
 subjectKeyIdentifier   = hash
 authorityKeyIdentifier = keyid
 EOF
 export SAN="DNS:localhost" # wird von der Konfiguration immer gelesen, auch beim Sperren
+# Schlüsselverwendung passend zum Schlüsseltyp (RSA: Verschlüsselung, EC: Schlüsselvereinbarung).
+if [ "$KEYTYPE" = rsa ]; then export KU=keyEncipherment; else export KU=keyAgreement; fi
 : > "$WORK/index.txt"
 echo 1000 > "$WORK/serial"
 echo 1000 > "$WORK/crlnumber"

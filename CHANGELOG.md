@@ -1,5 +1,16 @@
 # Änderungen
 
+## In Arbeit (nächste Lieferung)
+
+| Bereich | Änderung |
+| --- | --- |
+| Interop | `tools/interop/run_lib60870.sh`: 8 Fälle gegen lib60870 mit und ohne TLS; Ergebnisse und Befunde in `docs/08_Interop.md` |
+| Interop | Vorbereitung Integrationstest: Checkliste, Ablauf, Fehlerbilder, Vorlage `tools/interop/gegenstelle.conf` |
+| TLS | Renegotiation durch die Gegenstelle wird gemeldet (`key renewal: renegotiation complete`) |
+| Selbsttest | Client `--series-ioa`; `--switchover` auch gegen fremde Server; klare Meldung bei fehlendem ACTCON/ACTTERM |
+| Tests | Referenzmitschnitt über TLS (`Capture.ForeignTlsServer`); Test-PKI auch mit RSA-Schlüsseln |
+| Doku | README mit Schnellstart ohne Bauen, Feature-Liste, Tests, Test gegen lib60870 |
+
 ## 0.4.0 (25.11.2026)
 
 | Bereich | Änderung |

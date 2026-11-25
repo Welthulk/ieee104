@@ -280,7 +280,8 @@ typedef enum iec104_security_event {
     IEC104_SECURITY_CERTIFICATE_REJECTED = 2,
     /** TLS error on an open connection, e.g. an alert of the peer; detail: reason. */
     IEC104_SECURITY_TLS_ERROR = 3,
-    /** This side started a key renewal; detail: "key update" or "renegotiation". */
+    /** Key renewal: this side started one ("key update", "renegotiation"), or a TLS 1.2
+     *  renegotiation by either side completed ("renegotiation complete"). */
     IEC104_SECURITY_KEY_RENEWAL = 4
 } iec104_security_event;
 

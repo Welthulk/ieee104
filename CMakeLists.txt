@@ -210,6 +210,14 @@ if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
             COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
                     $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>)
         set_tests_properties(SelfTest.ServerAndClientOverTcp PROPERTIES TIMEOUT 90)
+        # Interop with lib60870-C as foreign peer (only if given; see docs/08_Interop.md).
+        set(IEC104_LIB60870_DIR "" CACHE PATH "lib60870-C folder with build/ (and build-tls/) for interop tests")
+        if(IEC104_LIB60870_DIR AND IEC104_BUILD_EXAMPLES)
+            get_filename_component(_lib60870 "${IEC104_LIB60870_DIR}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
+            add_test(NAME Interop.Lib60870
+                COMMAND ${PROJECT_SOURCE_DIR}/tools/interop/run_lib60870.sh ${_lib60870} ${CMAKE_BINARY_DIR})
+            set_tests_properties(Interop.Lib60870 PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+        endif()
         add_test(NAME SelfTest.SwitchOver
             COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
                     $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>

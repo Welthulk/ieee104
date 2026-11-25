@@ -4,20 +4,49 @@ Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104,
 
 Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
 
-## Stand
+## Sofort nutzen, ohne zu bauen
 
-| Modul | Inhalt |
+| Was | Wo |
 | --- | --- |
-| `codec` | APCI (I/S/U-Format), ASDU-Kopf mit parametrierbaren Feldlängen, alle Informationselemente, Typtabelle mit 59 Typkennungen, vollständige ASDUs mit SQ = 0 und SQ = 1, Aufteilen langer Objektlisten nach maximaler ASDU-Länge, strikter und toleranter Modus, CP56Time2a |
-| `apci` | Zustandsmaschine der Verbindung ohne eigenes I/O: STARTDT/STOPDT/TESTFR, Folgenummern, Quittierung nach k und w, Timer t1–t3 |
-| `transport` | TCP für Linux (nicht blockierend, `poll`), Verbindungsaufbau mit t0; TLS 1.2/1.3 mit OpenSSL 3.x |
-| `session` | Abläufe der gesteuerten Station: Prozessabbild, Generalabfrage (Station und Gruppen), Zählerabfrage, Lesebefehl, Testbefehl, Uhrzeit, Befehle mit Bestätigung und Beendigung, Ende der Initialisierung, negative Bestätigungen (Ursachen 44–47) |
-| C-API | Server und Client mit Handles, konfigurierbaren Ports, Timern und ASDU-Profil; Werte statt Oktette (`iec104_object`), Callbacks für Objekte, Befehle und Zustandswechsel |
-| Selbsttest | `iec104_selftest_server` und `iec104_selftest_client` für automatische und manuelle Tests |
-| Befehle | Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung am Client mit Ergebnis je Befehl und getrennten Timeouts |
-| Betrieb | Log-Callback mit Stufen und APDU-Trace, Statistik je Verbindung, Konfigurationsdatei, `find_package(iec104)`, statisch oder geteilt |
-| TLS | IEC 62351-3: gegenseitige Authentifizierung mit X.509, Sperrlisten, Name oder Fingerprint der Gegenstelle, Key Update und Renegotiation nach Zeit, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse |
-| Redundanz | Redundanzgruppen nach Edition 2: eine aktive Verbindung je Gruppe, Ereignispuffer je Gruppe bis zur Quittung, erneutes Senden nach Abbruch, Überlaufstrategie, Zuordnung über die Adresse der Leitstelle |
+| Fertig gebaute Library für Linux x86-64 (Release, mit TLS) | `dist/iec104-<version>-linux-x86_64/` (in der Lieferung als gleichnamiges Zip): `lib/libiec104.so.0`, `include/iec104/iec104.h`, Kurzanleitung `README.md` |
+| Beispielprogramme für Julia | `julia/` im selben Ordner bzw. `examples/julia/`: `IEC104.jl` (Anbindung), `client.jl`, `server.jl`; Anleitung `docs/07_Julia.md` |
+| Beispielprogramme in C | `examples/hello_server.c`, `examples/hello_client.c`; Anleitung `docs/06_Anleitung.md` |
+
+Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab 2.34, OpenSSL 3).
+
+```bash
+cd dist/iec104-0.4.0-linux-x86_64
+gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
+julia julia/server.jl 2404 &                                                       # Julia: Station
+julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
+```
+
+## Funktionen
+
+| Bereich | Funktionen |
+| --- | --- |
+| Rollen | Server (gesteuerte Station) und Client (Leitstelle), beide im selben Prozess nutzbar |
+| Protokoll | IEC 60870-5-104 Ed. 2.1: APCI mit STARTDT/STOPDT/TESTFR, Folgenummern, k/w, Timer t0–t3; alle 59 Typkennungen, ASDUs mit SQ = 0/1, CP56Time2a; strikter Normmodus und toleranter Modus für bekannte Abweichungen |
+| Parameter | Timer, k, w, Feldlängen (COT, CA, IOA), maximale ASDU-Länge, Port, Adresse; alles je Verbindung einstellbar, auch per Konfigurationsdatei |
+| Server | Prozessabbild; Generalabfrage (Station, Gruppen 1–16), Zählerabfrage, Lesebefehl, Testbefehl, Uhrzeit beantwortet die Library selbst; Ende der Initialisierung; negative Bestätigungen (Ursachen 44–47); Broadcast-Adresse |
+| Befehle | Einzel-, Doppel-, Stufen-, Sollwert- und Bitmusterbefehle mit und ohne Zeitmarke; Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout); maximale Befehlsverzögerung; Client verfolgt jeden Befehl bis zum Ergebnis |
+| Redundanz | Redundanzgruppen nach Edition 2: eine aktive Verbindung je Gruppe, Umschaltung per STOPDT/STARTDT, Ereignispuffer je Gruppe bis zur Quittung, erneutes Senden nach Abbruch, Überlaufstrategie, Zuordnung über die Adresse der Leitstelle |
+| Sicherheit | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3: gegenseitige Authentifizierung, Sperrlisten, Prüfung von Name oder Fingerprint, Key Update und Renegotiation, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse; Abweisung unbekannter Absender |
+| Betrieb | Log mit Stufen bis zum APDU-Hexdump, Statistik je Verbindung und Gruppe, Konfigurationsdatei, kein interner Thread (Poll im Thread der Anwendung) |
+| Einbindung | stabile C-Schnittstelle (ein Header), statisch oder geteilt, `find_package(iec104)`, Anbindung für Julia per `ccall`; fertig gebaute Library |
+| Werkzeuge | Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870 |
+
+## Tests
+
+| Art | Umfang |
+| --- | --- |
+| Unit-Tests (GoogleTest) | 158 Tests: Codec mit Referenz-Hexdumps, Zustandsmaschine mit simulierter Zeit, Abläufe der Station, Befehle, C-API über Loopback, TLS mit Negativfällen, Redundanz, Konfigurationsdatei |
+| Referenzdaten | Mitschnitte einer fremden Implementierung, auch über TLS (`tests/data/`); jede APDU wird dekodiert und bitgenau neu kodiert |
+| Selbsttest | Server und Client über TCP, über TLS und mit Umschaltung einer Redundanzgruppe, als Teil von `ctest` (162 Fälle gesamt) |
+| Sanitizer | alle Tests mit AddressSanitizer und UBSan (Preset `asan`) |
+| Statische Analyse | clang-tidy ohne Befunde, Übersetzung mit `-Werror` |
+| Fuzzing | libFuzzer für Codec, Zustandsmaschine und Abläufe der Station |
+| Interop | gegen lib60870 als fremde Gegenstelle, mit und ohne TLS: `tools/interop/run_lib60870.sh`, Ergebnisse in `docs/08_Interop.md` |
 
 ## Unterlagen
 
@@ -30,6 +59,7 @@ Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
 | `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E10), auf die der Code verweist |
 | `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Redundanz, TLS, Regeln |
 | `docs/07_Julia.md` | Library aus Julia verwenden: Schnellstart, Typen, Callbacks, Beispiele |
+| `docs/08_Interop.md` | Tests gegen eine fremde Implementierung, Befunde, Vorbereitung des Integrationstests mit einer Gegenstelle |
 
 ## Verzeichnisse
 
@@ -45,6 +75,8 @@ Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
 | `fuzz/` | libFuzzer-Ziele für Codec und Zustandsmaschine |
 | `examples/` | Hello World: kleinster Server und Client; `examples/julia/` für Julia |
 | `tools/selftest/` | Selbsttest-Programme und Testskript |
+| `tools/interop/` | Interop-Tests gegen lib60870 |
+| `dist/` | fertig gebaute Library je Version |
 | `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer, Test-PKI für TLS |
 
 ## Bauen und testen
@@ -82,6 +114,28 @@ tools/selftest/run_selftest.sh build/debug/iec104_selftest_server \
 ```
 
 Der Client meldet jeden Schritt mit `ok` oder `FAILED` und endet mit `result: PASSED` (Exit-Code 0) oder `result: FAILED` (Exit-Code 1). `ctest` lässt beide Programme automatisch über Loopback gegeneinander laufen. Testfälle gegen fremde Geräte, Fehlerfälle und alle Optionen: `docs/04_Selbsttest.md`.
+
+## Gegen lib60870 testen
+
+lib60870-C dient nur als fremde Gegenstelle: Das Skript startet deren unveränderte Beispielprogramme und spricht über TCP mit ihnen, gelinkt wird nichts. Einmalig holen und bauen (neben diesem Repo):
+
+```bash
+git clone --branch v2.4.1 https://github.com/mz-automation/lib60870.git ../lib60870
+cd ../lib60870/lib60870-C
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build       # ohne TLS
+curl -L https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.8/mbedtls-3.6.8.tar.bz2 \
+    | tar xj -C dependencies                                                         # für TLS
+cmake -S . -B build-tls -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build-tls
+cd -
+```
+
+Testen (Ports 2404 und 19998 müssen frei sein):
+
+```bash
+tools/interop/run_lib60870.sh ../lib60870/lib60870-C build/debug
+```
+
+Ausgabe: je Fall `bestanden`, `Abweichung Gegenstelle` (bekannter Fehler eines Beispielprogramms, eigenes Verhalten korrekt) oder `FEHLER`; Logs mit APDU-Mitschnitt unter `build/debug/interop/`. Mit `cmake --preset debug -DIEC104_LIB60870_DIR=../lib60870/lib60870-C` läuft derselbe Test in `ctest` mit. Fälle, Befunde und Vorbereitung des Integrationstests: `docs/08_Interop.md`.
 
 ## Verwendung der C-API
 

@@ -120,6 +120,10 @@ void Link::service(short revents, apci::TimeMs now, LinkSink& sink) noexcept {
     if (tls_ != nullptr && now >= next_renewal_) {
         renew_keys(now, sink);
     }
+    if (tls_ != nullptr && tls_->handshakes() > handshakes_seen_) {
+        handshakes_seen_ = tls_->handshakes();
+        sink.on_tls(id_, TlsEvent::Renewal, "renegotiation complete");
+    }
     conn_.tick(now);
     dispatch_events(sink);
     flush_output();
@@ -179,6 +183,7 @@ bool Link::continue_handshake(apci::TimeMs now, LinkSink& sink) noexcept {
         text += ", resumed";
     }
     sink.on_tls(id_, TlsEvent::Established, text);
+    handshakes_seen_ = tls_->handshakes();
     const std::uint32_t interval = tls_context_->renewal_interval_ms();
     next_renewal_ = interval > 0U ? now + interval : apci::kNoDeadline;
     (void)conn_.open(now);

@@ -177,6 +177,9 @@ class OpenSslSession final : public TlsSession {
         BIO_set_init(bio.get(), 1);
         BIO* raw = bio.release();
         SSL_set_bio(ssl_.get(), raw, raw); // the SSL object owns the BIO now
+        // Counts completed handshakes, so that a renegotiation by the peer is seen.
+        (void)SSL_set_app_data(ssl_.get(), this);
+        SSL_set_info_callback(ssl_.get(), &OpenSslSession::on_info);
         if (role == TlsRole::Server) {
             SSL_set_accept_state(ssl_.get());
         } else {
@@ -301,6 +304,8 @@ class OpenSslSession final : public TlsSession {
         return i;
     }
 
+    [[nodiscard]] std::uint32_t handshakes() const noexcept override { return handshakes_; }
+
     [[nodiscard]] TlsFailure failure() const noexcept override { return failure_; }
     [[nodiscard]] const std::string& error() const noexcept override { return error_; }
 
@@ -333,6 +338,17 @@ class OpenSslSession final : public TlsSession {
     }
 
   private:
+    // TLS 1.2 only: in TLS 1.3 post-handshake messages (tickets, key
+    // updates) also end with "handshake done".
+    static void on_info(const SSL* ssl, int where, int /*ret*/) {
+        if ((where & SSL_CB_HANDSHAKE_DONE) != 0 && SSL_version(ssl) < TLS1_3_VERSION) {
+            auto* self = static_cast<OpenSslSession*>(SSL_get_app_data(ssl));
+            if (self != nullptr) {
+                ++self->handshakes_;
+            }
+        }
+    }
+
     static bool is_want(int e) noexcept {
         return e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE;
     }
@@ -397,6 +413,7 @@ class OpenSslSession final : public TlsSession {
     SslPtr ssl_;
     short want_{POLLIN};
     bool fatal_{false};
+    std::uint32_t handshakes_{0};
     bool renegotiation_;
     std::string fingerprint_;
     TlsFailure failure_{TlsFailure::None};

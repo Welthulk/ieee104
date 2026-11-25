@@ -14,6 +14,10 @@
  * byte-identical APCIs, ASDU headers and complete ASDUs when re-encoding the
  * decoded values.
  * New frames added to the capture are covered automatically.
+ *
+ * tests/data/lib60870_tls_capture.txt holds the APDUs of this library's
+ * client with the lib60870 TLS example server; frames marked "deviation"
+ * are known errors of the peer and must be rejected by the strict codec.
  */
 #include "codec/apci.hpp"
 #include "codec/asdu.hpp"
@@ -36,12 +40,14 @@ namespace {
 struct CapturedApdu {
     int line = 0;                    // line number in the capture file, for messages
     std::vector<std::uint8_t> bytes; // the complete APDU
+    bool deviation = false;          // marked as known error of the peer
 };
 
-// Reads all "SEND:" and "RCVD:" lines. Lines starting with '#' are comments.
-std::vector<CapturedApdu> load_capture() {
+// Reads all "SEND:" and "RCVD:" lines. Lines starting with '#' are comments;
+// "# deviation" after the octets marks a known error of the peer.
+std::vector<CapturedApdu> load_capture(const std::string& name = "lib60870_capture.txt") {
     std::vector<CapturedApdu> result;
-    std::ifstream in(IEC104_TEST_DATA_DIR "/lib60870_capture.txt");
+    std::ifstream in(std::string(IEC104_TEST_DATA_DIR) + "/" + name);
     std::string text;
     int line = 0;
     while (std::getline(in, text)) {
@@ -51,6 +57,7 @@ std::vector<CapturedApdu> load_capture() {
         }
         CapturedApdu apdu;
         apdu.line = line;
+        apdu.deviation = text.find("# deviation") != std::string::npos;
         std::istringstream hex(text.substr(5));
         unsigned value = 0;
         while (hex >> std::hex >> value) {
@@ -63,13 +70,12 @@ std::vector<CapturedApdu> load_capture() {
 
 } // namespace
 
+namespace {
+
 // Rule: every APDU of a foreign implementation is framed, decoded and
 // re-encoded to identical bytes (APCI for all formats, ASDU header for I-frames).
 // Source: capture (whole file).
-TEST(Capture, EveryApduRoundTrips) {
-    const std::vector<CapturedApdu> apdus = load_capture();
-    ASSERT_GE(apdus.size(), 10U) << "capture file missing or truncated";
-
+void check_round_trip(const std::vector<CapturedApdu>& apdus) {
     for (const CapturedApdu& c : apdus) {
         SCOPED_TRACE("capture line " + std::to_string(c.line));
         const std::uint8_t* data = c.bytes.data();
@@ -117,6 +123,13 @@ TEST(Capture, EveryApduRoundTrips) {
         // Complete ASDU (strict IEC 104 profile): decode and re-encode.
         std::array<InformationObject, 127> objects{};
         DecodedAsdu d{};
+        if (c.deviation) {
+            // Known error of the peer: rejected, not misread.
+            EXPECT_NE(decode_asdu(asdu, apci.asdu_length, kIec104Profile, objects.data(),
+                                  objects.size(), d),
+                      IEC104_OK);
+            continue;
+        }
         ASSERT_EQ(
             decode_asdu(asdu, apci.asdu_length, kIec104Profile, objects.data(), objects.size(), d),
             IEC104_OK);
@@ -129,4 +142,24 @@ TEST(Capture, EveryApduRoundTrips) {
         EXPECT_TRUE(
             std::equal(ab.begin(), ab.begin() + static_cast<std::ptrdiff_t>(asdu_written), asdu));
     }
+}
+
+} // namespace
+
+TEST(Capture, EveryApduRoundTrips) {
+    const std::vector<CapturedApdu> apdus = load_capture();
+    ASSERT_GE(apdus.size(), 10U) << "capture file missing or truncated";
+    check_round_trip(apdus);
+}
+
+// Rule: the APDUs of a foreign server over TLS (decrypted) round-trip as
+// well; its malformed termination (type 0, VSQ 0) is rejected by the strict
+// codec. Source: tests/data/lib60870_tls_capture.txt.
+TEST(Capture, ForeignTlsServer) {
+    const std::vector<CapturedApdu> apdus = load_capture("lib60870_tls_capture.txt");
+    ASSERT_GE(apdus.size(), 20U) << "capture file missing or truncated";
+    EXPECT_EQ(std::count_if(apdus.begin(), apdus.end(),
+                            [](const CapturedApdu& c) { return c.deviation; }),
+              1);
+    check_round_trip(apdus);
 }

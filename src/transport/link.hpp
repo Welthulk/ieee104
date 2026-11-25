@@ -60,7 +60,7 @@ enum class TlsEvent : std::uint8_t {
     HandshakeFailed,     ///< Handshake failed or did not complete within t0.
     CertificateRejected, ///< The peer certificate was rejected; text: reason.
     Error,               ///< TLS error on the open connection; text: reason.
-    Renewal,             ///< This side started a key update or renegotiation.
+    Renewal,             ///< Key renewal started by this side, or a renegotiation completed.
 };
 
 /** @brief Receiver of what happens on a link (implemented by the API layer). */
@@ -179,6 +179,7 @@ class Link {
     std::shared_ptr<TlsContext> tls_context_;
     std::unique_ptr<TlsSession> tls_;
     apci::TimeMs next_renewal_{apci::kNoDeadline};
+    std::uint32_t handshakes_seen_{0}; // TLS 1.2: completed handshakes already reported
     LinkCloseReason close_reason_{LinkCloseReason::None};
     apci::CloseReason protocol_reason_{apci::CloseReason::None};
     bool reported_closed_{false};

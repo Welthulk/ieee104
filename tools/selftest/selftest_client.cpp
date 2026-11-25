@@ -30,7 +30,8 @@
  *   unknown command IOA          rejected (cause 47)           -
  *   unknown station              negative, cause 46            -
  *   spontaneous values           N values in order             -
- *   switch-over (--switchover)   STOPDT old, STARTDT standby, the series continues
+ *   switch-over (--switchover)   STOPDT old, STARTDT standby,  same, series of --series-ioa
+ *                                the series continues          (periodic allowed)
  *   idle period, STOPDT          yes                           yes
  *
  * Exit code: 0 = all steps passed, 1 = a step failed, 2 = usage error.
@@ -52,6 +53,7 @@ struct Options {
     unsigned long ca{selftest::kStation};
     bool foreign{false};
     bool switchover{false}; // second connection as standby, switch in the middle of the series
+    std::uint32_t series_ioa{selftest::kMeasurementIoa}; // IOA of the series (--series-ioa)
 };
 
 /** @brief One received object with the parts of its ASDU the checks need. */
@@ -137,11 +139,18 @@ bool wait_for(Client& c, std::uint64_t ms, const std::function<bool()>& done) {
     return done();
 }
 
-/** @brief Values of IOA 100 with cause spontaneous, in order of arrival. */
+/**
+ * @brief Values of the series IOA (--series-ioa, default 100) in order of arrival.
+ *
+ * Self-test server: cause spontaneous. Foreign server (--foreign): also
+ * cause periodic, which some servers buffer for their redundancy group.
+ */
 std::vector<double> series(const Client& c) {
     std::vector<double> v;
     for (const Received& r : c.received) {
-        if (r.info.cause == IEC104_COT_SPONTANEOUS && r.object.ioa == selftest::kMeasurementIoa) {
+        const bool cause = r.info.cause == IEC104_COT_SPONTANEOUS ||
+                           (c.opt.foreign && r.info.cause == IEC104_COT_PERIODIC);
+        if (cause && r.object.ioa == c.opt.series_ioa) {
             v.push_back(r.object.value);
         }
     }
@@ -149,7 +158,7 @@ std::vector<double> series(const Client& c) {
 }
 
 /**
- * @brief The series 0, 1, 2, ... received over two connections one after the other.
+ * @brief The series received over two connections one after the other.
  *
  * Events not acknowledged before the switch-over may arrive again on the
  * second connection; such repetitions are skipped.
@@ -167,8 +176,10 @@ long merged_series(const Client& first, const Client& second, unsigned long& rep
         }
         all.push_back(v);
     }
+    // Self-test server: 0, 1, 2, ...; foreign server: any start, then +1.
+    const double start = first.opt.foreign && !all.empty() ? all.front() : 0.0;
     for (std::size_t i = 0; i < all.size(); ++i) {
-        if (all[i] != static_cast<double>(i)) {
+        if (all[i] != start + static_cast<double>(i)) {
             return -1;
         }
     }
@@ -316,7 +327,9 @@ void print_help() {
                 "                   (default 0; choose more than t3)\n"
                 "  --timeout S      limit for each step in seconds (default 20)\n"
                 "  --switchover     open a second connection as standby and switch to it\n"
-                "                   while the series runs (server with --broadcast)\n");
+                "                   while the series runs (server with --broadcast)\n"
+                "  --series-ioa N   IOA of the series for --switchover (default 100); with\n"
+                "                   --foreign any start value, spontaneous or periodic\n");
     selftest::print_common_help();
 }
 
@@ -375,6 +388,9 @@ int main(int argc, char** argv) {
             c.opt.foreign = true;
         } else if (arg == "--switchover") {
             c.opt.switchover = true;
+        } else if (arg == "--series-ioa") {
+            c.opt.series_ioa = static_cast<std::uint32_t>(
+                selftest::parse_number("--series-ioa", value(), 16777215));
         } else if (arg == "--help" || arg == "-h") {
             print_help();
             return 0;
@@ -480,8 +496,16 @@ int main(int argc, char** argv) {
              confirmed(mark, 100, true);
         const std::size_t points = count_cause(c, mark, IEC104_COT_INTERROGATED_STATION);
         if (c.opt.foreign) {
-            step("general interrogation", ok && positive(mark, 100),
-                 std::to_string(points) + " objects");
+            // Say what is missing, so that a deviation of the peer is visible.
+            std::string detail = std::to_string(points) + " objects";
+            if (find(c, mark, 100, IEC104_COT_ACTIVATION_CON) < 0) {
+                detail += ", no confirmation (ACTCON)";
+            } else if (!positive(mark, 100)) {
+                detail += ", negative confirmation";
+            } else if (find(c, mark, 100, IEC104_COT_ACTIVATION_TERMINATION) < 0) {
+                detail += ", no termination (ACTTERM type 100)";
+            }
+            step("general interrogation", ok && positive(mark, 100), detail);
         } else {
             step("general interrogation", ok && positive(mark, 100) && points == 3U,
                  std::to_string(points) + "/3 objects");
@@ -542,30 +566,7 @@ int main(int argc, char** argv) {
                  });
             step("unknown station (cause 46)", ok);
 
-            if (c.opt.switchover) {
-                // Switch while the series is running: STOPDT on the first
-                // connection, STARTDT on the standby; the series must go on
-                // without a gap (the server sends it with --broadcast).
-                ok = wait_for(c, step_ms, [&] { return !series(c).empty(); }) &&
-                     series(c).size() < c.opt.expect && iec104_client_stop(c.handle) == IEC104_OK &&
-                     wait_for(
-                         c, step_ms, [&] { return c.state == IEC104_LINK_STOPPED; }) &&
-                     iec104_client_start(standby.handle) == IEC104_OK &&
-                     wait_for(
-                         standby, step_ms, [&] { return standby.state == IEC104_LINK_STARTED; });
-                step("switch-over (STOPDT, STARTDT standby)", ok,
-                     std::to_string(series(c).size()) + " values before");
-                unsigned long repeated = 0;
-                const auto expect = static_cast<long>(c.opt.expect);
-                ok = ok && wait_for(standby, step_ms,
-                                    [&] { return merged_series(c, standby, repeated) >= expect; });
-                const long n = merged_series(c, standby, repeated);
-                step("spontaneous values", ok && n == expect,
-                     n < 0 ? "gap or NOT in order"
-                           : std::to_string(n) + "/" + std::to_string(expect) + ", in order" +
-                                 (repeated > 0U ? ", " + std::to_string(repeated) + " repeated"
-                                                : ""));
-            } else {
+            if (!c.opt.switchover) {
                 // Spontaneous values of IOA 100 in order.
                 auto spontaneous = [&](bool& in_order) {
                     unsigned long n = 0;
@@ -586,6 +587,34 @@ int main(int argc, char** argv) {
                      std::to_string(values) + "/" + std::to_string(c.opt.expect) +
                          (in_order ? ", in order" : ", NOT in order"));
             }
+        }
+
+        if (c.opt.switchover) {
+            // Switch while the series is running: STOPDT on the first
+            // connection, STARTDT on the standby; the series must go on
+            // without a gap (self-test server with --broadcast, or a
+            // foreign server whose series is buffered by its redundancy group).
+            // Self-test server: the series has --expect values in all and must not
+            // be complete yet. Foreign server: --expect values after the switch.
+            ok = wait_for(c, step_ms, [&] { return !series(c).empty(); }) &&
+                 (c.opt.foreign || series(c).size() < c.opt.expect) &&
+                 iec104_client_stop(c.handle) == IEC104_OK &&
+                 wait_for(c, step_ms, [&] { return c.state == IEC104_LINK_STOPPED; }) &&
+                 iec104_client_start(standby.handle) == IEC104_OK &&
+                 wait_for(standby, step_ms, [&] { return standby.state == IEC104_LINK_STARTED; });
+            const auto before = static_cast<long>(series(c).size());
+            step("switch-over (STOPDT, STARTDT standby)", ok,
+                 std::to_string(before) + " values before");
+            unsigned long repeated = 0;
+            const long expect = static_cast<long>(c.opt.expect) + (c.opt.foreign ? before : 0L);
+            ok = ok && wait_for(standby, step_ms,
+                                [&] { return merged_series(c, standby, repeated) >= expect; });
+            const long n = merged_series(c, standby, repeated);
+            step(c.opt.foreign ? "series after switch-over" : "spontaneous values",
+                 ok && n >= expect && (c.opt.foreign || n == expect),
+                 n < 0 ? "gap or NOT in order"
+                       : std::to_string(n) + "/" + std::to_string(expect) + ", in order" +
+                             (repeated > 0U ? ", " + std::to_string(repeated) + " repeated" : ""));
         }
 
         // After a switch-over the standby carries the data.
