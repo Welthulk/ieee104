@@ -17,6 +17,7 @@ Geteilte Library für Linux x86-64 (Release, mit TLS).
 ```bash
 bash pruefen.sh        # alles bereit?
 bash gui.sh            # Test-GUI, dann http://localhost:8080 im Browser
+bash gui.sh 8080 0.0.0.0   # WSL: wenn Windows localhost nicht erreicht; angezeigte Adresse öffnen
 bash beispiel.sh       # Station und Leitstelle in Julia gegeneinander
 ```
 

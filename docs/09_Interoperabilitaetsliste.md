@@ -1,6 +1,6 @@
 # Interoperabilitätsliste (IEC 60870-5-104, Abschnitt 9)
 
-IEC 60870-5-104 Library 0.6.0 · Rolle: Station und Leitstelle · Parameter: Standardwerte
+IEC 60870-5-104 Library 0.6.1 · Rolle: Station und Leitstelle · Parameter: Standardwerte
 
 Erzeugt mit `iec104_interop_list`. Gliederung und Bezeichnungen nach öffentlichen Wiedergaben der Checkliste (docs/02_Technik_und_Quellen.md, [ORA]); die Angaben stammen aus dem Code der Library. Eigene Parameter: `iec104_interop_list --config datei.conf`, zum Abgleich mit der Liste einer Gegenstelle `--format csv`.
 

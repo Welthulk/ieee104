@@ -16,11 +16,13 @@ LOG="$(mktemp)"
 julia --startup-file=no julia/server.jl "$PORT" 120 < /dev/null > "$LOG" 2>&1 &
 SERVER=$!
 trap 'kill "$SERVER" 2>/dev/null; rm -f "$LOG"' EXIT
-for _ in $(seq 1 120); do
+echo "Station startet (beim ersten Start nach einer Julia-Installation bis zu einigen Minuten) ..."
+for _ in $(seq 1 600); do
     grep -q listening "$LOG" && break
     kill -0 "$SERVER" 2>/dev/null || { cat "$LOG"; exit 1; }
     sleep 0.5
 done
+grep -q listening "$LOG" || { echo "Station nach 5 Minuten nicht bereit:"; cat "$LOG"; exit 1; }
 echo "Station läuft auf Port $PORT, Leitstelle verbindet sich:"
 julia --startup-file=no julia/client.jl 127.0.0.1 "$PORT"
 RC=$?

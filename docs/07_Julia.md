@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
 Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
 
 ```bash
-cd iec104-0.6.0-linux-x86_64
+cd iec104-0.6.1-linux-x86_64
 julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
 julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
 ```
@@ -164,7 +164,7 @@ end
 julia julia/gui/iec104_gui.jl            # im Binärpaket; im Quellbaum examples/julia/gui/
 ```
 
-Dann im Browser `http://localhost:8080` öffnen; unter WSL auch aus Windows heraus. Anderer Port: `julia julia/gui/iec104_gui.jl 8081`.
+Dann im Browser `http://localhost:8080` öffnen. Anderer Port: `julia julia/gui/iec104_gui.jl 8081`. Kommt unter WSL der Windows-Browser nicht an `localhost` heran: `bash gui.sh 8080 0.0.0.0` (Binärpaket) und die angezeigte Adresse der WSL öffnen.
 
 | Bereich | Funktionen |
 | --- | --- |

@@ -70,10 +70,16 @@ check "ninja" "$(have ninja && echo 1 || echo 0)" ninja-build
 check "C/C++-Compiler" "$( (have g++ && have gcc) && echo 1 || echo 0)" g++
 check "OpenSSL-Header" "$([ -f /usr/include/openssl/ssl.h ] && echo 1 || echo 0)" libssl-dev
 check "openssl (Testzertifikate)" "$(have openssl && echo 1 || echo 0)" openssl
-check "GoogleTest" "$( ([ -f /usr/include/gtest/gtest.h ] || [ -f /usr/local/include/gtest/gtest.h ]) && echo 1 || echo 0)" libgtest-dev
 check "unzip" "$(have unzip && echo 1 || echo 0)" unzip
 PAKETE=()
 for p in "${APT[@]}"; do [ -n "$p" ] && PAKETE+=("$p"); done
+GTEST=0
+if [ -f /usr/include/gtest/gtest.h ] || [ -f /usr/local/include/gtest/gtest.h ]; then
+    GTEST=1
+    printf '  %-30s ok\n' "GoogleTest"
+else
+    printf '  %-30s fehlt, wird beim Bauen von GitHub geladen\n' "GoogleTest"
+fi
 if [ "${#PAKETE[@]}" -gt 0 ]; then
     echo "  fehlende Pakete (Ubuntu/Debian): sudo apt install ${PAKETE[*]}"
 fi
@@ -106,14 +112,38 @@ if [ "$BAUEN" = 0 ]; then
 elif [ "${#PAKETE[@]}" -gt 0 ]; then
     echo "  übersprungen: erst die fehlenden Pakete installieren (siehe 2.)"
 else
-    if cmake --preset debug > build-debug.log 2>&1 && cmake --build --preset debug >> build-debug.log 2>&1; then
+    # Mit Unit-Tests; fehlt GoogleTest, lädt CMake es von GitHub. Geht das
+    # nicht (Proxy), ohne Unit-Tests bauen und die Selbsttests laufen lassen.
+    UNIT=1
+    if ! cmake --preset debug > build-debug.log 2>&1; then
+        if [ "$GTEST" = 0 ]; then
+            echo "  GoogleTest nicht ladbar (Netz/Proxy?): baue ohne Unit-Tests"
+            UNIT=0
+            cmake --preset debug -DIEC104_BUILD_TESTS=OFF >> build-debug.log 2>&1
+        fi
+    fi
+    if cmake --build --preset debug >> build-debug.log 2>&1; then
         echo "  gebaut: build/debug"
-        if ctest --preset debug --output-on-failure > ctest.log 2>&1; then
-            echo "  Tests: $(grep -E 'tests passed' ctest.log)"
+        if [ "$UNIT" = 1 ]; then
+            if ctest --preset debug --output-on-failure > ctest.log 2>&1; then
+                echo "  Tests: $(grep -E 'tests passed' ctest.log)"
+            else
+                FEHLER=1
+                grep -E 'tests passed|\(Failed\)|\*\*\*' ctest.log | head -20
+                echo "  Einzelheiten: $ZIEL/ctest.log"
+            fi
         else
-            FEHLER=1
-            grep -E 'tests passed|\(Failed\)|\*\*\*' ctest.log | head -20
-            echo "  Einzelheiten: $ZIEL/ctest.log"
+            tools/make_test_certs.sh build/debug/tls > /dev/null 2>&1
+            for MODUS in "" "--tls build/debug/tls" "--switchover"; do
+                # shellcheck disable=SC2086
+                if tools/selftest/run_selftest.sh build/debug/iec104_selftest_server \
+                        build/debug/iec104_selftest_client $MODUS > selftest.log 2>&1; then
+                    echo "  Selbsttest ${MODUS:-TCP}: bestanden"
+                else
+                    FEHLER=1
+                    echo "  Selbsttest ${MODUS:-TCP}: FEHLER (siehe $ZIEL/selftest.log)"
+                fi
+            done
         fi
     else
         FEHLER=1
@@ -124,7 +154,10 @@ fi
 
 # --- 5. Wie weiter ------------------------------------------------------------------------
 step "5. Ausprobieren"
-[ -n "$PAKET" ] && echo "  Test-GUI:     bash $ZIEL/$PAKET/gui.sh     dann http://localhost:8080 im Browser"
+if [ -n "$PAKET" ]; then
+    echo "  Test-GUI:     bash $ZIEL/$PAKET/gui.sh     dann http://localhost:8080 im Browser"
+    echo "                (kommt der Windows-Browser nicht durch: bash $ZIEL/$PAKET/gui.sh 8080 0.0.0.0)"
+fi
 if [ -x build/debug/iec104_selftest_server ]; then
     echo "  Selbsttest:   cd $ZIEL && tools/selftest/run_selftest.sh build/debug/iec104_selftest_server build/debug/iec104_selftest_client"
     echo "  Liste:        $ZIEL/build/debug/iec104_interop_list --role station | less"

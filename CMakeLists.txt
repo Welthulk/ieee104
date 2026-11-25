@@ -6,7 +6,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(iec104
-    VERSION 0.6.0
+    VERSION 0.6.1
     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
     LANGUAGES C CXX)
 
@@ -20,6 +20,7 @@ option(IEC104_WARNINGS_AS_ERRORS   "Treat warnings as errors (library code)"  ON
 option(IEC104_ENABLE_CLANG_TIDY    "Run clang-tidy while compiling"           OFF)
 option(IEC104_BUILD_SELFTEST       "Build the self-test programs"             ON)
 option(IEC104_TLS                  "TLS support with OpenSSL 3.x"             ON)
+option(IEC104_FETCH_GTEST          "Fetch GoogleTest from GitHub if not installed" ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -145,7 +146,25 @@ endif()
 # ---------------------------------------------------------------------------
 if(IEC104_BUILD_TESTS)
     enable_testing()
-    find_package(GTest REQUIRED)
+    # GoogleTest from the system (e.g. EPEL, libgtest-dev). Without it, the
+    # pinned release is fetched once from GitHub (only for the tests, never
+    # part of the library); IEC104_FETCH_GTEST=OFF forbids the download.
+    find_package(GTest QUIET)
+    if(NOT GTest_FOUND)
+        if(NOT IEC104_FETCH_GTEST)
+            message(FATAL_ERROR "GoogleTest not found (install it, or -DIEC104_FETCH_GTEST=ON, "
+                                "or -DIEC104_BUILD_TESTS=OFF)")
+        endif()
+        message(STATUS "GoogleTest not installed: fetching googletest 1.14.0 from GitHub")
+        include(FetchContent)
+        FetchContent_Declare(googletest
+            URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.tar.gz
+            URL_HASH SHA256=8ad598c73ad796e0d8280b082cebd82a630d73e73cd3c70057938a6501bba5d7
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+        set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(googletest)
+    endif()
     include(GoogleTest)
 
     add_executable(iec104_tests

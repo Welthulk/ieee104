@@ -1,5 +1,13 @@
 # Änderungen
 
+## 0.6.1 (25.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| Build | Ohne installiertes GoogleTest lädt CMake GoogleTest 1.14.0 von GitHub (feste Prüfsumme, nur für die Tests); abschaltbar mit `IEC104_FETCH_GTEST=OFF` |
+| Werkzeug | `wsl_ausprobieren.sh`: GoogleTest nicht mehr Pflicht; geht der Download nicht, Bau ohne Unit-Tests und Selbsttests über TCP, TLS und Umschaltung |
+| Lieferung | `gui.sh [port] [adresse]`: mit `0.0.0.0` aus dem Windows-Browser über die WSL-Adresse erreichbar; `beispiel.sh` wartet bis zu 5 Minuten auf den ersten Julia-Start |
+
 ## 0.6.0 (25.11.2026)
 
 | Bereich | Änderung |
