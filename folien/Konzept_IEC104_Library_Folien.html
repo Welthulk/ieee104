@@ -1,0 +1,206 @@
+<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Konzept IEC-104-Library (Folien)</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=Inter:wght@400;600&display=swap">
+<style>body{margin:0;background:#2b2f36}.slide{width:1920px;height:1080px;box-sizing:border-box;margin:40px auto;overflow:hidden;transform-origin:top center}aside{display:none}
+section {
+  padding: 128px;
+  background: #F7F6F2;
+  color: #3D4656;
+  font-family: 'Inter', Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+section.dark { background: #14213D; color: #C9D3E3; }
+h1, h2, h3 { font-family: 'Space Grotesk', Arial, sans-serif; color: #14213D; margin: 0; }
+section.dark h1, section.dark h2, section.dark h3 { color: #F7F6F2; }
+h1 { font-size: 112px; line-height: 1.05; font-weight: 700; }
+h2 { font-size: 64px; line-height: 1.1; font-weight: 700; }
+h3 { font-size: 32px; line-height: 1.2; font-weight: 600; }
+p, li, td, th { font-size: 28px; line-height: 1.4; margin: 0; }
+.eyebrow { font-size: 24px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #B4501A; }
+section.dark .eyebrow { color: #F2A65A; }
+.lead { font-size: 32px; color: #3D4656; max-width: 1500px; }
+section.dark .lead { color: #C9D3E3; }
+.head { display: flex; flex-direction: column; gap: 16px; }
+
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+.cards.two { grid-template-columns: repeat(2, 1fr); }
+.cards.four { grid-template-columns: repeat(4, 1fr); }
+.card { background: #ECEAE3; border-top: 6px solid #B4501A; padding: 32px; display: flex; flex-direction: column; gap: 12px; }
+.card .tag { font-size: 24px; font-weight: 600; color: #B4501A; }
+.card p { font-size: 26px; }
+
+.layers { display: flex; flex-direction: column; gap: 0; }
+.layer { display: grid; grid-template-columns: 120px 300px 1fr; align-items: center; padding: 24px 32px; background: #ECEAE3; border-top: 2px solid #F7F6F2; }
+.layer.api { background: #14213D; }
+.layer.api .num, .layer.api .mod, .layer.api .what { color: #F7F6F2; }
+.layer .num { font-family: 'Space Grotesk', Arial, sans-serif; font-size: 44px; font-weight: 700; color: #B4501A; }
+.layer .mod { font-family: 'Space Grotesk', Arial, sans-serif; font-size: 32px; font-weight: 600; color: #14213D; }
+.layer .what { font-size: 26px; }
+
+table { border-collapse: collapse; width: 100%; }
+th { text-align: left; font-size: 24px; font-weight: 600; color: #F7F6F2; background: #14213D; padding: 14px 20px; }
+td { font-size: 26px; padding: 14px 20px; border-bottom: 2px solid #DEDBD2; vertical-align: top; }
+td.hl { color: #B4501A; font-weight: 600; }
+
+ul.list { margin: 0; padding-left: 36px; display: flex; flex-direction: column; gap: 14px; }
+ul.list li { font-size: 28px; }
+
+.note { font-size: 24px; color: #5A6372; }
+.checks { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 56px; }
+.check { display: flex; gap: 20px; align-items: flex-start; }
+.check .box { flex: 0 0 auto; width: 32px; height: 32px; border: 3px solid #F2A65A; margin-top: 4px; }
+.check p { font-size: 28px; color: #E3E8F0; }
+</style></head><body>
+<section id="cover" class="slide dark" style="justify-content:center;">
+<p class="eyebrow">Konzept · SpPS · 25.11.2026</p>
+<h1>Eigene IEC-104-Library in C/C++</h1>
+<p class="lead">Kern in C++17 mit stabiler C-API, jede Abweichung der Gegenstelle als Parameter, TLS über OpenSSL. Erster Einsatz: Anbindung an die Prozessabkopplung (Aucoteam).</p>
+<aside>Grundlage: Konzeptdokument „Konzept IEC-104-Library (C/C++)“ und Recherchebericht „IEC 104 im Detail“.</aside>
+</section>
+<section class="slide" id="ziel">
+<div class="head">
+<p class="eyebrow">Ziel und Rahmen</p>
+<h2>Client und Server für die SpPS, Normverhalten als Default</h2>
+</div>
+<div class="cards">
+<div class="card"><p class="tag">Version 1</p><h3>Umfang</h3><p>Client und Server, alle Monitor-, Steuer-, System- und Parametertypen, Redundanzgruppen (Ed. 2), TLS nach IEC 62351-3.</p></div>
+<div class="card"><p class="tag">Später</p><h3>Ausbau</h3><p>Dateiübertragung (Typen 120–127), Secure Authentication nach IEC TS 60870-5-7, IEC 101 seriell.</p></div>
+<div class="card"><p class="tag">Leitprinzip</p><h3>Parameter statt Sonderfall</h3><p>Jede bekannte Abweichung einer Gegenstelle ist ein Parameter, nie ein Code-Zweig für einen Hersteller.</p></div>
+</div>
+<ul class="list">
+<li><b>Normbasis:</b> IEC 60870-5-104 Ed. 2.1 (2006 + AMD1:2016) inkl. COR1:2023</li>
+<li><b>Schnittstelle:</b> stabile C-API, für Rust über <i>bindgen</i>, optional C++-Wrapper</li>
+<li><b>Lizenz:</b> Eigenentwicklung ohne GPL-Code; lib60870-C nur als Testgegenstelle</li>
+</ul>
+</section>
+<section class="slide" id="sprache">
+<div class="head">
+<p class="eyebrow">Sprachwahl</p>
+<h2>Empfehlung: C++17 innen, reine C-API außen</h2>
+</div>
+<table>
+<tr><th>Kriterium</th><th>C11</th><th>C++17 mit C-API</th></tr>
+<tr><td>ABI-Stabilität nach außen</td><td>nativ</td><td>über extern "C", gleichwertig</td></tr>
+<tr><td>Rust-Anbindung (bindgen)</td><td>direkt</td><td>direkt, nur C-Header sichtbar</td></tr>
+<tr><td>Ressourcensicherheit</td><td>manuell</td><td class="hl">RAII, unique_ptr</td></tr>
+<tr><td>Typsicherheit ASDU-Typen</td><td>Makros, union</td><td class="hl">enum class, std::variant</td></tr>
+<tr><td>Embedded-Tauglichkeit</td><td class="hl">sehr gut</td><td>gut, ohne Exceptions und RTTI</td></tr>
+<tr><td>Statische Analyse</td><td>MISRA C, cppcheck</td><td>clang-tidy, MISRA C++ 2023</td></tr>
+</table>
+<p class="note">Regeln: keine Exceptions über die API-Grenze, Fehler als Returncodes, keine STL-Typen in öffentlichen Headern, Build mit CMake.</p>
+</section>
+<section class="slide" id="architektur">
+<div class="head">
+<p class="eyebrow">Architektur</p>
+<h2>Vier Schichten, Codec und Zustandsmaschine ohne I/O</h2>
+</div>
+<div class="layers">
+<div class="layer api"><p class="num">API</p><p class="mod">iec104.h</p><p class="what">C-Schnittstelle: Handles, Konfiguration, Callbacks, Fehlercodes</p></div>
+<div class="layer"><p class="num">4</p><p class="mod">transport</p><p class="what">TCP und TLS, Event-Loop, Verbindungsaufbau; Backend austauschbar</p></div>
+<div class="layer"><p class="num">3</p><p class="mod">session</p><p class="what">Generalabfrage, Uhrzeit, Befehle mit Select/Execute, Pufferung, Redundanz</p></div>
+<div class="layer"><p class="num">2</p><p class="mod">apci</p><p class="what">Zustandsmaschine je Verbindung: STARTDT/STOPDT/TESTFR, N(S)/N(R), k/w, t0–t3</p></div>
+<div class="layer"><p class="num">1</p><p class="mod">codec</p><p class="what">APCI und ASDU kodieren und dekodieren, CP56Time2a, Qualitätsbits</p></div>
+</div>
+<p class="note">Keine Abhängigkeit nach oben. Die SpPS liefert und empfängt Werte über Callbacks; nur für Generalabfrage und Pufferung hält der Server ein optionales Abbild.</p>
+</section>
+<section class="slide" id="timer">
+<div class="head">
+<p class="eyebrow">Konfiguration 1/2 · je Gegenstelle</p>
+<h2>Verbindung und Timer: Norm als Default, Praxis weicht ab</h2>
+</div>
+<table>
+<tr><th>Parameter</th><th>Default (Norm)</th><th>Bereich</th><th>Abweichung in der Praxis</th></tr>
+<tr><td>Port</td><td>2404 (TLS: 19998)</td><td>1–65535</td><td>projektspezifisch</td></tr>
+<tr><td>t0</td><td>30 s</td><td>1–255 s</td><td class="hl">Weidmüller 15 s</td></tr>
+<tr><td>t1</td><td>15 s</td><td>1–255 s</td><td class="hl">WEMAG 250 s</td></tr>
+<tr><td>t2</td><td>10 s</td><td>1–255 s, kleiner t1</td><td class="hl">WEMAG 240 s</td></tr>
+<tr><td>t3</td><td>20 s</td><td>1 s–48 h</td><td class="hl">WEMAG 255 s, SvK 30 s</td></tr>
+<tr><td>k / w</td><td>12 / 8</td><td>1–32767, w ≤ 2/3 k</td><td></td></tr>
+<tr><td>Plausibilitätsprüfung</td><td>Warnung</td><td>Warnung / Fehler / aus</td><td></td></tr>
+</table>
+<p class="note">Werte aus dem Recherchebericht „IEC 104 im Detail“. Timer werden nicht auf Normwerte gekappt.</p>
+</section>
+<section class="slide" id="profil">
+<div class="head">
+<p class="eyebrow">Konfiguration 2/2 · je Gegenstelle</p>
+<h2>Profil, Zeit, Befehle und Redundanz</h2>
+</div>
+<table>
+<tr><th>Parameter</th><th>Default</th><th>Optionen / Abweichung</th></tr>
+<tr><td>Feldlängen COT / CA / IOA</td><td>2 / 2 / 3</td><td>1–2 / 1–2 / 1–3 für Gegenstellen außerhalb der Norm</td></tr>
+<tr><td>Strikter Modus</td><td>an</td><td>tolerant: CP24-Typen (2–19 gerade) annehmen</td></tr>
+<tr><td>Zeitbasis</td><td>UTC</td><td class="hl">UTC+1 fest (SvK) / Ortszeit mit SU-Bit (Pfalzwerke)</td></tr>
+<tr><td>Befehlsmodell je IOA</td><td>direkt</td><td class="hl">Select/Execute (SvK), nur mit Zeit 58–64 (Pfalzwerke)</td></tr>
+<tr><td>ACTTERM erwarten</td><td>ja</td><td class="hl">nein (WinCC OA bei Sollwerten)</td></tr>
+<tr><td>Befehls-Timeout</td><td>10 s</td><td class="hl">je IOA, SvK 20 s</td></tr>
+<tr><td>End of Initialization</td><td>nach Start</td><td class="hl">nur lokaler Neustart (SvK) / nie</td></tr>
+<tr><td>Redundanz</td><td>1 Gruppe, 1 Verbindung</td><td class="hl">SvK ≥ 4 je Gruppe, ≥ 8 Gruppen</td></tr>
+<tr><td>Ereignispuffer je Gruppe</td><td>1000</td><td>Größe und Überlaufstrategie, SvK ≥ 100 mit Alarm</td></tr>
+</table>
+<p class="note">Die Library exportiert ihre Konfiguration als ausgefüllte Interoperabilitätsliste (Abschnitt 9 der Norm).</p>
+</section>
+<section class="slide" id="tls">
+<div class="head">
+<p class="eyebrow">TLS</p>
+<h2>Externe Library hinter schmaler Backend-Schnittstelle</h2>
+</div>
+<div class="cards two">
+<div class="card"><p class="tag">Erstes Backend</p><h3>OpenSSL 3.x</h3><p>Apache 2.0, TLS 1.2 und 1.3, sichere Renegotiation, Standard auf Linux-Servern.</p></div>
+<div class="card"><p class="tag">Alternative</p><h3>mbedTLS 3.x</h3><p>Apache 2.0, TLS 1.2 und 1.3, Renegotiation per Build-Option, eher für schlanke Ziele.</p></div>
+</div>
+<ul class="list">
+<li><b>Profil nach IEC 62351-3 Ed. 2 (2023):</b> TLS 1.2/1.3 einzeln abschaltbar, Cipher-Liste je Verbindung</li>
+<li><b>Gegenseitige X.509-Authentifizierung,</b> CRL und optional OCSP, Zertifikatswechsel ohne Neustart</li>
+<li><b>Renegotiation bzw. Key Update</b> nach Zeit oder Datenmenge, Session Resumption konfigurierbar</li>
+<li><b>Sicherheitsereignisse</b> als Callback, angelehnt an IEC 62351-14</li>
+</ul>
+<p class="note">Grund: Laut BDEW-Whitepaper 3.0 hat IEC 104 ohne Zusatzmaßnahmen weder Integrität noch Authentifizierung noch Verschlüsselung.</p>
+</section>
+<section class="slide" id="laufzeit">
+<div class="head">
+<p class="eyebrow">Laufzeitmodell</p>
+<h2>Eigener Event-Loop oder vom Host getaktet</h2>
+</div>
+<div class="cards">
+<div class="card"><p class="tag">Betrieb</p><h3>Zwei Betriebsarten</h3><p>Interner Thread je Instanz oder Host ruft iec104_poll(timeout). I/O über poll/epoll, keine Async-Bibliothek nötig.</p></div>
+<div class="card"><p class="tag">Threads</p><h3>Klare Regeln</h3><p>Senden aus jedem Thread über interne Queue. Callbacks immer aus dem Loop-Thread.</p></div>
+<div class="card"><p class="tag">Zeit</p><h3>Injizierbare Uhren</h3><p>Monotone Uhr für Timer, Wanduhr für Zeitstempel. Beide austauschbar, wichtig für Tests.</p></div>
+<div class="card"><p class="tag">Fehler</p><h3>Returncodes</h3><p>Protokollverletzungen je nach Konfiguration: negative Quittung, Ereignis oder Verbindungsabbau.</p></div>
+<div class="card"><p class="tag">Diagnose</p><h3>Logging und Statistik</h3><p>Log-Callback mit Level, optionaler Hexdump je APDU, Zähler je Verbindung.</p></div>
+<div class="card"><p class="tag">Speicher</p><h3>Begrenzt</h3><p>Puffer vorab allokiert, Obergrenzen konfigurierbar, keine unbegrenzten Queues.</p></div>
+</div>
+</section>
+<section class="slide" id="tests">
+<div class="head">
+<p class="eyebrow">Testkonzept</p>
+<h2>Sechs Ebenen, von der Funktion bis zur echten Gegenstelle</h2>
+</div>
+<table>
+<tr><th>Ebene</th><th>Was</th><th>Werkzeug</th></tr>
+<tr><td>1 Unit</td><td>Codec aller Typen gegen Referenz-Hexdumps</td><td>GoogleTest oder Catch2</td></tr>
+<tr><td>2 Zustandsmaschine</td><td>k/w, t0–t3, Wrap bei 32767, simulierte Zeit</td><td>eigene Testumgebung</td></tr>
+<tr><td>3 Robustheit</td><td>Fuzzing, 24 h ohne Absturz und Leck</td><td>libFuzzer, AFL++, ASan/UBSan</td></tr>
+<tr><td>4 Integration</td><td>Redundanz, Pufferung, TLS-Fehlerfälle</td><td>ctest, Netzwerk-Namespaces</td></tr>
+<tr><td>5 Interop</td><td>GA, Befehle, Uhrzeit gegen fremde Stacks</td><td>lib60870-C, QTester104</td></tr>
+<tr><td>6 Abnahme</td><td>angelehnt an IEC TS 60870-5-604, Aucoteam-Gateway</td><td>Testprotokoll, Wireshark</td></tr>
+</table>
+<p class="note">Ebenen 1–4 automatisch in der CI, 5–6 vor jeder Auslieferung. Dazu 72 h Langlauf mit 10.000 Datenpunkten und Testprofile WEMAG, Pfalzwerke, SvK.</p>
+</section>
+<section id="offen" class="slide dark">
+<div class="head">
+<p class="eyebrow">Offene Entscheidungen</p>
+<h2>Was vor dem Start geklärt werden muss</h2>
+</div>
+<div class="checks">
+<div class="check"><div class="box"></div><p>Sprache bestätigen: C++17 mit C-API oder reines C11</p></div>
+<div class="check"><div class="box"></div><p>TLS-Backend bestätigen: OpenSSL 3.x</p></div>
+<div class="check"><div class="box"></div><p>Normtexte beschaffen: 104 Ed. 2.1, 62351-3 Ed. 2, TS 60870-5-604</p></div>
+<div class="check"><div class="box"></div><p>Interoperabilitätsliste und Testzugang von Aucoteam anfordern</p></div>
+<div class="check"><div class="box"></div><p>Rolle in der SpPS: nur Client oder auch Server?</p></div>
+<div class="check"><div class="box"></div><p>Zielplattformen und Threading-Modell der SpPS</p></div>
+<div class="check"><div class="box"></div><p>Lizenzmodell und Rechte am Code (SOPTIM)</p></div>
+<div class="check"><div class="box"></div><p>Triangle MicroWorks Test Harness: Lizenz ja oder nein?</p></div>
+</div>
+</section>
+</body></html>
