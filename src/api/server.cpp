@@ -20,6 +20,7 @@
  */
 #include "api/link_common.hpp"
 #include "api/values.hpp"
+#include "session/command_table.hpp"
 #include "session/process_image.hpp"
 #include "session/server_session.hpp"
 
@@ -60,6 +61,7 @@ struct iec104_server : api::CallbackSink, session::CommandHandler {
     std::vector<std::unique_ptr<transport::Link>> links;
     std::map<std::uint32_t, session::ServerSession> sessions;
     session::ProcessImage image;
+    session::CommandTable commands;
     session::SessionOptions options;
     std::uint32_t next_id{1};
     std::uint32_t current_connection{0}; // connection of the request being handled
@@ -107,8 +109,11 @@ struct iec104_server : api::CallbackSink, session::CommandHandler {
         api::CallbackSink::on_asdu(id, asdu, length);
         const auto it = sessions.find(id);
         current_connection = id;
+        const session::StationContext station{
+            &image, &commands, &options,
+            session::SessionClock{transport::monotonic_ms(), transport::utc_ms()}};
         const bool handled =
-            it != sessions.end() && it->second.handle(asdu, length, image, *this, options);
+            it != sessions.end() && it->second.handle(asdu, length, station, *this);
         current_connection = 0;
         if (!handled) {
             deliver_objects(id, asdu, length, profile);
@@ -262,6 +267,7 @@ void iec104_server_options_init(iec104_server_options* options) {
         options->send_end_of_init = 1;
         options->command_termination = 1;
         options->cause_of_init = 0;
+        options->max_command_delay_ms = 0;
     }
 }
 
@@ -273,7 +279,22 @@ iec104_status iec104_server_set_options(iec104_server* server,
     server->options.send_end_of_init = options->send_end_of_init != 0;
     server->options.command_termination = options->command_termination != 0;
     server->options.cause_of_init = options->cause_of_init;
+    server->options.max_command_delay_ms = options->max_command_delay_ms;
     return IEC104_OK;
+}
+
+iec104_status iec104_server_add_command(iec104_server* server, uint16_t common_address,
+                                        uint32_t ioa, uint8_t type, iec104_command_model model,
+                                        uint32_t select_timeout_ms) {
+    if (server == nullptr) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    session::CommandPoint point{};
+    point.type = type;
+    point.model = model == IEC104_COMMAND_SELECT_EXECUTE ? session::CommandModel::SelectExecute
+                                                         : session::CommandModel::Direct;
+    point.select_timeout_ms = select_timeout_ms;
+    return server->commands.set(common_address, ioa, point);
 }
 
 iec104_status iec104_server_add_point(iec104_server* server, uint16_t common_address,

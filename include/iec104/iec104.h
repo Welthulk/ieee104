@@ -242,7 +242,8 @@ typedef struct iec104_time {
  */
 IEC104_API iec104_status iec104_time_from_unix_ms(int64_t unix_ms, iec104_time* out);
 
-/** @brief Converts an iec104_time taken as UTC into milliseconds since 1970. 0 for NULL. */
+/** @brief Converts an iec104_time taken as UTC into milliseconds since 1970.
+ *  0 for NULL or a year before 2000. */
 IEC104_API int64_t iec104_time_to_unix_ms(const iec104_time* time);
 
 /** @brief Quality bits (QDS and the quality part of SIQ/DIQ). */
@@ -335,6 +336,21 @@ typedef struct iec104_asdu_info {
     uint16_t common_address; /**< Common address (station). */
 } iec104_asdu_info;
 
+/** @brief Final result of a command sent by the client (see on_command_result). */
+/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
+typedef enum iec104_command_result {
+    IEC104_COMMAND_CONFIRMED = 0,       /**< Positive confirmation; no termination expected. */
+    IEC104_COMMAND_TERMINATED = 1,      /**< Positive confirmation and termination: executed. */
+    IEC104_COMMAND_SELECTED = 2,        /**< Select confirmed positively. */
+    IEC104_COMMAND_REJECTED = 3,        /**< Negative answer (also causes 44..47). */
+    IEC104_COMMAND_NO_CONFIRMATION = 4, /**< No confirmation within the confirmation time. */
+    IEC104_COMMAND_NO_TERMINATION = 5,  /**< Confirmed, but no termination in time. */
+    IEC104_COMMAND_CONNECTION_LOST = 6  /**< Connection closed before the result was known. */
+} iec104_command_result;
+
+/** @brief Short English name of a command result. Never NULL. */
+IEC104_API const char* iec104_command_result_string(iec104_command_result result);
+
 /**
  * @brief Callbacks of a server or client. Every pointer may be NULL.
  *
@@ -378,6 +394,13 @@ typedef struct iec104_callbacks {
      */
     int (*on_command)(void* user, uint32_t connection, const iec104_asdu_info* info,
                       const iec104_object* command);
+    /**
+     * @brief Client only: a command sent with iec104_client_send_command() or
+     *        iec104_client_select_execute() has its final result.
+     * @param command The command as sent (for select_execute: the execute).
+     */
+    void (*on_command_result)(void* user, uint16_t common_address, const iec104_object* command,
+                              iec104_command_result result);
 } iec104_callbacks;
 
 /* ------------------------------------------------------------------------- */
@@ -450,6 +473,9 @@ typedef struct iec104_server_options {
     int command_termination;
     /** Cause of initialization sent with type 70, default 0 (local power switch on). */
     uint8_t cause_of_init;
+    /** Maximum age in ms of a command with time tag (58..64, 107) against the server's
+     *  UTC clock; older commands are discarded without answer. 0 (default) = no check. */
+    uint32_t max_command_delay_ms;
 } iec104_server_options;
 
 /** @brief Fills @p options with the defaults. Does nothing for NULL. */
@@ -477,6 +503,36 @@ IEC104_API iec104_status iec104_server_set_options(iec104_server* server,
  */
 IEC104_API iec104_status iec104_server_add_point(iec104_server* server, uint16_t common_address,
                                                  const iec104_object* point, uint16_t groups);
+
+/** @brief How a command point is operated. */
+/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
+typedef enum iec104_command_model {
+    IEC104_COMMAND_DIRECT = 0,        /**< Execute directly; a select is rejected. */
+    IEC104_COMMAND_SELECT_EXECUTE = 1 /**< Select first, then execute the same command. */
+} iec104_command_model;
+
+/**
+ * @brief Defines a command point (or replaces it).
+ *
+ * Without any command point the application decides about every command in
+ * on_command. As soon as one point exists, commands are checked against the
+ * points first:
+ *   - unknown IOA: negative answer with cause 47;
+ *   - other type than defined (e.g. 45 for a point defined as 58): negative ACTCON;
+ *   - direct point: a select is rejected;
+ *   - select-execute point: an execute is only passed to on_command if the
+ *     same command (state and qualifier) was selected on the same connection
+ *     less than @p select_timeout_ms ago; a deactivation (cause 8) cancels
+ *     the selection.
+ *
+ * @param type Command type 45..51 or 58..64 the point accepts.
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, a type that is not a
+ *         command, or select-execute for a bitstring command (51, 64).
+ */
+IEC104_API iec104_status iec104_server_add_command(iec104_server* server, uint16_t common_address,
+                                                   uint32_t ioa, uint8_t type,
+                                                   iec104_command_model model,
+                                                   uint32_t select_timeout_ms);
 
 /**
  * @brief Updates a point of the image and sends it spontaneously (cause 3).
@@ -550,11 +606,31 @@ IEC104_API iec104_status iec104_client_poll(iec104_client* client, int timeout_m
 IEC104_API iec104_status iec104_client_send_asdu(iec104_client* client, const uint8_t* asdu,
                                                  size_t length);
 
+/** @brief Time limits of the client for commands. */
+typedef struct iec104_client_options {
+    uint32_t confirmation_timeout_ms; /**< Activation -> confirmation, default 10000. */
+    uint32_t termination_timeout_ms;  /**< Confirmation -> termination, default 10000. */
+    /** 1 (default) = an executed command (45..64) is finished by its termination (cause 10);
+     *  0 = the positive confirmation is final (for peers that send no termination). */
+    int expect_termination;
+} iec104_client_options;
+
+/** @brief Fills @p options with the defaults. Does nothing for NULL. */
+IEC104_API void iec104_client_options_init(iec104_client_options* options);
+
+/** @brief Applies options. @return IEC104_OK or IEC104_ERR_INVALID_ARGUMENT for NULL. */
+IEC104_API iec104_status iec104_client_set_options(iec104_client* client,
+                                                   const iec104_client_options* options);
+
 /**
  * @brief Sends one object with cause activation (6), e.g. a command or a set point.
  *
- * The answer (confirmation, cause 7, and termination, cause 10) arrives via
+ * The answers (confirmation, cause 7, and termination, cause 10) arrive via
  * on_object with the same type; a negative answer has info->negative = 1.
+ * In addition the library follows the command and reports its final result
+ * once via on_command_result (see iec104_client_options for the time limits).
+ * A command with select = 1 ends with IEC104_COMMAND_SELECTED; the execute
+ * is a second call with select = 0.
  *
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL or an unsupported
  *         type; IEC104_ERR_OUT_OF_RANGE for a bad value; IEC104_ERR_WRONG_STATE
@@ -562,6 +638,21 @@ IEC104_API iec104_status iec104_client_send_asdu(iec104_client* client, const ui
  */
 IEC104_API iec104_status iec104_client_send_command(iec104_client* client, uint16_t common_address,
                                                     const iec104_object* command);
+
+/**
+ * @brief Select before operate in one call: sends the select, and after its
+ *        positive confirmation the execute of the same command.
+ *
+ * @p command->select is ignored. The final result (of the execute, or the
+ * rejection of the select) arrives via on_command_result.
+ *
+ * @return As iec104_client_send_command(); additionally
+ *         IEC104_ERR_INVALID_ARGUMENT for types without select (51, 64) and
+ *         non-command types.
+ */
+IEC104_API iec104_status iec104_client_select_execute(iec104_client* client,
+                                                      uint16_t common_address,
+                                                      const iec104_object* command);
 
 /** @brief General (qoi 20) or group (21..36) interrogation; results via on_object. */
 IEC104_API iec104_status iec104_client_interrogation(iec104_client* client, uint16_t common_address,

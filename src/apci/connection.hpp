@@ -239,8 +239,10 @@ class Connection {
     // Timers: 0 = not running, otherwise the absolute expiry time.
     std::vector<TimeMs> sent_at_; // send time per unacknowledged I-frame, ring of k entries
     std::size_t sent_head_{0};    // index of the oldest unacknowledged frame in sent_at_
-    TimeMs u_act_deadline_{0};    // t1 for an outstanding STARTDT/STOPDT/TESTFR act
+    TimeMs u_act_deadline_{0};    // t1 for an outstanding STARTDT/STOPDT act
     codec::UFunction u_act_pending_{codec::UFunction::None};
+    TimeMs test_deadline_{0};      // t1 for an outstanding TESTFR act (0 = none); separate,
+                                   // so that a link test never blocks start or stop
     TimeMs t2_deadline_{0};        // t2: acknowledge received I-frames
     TimeMs t3_deadline_{0};        // t3: idle test
     bool stop_con_pending_{false}; // controlled station: STOPDT con owed once all acks are in

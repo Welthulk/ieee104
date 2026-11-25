@@ -17,6 +17,8 @@
  */
 #include "api/link_common.hpp"
 #include "api/values.hpp"
+#include "session/command_table.hpp"
+#include "session/command_tracker.hpp"
 
 #include <array>
 #include <new>
@@ -41,9 +43,103 @@ struct iec104_client : api::CallbackSink {
 
     transport::Link* link() noexcept { return links.empty() ? nullptr : links.front().get(); }
 
+    session::CommandTracker tracker;
+    session::CommandTimeouts timeouts;
+
     void on_asdu(std::uint32_t id, const std::uint8_t* asdu, std::size_t length) override {
         api::CallbackSink::on_asdu(id, asdu, length);
         deliver_objects(id, asdu, length, profile);
+        if (tracker.open() == 0U) {
+            return;
+        }
+        // Answers to own commands: confirmation, termination, causes 44..47.
+        std::array<codec::InformationObject, codec::kMaxObjects> objects{};
+        codec::DecodedAsdu d{};
+        if (codec::decode_asdu(asdu, length, profile, objects.data(), objects.size(), d) !=
+                IEC104_OK ||
+            d.type == nullptr) {
+            return;
+        }
+        std::vector<session::CommandOutcome> outcomes;
+        std::vector<session::PendingCommand> to_execute;
+        const std::uint64_t now = transport::monotonic_ms();
+        tracker.on_asdu(d.header, objects.data(), d.object_count, now, timeouts, outcomes,
+                        to_execute);
+        for (const session::PendingCommand& exec : to_execute) {
+            // Second step of select_execute(): the execute of the selected command.
+            const iec104_status st =
+                send_object(exec.common_address, IEC104_COT_ACTIVATION, exec.object, exec.type);
+            if (st == IEC104_OK) {
+                tracker.add(exec.common_address, exec.type, exec.object, false, now, timeouts);
+            } else {
+                outcomes.push_back(session::CommandOutcome{
+                    exec.common_address, exec.type, exec.object, session::CommandResult::Rejected});
+            }
+        }
+        report(outcomes);
+    }
+
+    void on_closed(std::uint32_t id, transport::LinkCloseReason reason,
+                   apci::CloseReason protocol_reason) override {
+        api::CallbackSink::on_closed(id, reason, protocol_reason);
+        std::vector<session::CommandOutcome> outcomes;
+        tracker.connection_lost(outcomes);
+        report(outcomes);
+    }
+
+    // Passes finished commands to on_command_result.
+    void report(const std::vector<session::CommandOutcome>& outcomes) const {
+        if (callbacks().on_command_result == nullptr) {
+            return;
+        }
+        for (const session::CommandOutcome& o : outcomes) {
+            iec104_object c{};
+            if (api::from_codec(o.type, o.object, c)) {
+                callbacks().on_command_result(callbacks().user, o.common_address, &c,
+                                              to_c(o.result));
+            }
+        }
+    }
+
+    static iec104_command_result to_c(session::CommandResult r) noexcept {
+        switch (r) {
+        case session::CommandResult::Confirmed:
+            return IEC104_COMMAND_CONFIRMED;
+        case session::CommandResult::Terminated:
+            return IEC104_COMMAND_TERMINATED;
+        case session::CommandResult::Selected:
+            return IEC104_COMMAND_SELECTED;
+        case session::CommandResult::Rejected:
+            return IEC104_COMMAND_REJECTED;
+        case session::CommandResult::NoConfirmation:
+            return IEC104_COMMAND_NO_CONFIRMATION;
+        case session::CommandResult::NoTermination:
+            return IEC104_COMMAND_NO_TERMINATION;
+        case session::CommandResult::ConnectionLost:
+            return IEC104_COMMAND_CONNECTION_LOST;
+        }
+        return IEC104_COMMAND_REJECTED;
+    }
+
+    // Sends a command and starts following it.
+    iec104_status send_tracked(std::uint16_t common_address, const iec104_object& command,
+                               bool then_execute) {
+        const codec::TypeInfo* type = codec::find_type(command.type);
+        if (type == nullptr || type->direction != codec::Direction::Control) {
+            return IEC104_ERR_INVALID_ARGUMENT;
+        }
+        codec::InformationObject o{};
+        const iec104_status st = api::to_codec(command, o);
+        if (st != IEC104_OK) {
+            return st;
+        }
+        const iec104_status sent =
+            send_object(common_address, IEC104_COT_ACTIVATION, o, command.type);
+        if (sent == IEC104_OK) {
+            tracker.add(common_address, command.type, o, then_execute, transport::monotonic_ms(),
+                        timeouts);
+        }
+        return sent;
     }
 
     // Encodes one object with cause activation and sends it.
@@ -139,7 +235,12 @@ iec104_status iec104_client_poll(iec104_client* client, int timeout_ms) {
         return IEC104_ERR_INVALID_ARGUMENT;
     }
     short unused = 0;
-    return api::poll_links(client->links, nullptr, timeout_ms, *client, unused);
+    const iec104_status st = api::poll_links(client->links, nullptr, timeout_ms, *client, unused);
+    // Time limits of open commands.
+    std::vector<session::CommandOutcome> outcomes;
+    client->tracker.tick(transport::monotonic_ms(), outcomes);
+    client->report(outcomes);
+    return st;
 }
 
 iec104_status iec104_client_send_asdu(iec104_client* client, const uint8_t* asdu, size_t length) {
@@ -156,16 +257,38 @@ iec104_status iec104_client_send_command(iec104_client* client, uint16_t common_
     if (client == nullptr || command == nullptr) {
         return IEC104_ERR_INVALID_ARGUMENT;
     }
-    const codec::TypeInfo* type = codec::find_type(command->type);
-    if (type == nullptr || type->direction != codec::Direction::Control) {
+    return client->send_tracked(common_address, *command, false);
+}
+
+iec104_status iec104_client_select_execute(iec104_client* client, uint16_t common_address,
+                                           const iec104_object* command) {
+    if (client == nullptr || command == nullptr || !session::is_command_type(command->type) ||
+        command->type == 51U || command->type == 64U) {
         return IEC104_ERR_INVALID_ARGUMENT;
     }
-    codec::InformationObject o{};
-    const iec104_status st = api::to_codec(*command, o);
-    if (st != IEC104_OK) {
-        return st;
+    iec104_object select = *command;
+    select.select = 1;
+    return client->send_tracked(common_address, select, true);
+}
+
+void iec104_client_options_init(iec104_client_options* options) {
+    if (options != nullptr) {
+        const session::CommandTimeouts defaults{};
+        options->confirmation_timeout_ms = defaults.confirmation_ms;
+        options->termination_timeout_ms = defaults.termination_ms;
+        options->expect_termination = defaults.expect_termination ? 1 : 0;
     }
-    return client->send_object(common_address, IEC104_COT_ACTIVATION, o, command->type);
+}
+
+iec104_status iec104_client_set_options(iec104_client* client,
+                                        const iec104_client_options* options) {
+    if (client == nullptr || options == nullptr) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    client->timeouts.confirmation_ms = options->confirmation_timeout_ms;
+    client->timeouts.termination_ms = options->termination_timeout_ms;
+    client->timeouts.expect_termination = options->expect_termination != 0;
+    return IEC104_OK;
 }
 
 iec104_status iec104_client_interrogation(iec104_client* client, uint16_t common_address,

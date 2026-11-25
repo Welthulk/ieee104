@@ -523,37 +523,8 @@ iec104_asdu_info to_info(const codec::AsduHeader& h) noexcept {
 } // namespace iec104::api
 
 // ---------------------------------------------------------------------------
-// C API: time
+// C API: time (the calendar arithmetic lives in the codec, cp56time2a.hpp)
 // ---------------------------------------------------------------------------
-
-namespace {
-
-// Days since 1970-01-01 for a date of the proleptic Gregorian calendar
-// (well-known algorithm by H. Hinnant, "chrono-Compatible Low-Level Date
-// Algorithms"; valid for all years used here).
-std::int64_t days_from_civil(std::int64_t y, unsigned m, unsigned d) noexcept {
-    y -= m <= 2U ? 1 : 0;
-    const std::int64_t era = (y >= 0 ? y : y - 399) / 400;
-    const auto yoe = static_cast<unsigned>(y - (era * 400));
-    const unsigned doy = (((153U * (m > 2U ? m - 3U : m + 9U)) + 2U) / 5U) + d - 1U;
-    const unsigned doe = (yoe * 365U) + (yoe / 4U) - (yoe / 100U) + doy;
-    return (era * 146097) + static_cast<std::int64_t>(doe) - 719468;
-}
-
-// Inverse of days_from_civil.
-void civil_from_days(std::int64_t z, std::int64_t& y, unsigned& m, unsigned& d) noexcept {
-    z += 719468;
-    const std::int64_t era = (z >= 0 ? z : z - 146096) / 146097;
-    const auto doe = static_cast<unsigned>(z - (era * 146097));
-    const unsigned yoe = (doe - (doe / 1460U) + (doe / 36524U) - (doe / 146096U)) / 365U;
-    const unsigned doy = doe - ((365U * yoe) + (yoe / 4U) - (yoe / 100U));
-    const unsigned mp = ((5U * doy) + 2U) / 153U;
-    d = doy - (((153U * mp) + 2U) / 5U) + 1U;
-    m = mp < 10U ? mp + 3U : mp - 9U;
-    y = static_cast<std::int64_t>(yoe) + (era * 400) + (m <= 2U ? 1 : 0);
-}
-
-} // namespace
 
 extern "C" {
 
@@ -561,42 +532,27 @@ iec104_status iec104_time_from_unix_ms(int64_t unix_ms, iec104_time* out) {
     if (out == nullptr) {
         return IEC104_ERR_INVALID_ARGUMENT;
     }
-    constexpr std::int64_t kMsPerDay = 86400000;
-    std::int64_t days = unix_ms / kMsPerDay;
-    std::int64_t rest = unix_ms % kMsPerDay;
-    if (rest < 0) {
-        rest += kMsPerDay;
-        --days;
+    iec104::codec::Cp56Time2a t{};
+    const iec104_status st = iec104::codec::from_unix_ms(unix_ms, t);
+    if (st != IEC104_OK) {
+        return st;
     }
-    std::int64_t y = 0;
-    unsigned m = 0;
-    unsigned d = 0;
-    civil_from_days(days, y, m, d);
-    if (y < 2000 || y > 2099) {
-        return IEC104_ERR_OUT_OF_RANGE;
-    }
-    iec104_time t{};
-    t.year = static_cast<std::uint16_t>(y);
-    t.month = static_cast<std::uint8_t>(m);
-    t.day = static_cast<std::uint8_t>(d);
-    t.hour = static_cast<std::uint8_t>(rest / 3600000);
-    t.minute = static_cast<std::uint8_t>((rest / 60000) % 60);
-    t.second = static_cast<std::uint8_t>((rest / 1000) % 60);
-    t.millisecond = static_cast<std::uint16_t>(rest % 1000);
-    // 1970-01-01 was a Thursday; IEC day of week 1 = Monday .. 7 = Sunday.
-    t.day_of_week = static_cast<std::uint8_t>((((days % 7) + 7 + 3) % 7) + 1);
-    *out = t;
+    *out = iec104::api::from_cp56(t);
     return IEC104_OK;
 }
 
 int64_t iec104_time_to_unix_ms(const iec104_time* time) {
-    if (time == nullptr) {
+    if (time == nullptr || time->year < 2000U) {
         return 0;
     }
-    const std::int64_t days = days_from_civil(time->year, time->month, time->day);
-    return (days * 86400000) + (static_cast<std::int64_t>(time->hour) * 3600000) +
-           (static_cast<std::int64_t>(time->minute) * 60000) +
-           (static_cast<std::int64_t>(time->second) * 1000) + time->millisecond;
+    iec104::codec::Cp56Time2a t{};
+    t.year = static_cast<std::uint8_t>(time->year - 2000U);
+    t.month = time->month;
+    t.day_of_month = time->day;
+    t.hour = time->hour;
+    t.minute = time->minute;
+    t.milliseconds = static_cast<std::uint16_t>((time->second * 1000U) + time->millisecond);
+    return iec104::codec::to_unix_ms(t);
 }
 
 } // extern "C"

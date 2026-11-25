@@ -42,6 +42,7 @@ Gliederung laut CON: 5.1 Schutz gegen Verlust und Verdopplung, 5.2 Testprozedure
 | --- | --- |
 | Bild 18 (steuernde Station) | I-Rahmen im Zustand gestoppt: strikt schließen, tolerant annehmen. Nach eigenem STOPDT act werden eintreffende I-Rahmen sofort per S-Rahmen quittiert, damit die Gegenstelle bestätigen kann (bekanntes Interop-Problem bei verzögerter Quittung) |
 | Startbedingung von t3 | t3 läuft ab dem letzten empfangenen Rahmen beliebigen Formats |
+| Gleichzeitige U-Rahmen act | Ein offener Testrahmen und ein offenes STARTDT/STOPDT werden getrennt mit t1 überwacht; ein Verbindungstest blockiert Start und Stopp nicht |
 | N(R) außerhalb des Fensters | schließen |
 | Erreichen von k | Senden anhalten (`IEC104_ERR_WOULD_BLOCK`), nicht schließen |
 | Wortlaut „modulo 32768“ | aus 15 Bit abgeleitet |

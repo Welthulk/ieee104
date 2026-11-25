@@ -200,4 +200,11 @@ std::uint64_t monotonic_ms() noexcept {
            (static_cast<std::uint64_t>(ts.tv_nsec) / 1000000U);
 }
 
+std::int64_t utc_ms() noexcept {
+    timespec ts{};
+    (void)clock_gettime(CLOCK_REALTIME, &ts);
+    return (static_cast<std::int64_t>(ts.tv_sec) * 1000) +
+           (static_cast<std::int64_t>(ts.tv_nsec) / 1000000);
+}
+
 } // namespace iec104::transport

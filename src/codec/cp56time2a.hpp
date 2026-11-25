@@ -140,4 +140,24 @@ iec104_status encode_cp56time2a(const Cp56Time2a& t, std::uint8_t* out,
 iec104_status decode_cp56time2a(const std::uint8_t* data, std::size_t size,
                                 Cp56Time2a& out) noexcept;
 
+/**
+ * @brief Milliseconds since 1970-01-01 00:00 for a time tag read as UTC, year 2000 + yy.
+ *
+ * The time tag itself carries no time zone (see file comment); reading it as
+ * UTC is the default time base of the library (docs/05_Normfragen_und_Festlegungen.md,
+ * N13). Fields are used as they are; call validate() first for untrusted input.
+ *
+ * Example: 2026-11-25 11:01:05.931 -> 1795604465931.
+ */
+std::int64_t to_unix_ms(const Cp56Time2a& t) noexcept;
+
+/**
+ * @brief Time tag (UTC, IV = 0, SU = 0) for milliseconds since 1970-01-01 00:00.
+ *
+ * The day of week is set (1 = Monday .. 7 = Sunday).
+ *
+ * @return IEC104_OK, or IEC104_ERR_OUT_OF_RANGE outside the years 2000..2099.
+ */
+iec104_status from_unix_ms(std::int64_t unix_ms, Cp56Time2a& out) noexcept;
+
 } // namespace iec104::codec

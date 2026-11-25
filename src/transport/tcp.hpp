@@ -133,4 +133,7 @@ iec104_status write_some(const Socket& socket, const std::uint8_t* data, std::si
 /** @brief Monotonic time in milliseconds (CLOCK_MONOTONIC), the clock of the APCI layer. */
 std::uint64_t monotonic_ms() noexcept;
 
+/** @brief Wall clock: milliseconds since 1970-01-01 00:00 UTC (CLOCK_REALTIME). */
+std::int64_t utc_ms() noexcept;
+
 } // namespace iec104::transport

@@ -1,6 +1,6 @@
 # TASK-005: Befehle – Select/Execute, Zeitüberwachung, Max-Delay
 
-Status: offen · Module: `src/session`, `src/api`, `include/iec104/iec104.h`, `tools/selftest` · Grundlage: `intern/02_Konzept_IEC104_Library.md` („Befehle und Abläufe“), `docs/05_Normfragen_und_Festlegungen.md` (N6, N8, N13), TASK-004
+Status: erledigt (25.11.2026) · Module: `src/session`, `src/api`, `include/iec104/iec104.h`, `tools/selftest` · Grundlage: `intern/02_Konzept_IEC104_Library.md` („Befehle und Abläufe“), `docs/05_Normfragen_und_Festlegungen.md` (N6, N8, N13), TASK-004
 
 ## Ausgangslage
 
@@ -27,12 +27,34 @@ Befehle laufen wie in der Praxis gefordert: je IOA direkt oder zweistufig, mit Z
 
 ## Definition of Done
 
-- [ ] Jede Regel mit Quelle oder `TODO(norm)` im Kommentar.
-- [ ] Tests für jedes Ergebnis und jeden Fehlerfall, mit simulierter Zeit.
-- [ ] Selbsttest erweitert, `docs/04_Selbsttest.md` aktualisiert.
-- [ ] `debug`, `asan` grün, `clang`-Preset ohne Befunde, Fuzzer grün.
-- [ ] Weitergabe-Zip neu gebaut und geprüft.
+- [x] Jede Regel mit Quelle oder `TODO(norm)` im Kommentar.
+- [x] Tests für jedes Ergebnis und jeden Fehlerfall, mit simulierter Zeit.
+- [x] Selbsttest erweitert, `docs/04_Selbsttest.md` aktualisiert.
+- [x] `debug`, `asan` grün, `clang`-Preset ohne Befunde, Fuzzer grün (`fuzz_apci` 300 s / 16,8 Mio., `fuzz_session` 300 s / 29,8 Mio. Eingaben).
+- [x] Weitergabe-Zip neu gebaut und geprüft.
+
+## Umsetzung (Stand 25.11.2026)
+
+| Datei | Inhalt |
+| --- | --- |
+| `src/session/command_table.*` | Befehlspunkte je Station und IOA: Typ, Modell, Auswahl-Timeout; `is_command_type`, `is_select` |
+| `src/session/server_session.*` | Select/Execute je Punkt (Auswahl je Verbindung, gleicher Befehl, Timeout), Abbruch (COT 8), Ursache 47 für unbekannte Befehls-IOA, falscher Typ → negative ACTCON, maximale Befehlsverzögerung; Kontext `StationContext` mit Uhr |
+| `src/session/command_tracker.*` | Befehlsverfolgung am Client: Ergebnis je Befehl, getrennte Timeouts, Beendigung optional, automatisches Execute nach Select |
+| `src/codec/cp56time2a.*` | `to_unix_ms`, `from_unix_ms` (einzige Kalenderrechnung, auch von der C-API genutzt) |
+| `src/transport/tcp.*` | `utc_ms()` (Wanduhr) |
+| `include/iec104/iec104.h` | `iec104_command_model`, `iec104_server_add_command`, `max_command_delay_ms`; `iec104_command_result`, `on_command_result`, `iec104_client_options`, `iec104_client_select_execute` |
+| `src/apci/connection.*` | Testrahmen und STARTDT/STOPDT getrennt mit t1 überwacht (Fund aus dem Selbsttest, s. u.) |
+| Tests | `test_session.cpp` (+6 Befehlsregeln), `test_command_tracker.cpp` (6), `test_apci_connection.cpp` (+1); 124 gesamt |
+| `tools/selftest/`, `docs/04_Selbsttest.md` | Befehlspunkte im Server, sieben neue Befehlsschritte im Client |
+
+Fund während der Umsetzung: Ein offener Testrahmen (TESTFR act) blockierte `stop()`, weil Start/Stopp und Test eine gemeinsame Überwachung teilten. Der Selbsttest scheiterte dadurch gelegentlich bei STOPDT direkt nach der Ruhephase. Beide werden jetzt getrennt überwacht; ein Regeltest bildet den Fall nach.
 
 ## Offen
 
-- (wird beim Bearbeiten gefüllt)
+| Nr. | Thema | Stand |
+| --- | --- | --- |
+| O1 | Ablauf Select/Execute im Normtext (Abschnitt 7) | übliche Lesart, `TODO(norm)` in `command_table.hpp` |
+| O2 | Max-Delay: ungültige Zeitmarke, Zeitmarken in der Zukunft (N6) | ungültig → verwerfen; Zukunft nicht geprüft; `TODO(norm)` |
+| O3 | Zeitbasis Ortszeit/fester Offset für den Max-Delay-Vergleich (N13) | UTC; Parameter folgt |
+| O4 | Meldung verworfener Befehle an die Anwendung | nur stilles Verwerfen; mit Logging (TASK-006) |
+| O5 | Abbruch (Deaktivierung) aus der Client-API | über `iec104_client_send_asdu` möglich, eigene Funktion fehlt |

@@ -37,6 +37,35 @@ constexpr unsigned kRes3Shift = 4U;
 constexpr std::uint8_t kRes3Mask = 0x0FU; // after shifting
 constexpr std::uint8_t kRes4Bit = 0x80U;
 
+// Days since 1970-01-01 for a date of the proleptic Gregorian calendar
+// (well-known algorithm by H. Hinnant, "chrono-Compatible Low-Level Date
+// Algorithms"; valid for all years used here).
+std::int64_t days_from_civil(std::int64_t y, unsigned m, unsigned d) noexcept {
+    y -= m <= 2U ? 1 : 0;
+    const std::int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const auto yoe = static_cast<unsigned>(y - (era * 400));
+    const unsigned doy = (((153U * (m > 2U ? m - 3U : m + 9U)) + 2U) / 5U) + d - 1U;
+    const unsigned doe = (yoe * 365U) + (yoe / 4U) - (yoe / 100U) + doy;
+    return (era * 146097) + static_cast<std::int64_t>(doe) - 719468;
+}
+
+// Inverse of days_from_civil.
+void civil_from_days(std::int64_t z, std::int64_t& y, unsigned& m, unsigned& d) noexcept {
+    z += 719468;
+    const std::int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    const auto doe = static_cast<unsigned>(z - (era * 146097));
+    const unsigned yoe = (doe - (doe / 1460U) + (doe / 36524U) - (doe / 146096U)) / 365U;
+    const unsigned doy = doe - ((365U * yoe) + (yoe / 4U) - (yoe / 100U));
+    const unsigned mp = ((5U * doy) + 2U) / 153U;
+    d = doy - (((153U * mp) + 2U) / 5U) + 1U;
+    m = mp < 10U ? mp + 3U : mp - 9U;
+    y = static_cast<std::int64_t>(yoe) + (era * 400) + (m <= 2U ? 1 : 0);
+}
+
+constexpr std::int64_t kMsPerDay = 86400000;
+constexpr std::int64_t kMsPerHour = 3600000;
+constexpr std::int64_t kMsPerMinute = 60000;
+
 } // namespace
 
 iec104_status validate(const Cp56Time2a& t) noexcept {
@@ -99,6 +128,39 @@ iec104_status decode_cp56time2a(const std::uint8_t* data, std::size_t size,
     t.res3 = static_cast<std::uint8_t>((data[5] >> kRes3Shift) & kRes3Mask);
     t.year = static_cast<std::uint8_t>(data[6] & kYearMask);
     t.res4 = (data[6] & kRes4Bit) != 0U;
+    out = t;
+    return IEC104_OK;
+}
+
+std::int64_t to_unix_ms(const Cp56Time2a& t) noexcept {
+    const std::int64_t days = days_from_civil(2000 + t.year, t.month, t.day_of_month);
+    return (days * kMsPerDay) + (static_cast<std::int64_t>(t.hour) * kMsPerHour) +
+           (static_cast<std::int64_t>(t.minute) * kMsPerMinute) + t.milliseconds;
+}
+
+iec104_status from_unix_ms(std::int64_t unix_ms, Cp56Time2a& out) noexcept {
+    std::int64_t days = unix_ms / kMsPerDay;
+    std::int64_t rest = unix_ms % kMsPerDay;
+    if (rest < 0) {
+        rest += kMsPerDay;
+        --days;
+    }
+    std::int64_t y = 0;
+    unsigned m = 0;
+    unsigned d = 0;
+    civil_from_days(days, y, m, d);
+    if (y < 2000 || y > 2099) {
+        return IEC104_ERR_OUT_OF_RANGE;
+    }
+    Cp56Time2a t{};
+    t.year = static_cast<std::uint8_t>(y - 2000);
+    t.month = static_cast<std::uint8_t>(m);
+    t.day_of_month = static_cast<std::uint8_t>(d);
+    t.hour = static_cast<std::uint8_t>(rest / kMsPerHour);
+    t.minute = static_cast<std::uint8_t>((rest / kMsPerMinute) % 60);
+    t.milliseconds = static_cast<std::uint16_t>(rest % kMsPerMinute);
+    // 1970-01-01 was a Thursday; day of week 1 = Monday .. 7 = Sunday.
+    t.day_of_week = static_cast<std::uint8_t>((((days % 7) + 7 + 3) % 7) + 1);
     out = t;
     return IEC104_OK;
 }

@@ -80,6 +80,8 @@ add_library(iec104
     src/codec/cp56time2a.cpp
     src/codec/elements.cpp
     src/codec/type_table.cpp
+    src/session/command_table.cpp
+    src/session/command_tracker.cpp
     src/session/process_image.cpp
     src/session/server_session.cpp
     src/transport/link.cpp
@@ -123,6 +125,7 @@ if(IEC104_BUILD_TESTS)
         tests/test_asdu_header.cpp
         tests/test_asdu_reference.cpp
         tests/test_capture.cpp
+        tests/test_command_tracker.cpp
         tests/test_cp56time2a.cpp
         tests/test_elements.cpp
         tests/test_session.cpp

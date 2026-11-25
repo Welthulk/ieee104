@@ -121,13 +121,18 @@ ProcessImage sample_image() {
 
 struct Fixture {
     ProcessImage image = sample_image();
+    CommandTable commands;
     TestHandler handler;
     SessionOptions options;
+    // 2026-11-25 11:01:05.931 UTC on the wall clock, 1 s on the monotonic clock.
+    SessionClock clock{1000, 1795604465931LL};
+
+    StationContext station() { return StationContext{&image, &commands, &options, clock}; }
     ServerSession session{codec::kIec104Profile, 0};
     TestSender sender;
 
     std::vector<Answer> run(const std::vector<std::uint8_t>& asdu) {
-        EXPECT_TRUE(session.handle(asdu.data(), asdu.size(), image, handler, options));
+        EXPECT_TRUE(session.handle(asdu.data(), asdu.size(), station(), handler));
         session.pump(sender);
         return decode_all(sender);
     }
@@ -177,7 +182,7 @@ TEST(ServerSession, LongInterrogationWithFullWindow) {
         ASSERT_EQ(f.image.set(1, 11, scaled(1000 + i, static_cast<std::int16_t>(i)), 1), IEC104_OK);
     }
     const auto req = request(100, 6, 1, qoi(20));
-    ASSERT_TRUE(f.session.handle(req.data(), req.size(), f.image, f.handler, f.options));
+    ASSERT_TRUE(f.session.handle(req.data(), req.size(), f.station(), f.handler));
     for (int round = 0; round < 1000 && f.session.queued() > 0U; ++round) {
         f.sender.budget = 3;
         f.session.pump(f.sender);
@@ -241,7 +246,7 @@ TEST(ServerSession, NegativeAnswers) {
     Fixture f;
     // Type 22 is unassigned; the ASDU is answered by mirroring it.
     const std::vector<std::uint8_t> unknown{22, 0x01, 6, 0, 1, 0, 0, 0, 0, 0};
-    ASSERT_TRUE(f.session.handle(unknown.data(), unknown.size(), f.image, f.handler, f.options));
+    ASSERT_TRUE(f.session.handle(unknown.data(), unknown.size(), f.station(), f.handler));
     f.session.pump(f.sender);
     // The answer has the unknown type as well, so it is checked octet by octet.
     ASSERT_EQ(f.sender.sent.size(), 1U);
@@ -353,7 +358,7 @@ TEST(ServerSession, EndOfInitialization) {
 TEST(ServerSession, MonitorDataIsPassedOn) {
     Fixture f;
     const auto asdu = request(11, 3, 1, scaled(100, 1));
-    EXPECT_FALSE(f.session.handle(asdu.data(), asdu.size(), f.image, f.handler, f.options));
+    EXPECT_FALSE(f.session.handle(asdu.data(), asdu.size(), f.station(), f.handler));
 }
 
 // Rule: the image stores time-tagged types as their base type and rejects
@@ -370,4 +375,174 @@ TEST(ProcessImage, BaseTypesAndUpdates) {
     EXPECT_EQ(image.update(1, 11, scaled(999, 5)), IEC104_ERR_INVALID_ARGUMENT);
     EXPECT_TRUE(image.has_station(1));
     EXPECT_FALSE(image.has_station(2));
+}
+
+// ---------------------------------------------------------------------------
+// Command points: select before operate, direct execute, maximum delay
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/** @brief Single command for IOA 6000, select or execute. */
+codec::InformationObject switch_on(bool select) {
+    codec::InformationObject o{};
+    o.ioa = 6000;
+    o.sco.on = true;
+    o.sco.select = select;
+    return o;
+}
+
+/** @brief Fixture with a select-execute point (IOA 6000, 2 s) and a direct point (IOA 5000). */
+struct CommandFixture : Fixture {
+    CommandFixture() {
+        EXPECT_EQ(commands.set(1, 6000, CommandPoint{45, CommandModel::SelectExecute, 2000}),
+                  IEC104_OK);
+        EXPECT_EQ(commands.set(1, 5000, CommandPoint{49, CommandModel::Direct, 0}), IEC104_OK);
+        EXPECT_EQ(commands.set(1, 6001, CommandPoint{58, CommandModel::Direct, 0}), IEC104_OK);
+    }
+    /** @brief Handles one request and returns only the answers it produced. */
+    std::vector<Answer> step(const std::vector<std::uint8_t>& asdu) {
+        sender.sent.clear();
+        return run(asdu);
+    }
+};
+
+/** @brief Time tag @p seconds before the fixture's wall clock (2026-11-25 11:01:05.931). */
+codec::Cp56Time2a time_before(int seconds) {
+    codec::Cp56Time2a t{};
+    EXPECT_EQ(codec::from_unix_ms(1795604465931LL - (seconds * 1000LL), t), IEC104_OK);
+    return t;
+}
+
+} // namespace
+
+// Rule: on a select-execute point an execute without selection is rejected;
+// select (ACTCON) followed by the same execute (ACTCON, ACTTERM) succeeds,
+// and the selection is used up.
+TEST(ServerCommands, SelectBeforeOperate) {
+    CommandFixture f;
+    auto a = f.step(request(45, 6, 1, switch_on(false)));
+    ASSERT_EQ(a.size(), 1U);
+    EXPECT_TRUE(a[0].header.negative);
+    EXPECT_TRUE(f.handler.commands.empty()); // the application is not asked
+
+    a = f.step(request(45, 6, 1, switch_on(true)));
+    ASSERT_EQ(a.size(), 1U);
+    EXPECT_EQ(a[0].header.cause, 7U);
+    EXPECT_FALSE(a[0].header.negative);
+    a = f.step(request(45, 6, 1, switch_on(false)));
+    ASSERT_EQ(a.size(), 2U);
+    EXPECT_FALSE(a[0].header.negative);
+    EXPECT_EQ(a[1].header.cause, 10U);
+    EXPECT_EQ(f.handler.commands.size(), 2U); // select and execute
+
+    a = f.step(request(45, 6, 1, switch_on(false))); // selection already used
+    ASSERT_EQ(a.size(), 1U);
+    EXPECT_TRUE(a[0].header.negative);
+}
+
+// Rule: the execute must repeat the selected command and come in time.
+TEST(ServerCommands, SelectionMismatchAndTimeout) {
+    CommandFixture f;
+    (void)f.step(request(45, 6, 1, switch_on(true)));
+    codec::InformationObject off = switch_on(false);
+    off.sco.on = false; // different state than selected
+    auto a = f.step(request(45, 6, 1, off));
+    ASSERT_EQ(a.size(), 1U);
+    EXPECT_TRUE(a[0].header.negative);
+
+    (void)f.step(request(45, 6, 1, switch_on(true)));
+    f.clock.monotonic_ms += 2001; // selection valid for 2 s
+    a = f.step(request(45, 6, 1, switch_on(false)));
+    ASSERT_EQ(a.size(), 1U);
+    EXPECT_TRUE(a[0].header.negative);
+}
+
+// Rule: deactivation (cause 8) cancels a selection with positive DEACTCON (9);
+// without selection the DEACTCON is negative.
+TEST(ServerCommands, Deactivation) {
+    CommandFixture f;
+    (void)f.step(request(45, 6, 1, switch_on(true)));
+    auto a = f.step(request(45, 8, 1, switch_on(true)));
+    ASSERT_EQ(a.size(), 1U);
+    EXPECT_EQ(a[0].header.cause, 9U);
+    EXPECT_FALSE(a[0].header.negative);
+    a = f.step(request(45, 6, 1, switch_on(false))); // nothing selected any more
+    EXPECT_TRUE(a[0].header.negative);
+    a = f.step(request(45, 8, 1, switch_on(true)));
+    EXPECT_EQ(a[0].header.cause, 9U);
+    EXPECT_TRUE(a[0].header.negative);
+}
+
+// Rule: a direct point rejects a select and executes directly; an unknown
+// command IOA is answered with cause 47; a type other than the point's is rejected.
+TEST(ServerCommands, DirectUnknownAndWrongType) {
+    CommandFixture f;
+    codec::InformationObject sp{};
+    sp.ioa = 5000;
+    sp.sva = 42;
+    sp.qos.select = true;
+    auto a = f.step(request(49, 6, 1, sp));
+    ASSERT_EQ(a.size(), 1U);
+    EXPECT_TRUE(a[0].header.negative);
+    sp.qos.select = false;
+    a = f.step(request(49, 6, 1, sp));
+    ASSERT_EQ(a.size(), 2U);
+    EXPECT_FALSE(a[0].header.negative);
+
+    sp.ioa = 9999;
+    a = f.step(request(49, 6, 1, sp));
+    ASSERT_EQ(a.size(), 1U);
+    EXPECT_EQ(a[0].header.cause, 47U);
+    EXPECT_TRUE(a[0].header.negative);
+
+    codec::InformationObject sc{};
+    sc.ioa = 6001; // defined as 58 (with time tag), sent as 45
+    sc.sco.on = true;
+    a = f.step(request(45, 6, 1, sc));
+    ASSERT_EQ(a.size(), 1U);
+    EXPECT_EQ(a[0].header.cause, 7U);
+    EXPECT_TRUE(a[0].header.negative);
+}
+
+// Rule (amendment 1, N6): with a maximum delay, a time-tagged command older
+// than the maximum, or with an invalid time tag, is discarded without answer;
+// a command in time is executed; without maximum nothing is checked.
+TEST(ServerCommands, MaximumCommandDelay) {
+    CommandFixture f;
+    f.options.max_command_delay_ms = 10000;
+    codec::InformationObject sc{};
+    sc.ioa = 6001;
+    sc.sco.on = true;
+
+    sc.cp56 = time_before(5);
+    auto a = f.step(request(58, 6, 1, sc));
+    EXPECT_EQ(a.size(), 2U);
+
+    sc.cp56 = time_before(11);
+    a = f.step(request(58, 6, 1, sc));
+    EXPECT_TRUE(a.empty());
+
+    sc.cp56 = time_before(0);
+    sc.cp56.invalid = true;
+    a = f.step(request(58, 6, 1, sc));
+    EXPECT_TRUE(a.empty());
+
+    f.options.max_command_delay_ms = 0;
+    sc.cp56 = time_before(3600);
+    sc.cp56.invalid = false;
+    a = f.step(request(58, 6, 1, sc));
+    EXPECT_EQ(a.size(), 2U);
+}
+
+// Rule: the command table refuses non-command types and select-execute for
+// bitstring commands, which have no S/E bit.
+TEST(ServerCommands, TableChecks) {
+    CommandTable t;
+    EXPECT_EQ(t.set(1, 1, CommandPoint{13, CommandModel::Direct, 0}), IEC104_ERR_INVALID_ARGUMENT);
+    EXPECT_EQ(t.set(1, 1, CommandPoint{51, CommandModel::SelectExecute, 1000}),
+              IEC104_ERR_INVALID_ARGUMENT);
+    EXPECT_EQ(t.set(1, 1, CommandPoint{64, CommandModel::Direct, 0}), IEC104_OK);
+    EXPECT_NE(t.find(1, 1), nullptr);
+    EXPECT_EQ(t.find(2, 1), nullptr);
 }

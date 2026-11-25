@@ -6,7 +6,7 @@ Diese Anleitung beschreibt, wie die Library ohne fremde Gegenstelle geprüft wir
 
 | Programm | Rolle | Was es tut |
 | --- | --- | --- |
-| `iec104_selftest_server` | gesteuerte Station (Unterstation), gemeinsame Adresse 1 | hält ein Prozessabbild, beantwortet Generalabfrage, Zählerabfrage, Lesebefehl und Testbefehl, nimmt Sollwerte, Einzelbefehle und Uhrzeit an, sendet nach STARTDT „Ende der Initialisierung“ und eine Reihe spontaner Messwerte |
+| `iec104_selftest_server` | gesteuerte Station (Unterstation), gemeinsame Adresse 1 | hält ein Prozessabbild, beantwortet Generalabfrage, Zählerabfrage, Lesebefehl und Testbefehl, führt Befehle nach Befehlsmodell aus (direkt oder Select/Execute), verwirft verspätete Befehle mit Zeitmarke, nimmt die Uhrzeit an, sendet nach STARTDT „Ende der Initialisierung“ und eine Reihe spontaner Messwerte |
 | `iec104_selftest_client` | steuernde Station (Leitstelle) | verbindet sich, prüft jeden Ablauf Schritt für Schritt und gibt einen Bericht aus; mit `--foreign` gegen beliebige IEC-104-Server |
 
 Prozessabbild des Selbsttest-Servers:
@@ -18,7 +18,15 @@ Prozessabbild des Selbsttest-Servers:
 | 300 | 1 (M_SP_NA_1, Einzelmeldung) | folgt dem Einzelbefehl an IOA 6000 | Abfragegruppe 2 |
 | 200 | 15 (M_IT_NA_1, Zählwert) | 123456 | Zählergruppe 1 |
 
-Befehle: Sollwert skaliert (Typ 49) an IOA 5000 und Einzelbefehl (Typ 45) an IOA 6000 werden angenommen, alle anderen abgelehnt (negative Bestätigung).
+Befehlspunkte des Selbsttest-Servers:
+
+| IOA | Typ | Befehlsmodell | Verhalten |
+| --- | --- | --- | --- |
+| 5000 | 49 (C_SE_NB_1, Sollwert skaliert) | direkt | ausführen, Bestätigung und Beendigung |
+| 6000 | 45 (C_SC_NA_1, Einzelbefehl) | Select/Execute, Auswahl 2 s gültig | schaltet IOA 300 und meldet sie spontan |
+| 6001 | 58 (C_SC_TA_1, Einzelbefehl mit Zeitmarke) | direkt | ausführen |
+
+Befehle mit Zeitmarke, die älter als 10 s sind, verwirft der Server ohne Antwort (maximale Befehlsverzögerung nach AMD1). Befehle an andere IOAs lehnt er mit Ursache 47 ab.
 
 Der Client prüft im Selbsttest-Modus:
 
@@ -31,9 +39,13 @@ iec104_selftest_client: 127.0.0.1:2404, station 1
   group interrogation 2 ................ 1/1 objects
   clock synchronization ................ ok
   counter interrogation ................ ok
-  set point commands (type 49) ......... 10/10 confirmed
-  single command with feedback ......... ok
-  rejected command (negative ACTCON) ... ok
+  set point commands (direct) .......... 10/10 executed
+  execute without select (rejected) .... rejected
+  select and execute with feedback ..... executed (terminated)
+  selection expires after 2 s .......... selected, then rejected
+  command with time tag (type 58) ...... executed (terminated)
+  late command discarded (max. delay) .. no confirmation
+  unknown command IOA (cause 47) ....... rejected
   unknown station (cause 46) ........... ok
   spontaneous values ................... 100/100, in order
   idle period (link test) .............. 25 s, ok
@@ -48,9 +60,13 @@ result: PASSED
 | group interrogation 2 | nur IOA 300, Ursache 22 |
 | clock synchronization | positive Bestätigung |
 | counter interrogation | Bestätigung, Zählwert 123456 mit Ursache 37, Beendigung |
-| set point commands | je Befehl Bestätigung und Beendigung |
-| single command with feedback | Bestätigung, Beendigung und spontane Rückmeldung von IOA 300 = 1 |
-| rejected command | negative Bestätigung für einen Sollwert an unbekannter IOA |
+| set point commands | direkter Befehlspunkt: jeder Sollwert wird bestätigt und beendet („executed“) |
+| execute without select | Select/Execute-Punkt: Ausführen ohne vorherige Auswahl wird abgelehnt |
+| select and execute | Auswahl und Ausführung in einem Aufruf; danach spontane Rückmeldung von IOA 300 = 1 |
+| selection expires | nach einer Auswahl 2,5 s warten; die Ausführung wird dann abgelehnt |
+| command with time tag | Befehl mit aktueller Zeitmarke wird ausgeführt |
+| late command discarded | Befehl mit 60 s alter Zeitmarke bleibt ohne Antwort; der Client meldet nach 3 s „no confirmation“ |
+| unknown command IOA | Befehl an eine IOA ohne Befehlspunkt wird mit Ursache 47 abgelehnt |
 | unknown station | Generalabfrage an Station 99 wird mit Ursache 46 negativ beantwortet |
 | spontaneous values | alle Werte der Messreihe vollständig und in der richtigen Reihenfolge |
 | idle period | Verbindung bleibt über die Ruhephase bestehen (Testrahmen nach t3, Antwort innerhalb t1) |
@@ -99,7 +115,7 @@ Rechner B (Client):
 iec104_selftest_client --host <Adresse von A> --port 2404 --expect 1000 --count 50 --idle 30
 ```
 
-Erwartung: Client `result: PASSED`; der Server meldet je Verbindung `connection N result: PASSED`. Der Server läuft weiter und nimmt neue Verbindungen an, bis er mit Strg-C beendet wird. Jede Verbindung erhält ihre eigene Messreihe ab 0.
+Erwartung: Client `result: PASSED`; der Server meldet je Verbindung `connection N result: PASSED`. Der Server läuft weiter und nimmt neue Verbindungen an, bis er mit Strg-C beendet wird. Jede Verbindung erhält ihre eigene Messreihe ab 0. Der Test der maximalen Befehlsverzögerung setzt voraus, dass die Uhren beider Rechner auf wenige Sekunden genau übereinstimmen (z. B. per NTP).
 
 ### 4.2 Client gegen eine fremde Unterstation
 
@@ -123,7 +139,7 @@ Mit `--verbose` gibt der Client jedes empfangene Objekt aus (Typ, Ursache, gemei
 iec104_selftest_server --port 2404 --count 100 --interval 100 --verbose
 ```
 
-Erwartung an die Leitstelle: Nach STARTDT kommt „Ende der Initialisierung“, eine Generalabfrage liefert IOA 100, 101 und 300, eine Zählerabfrage IOA 200, und die Messwerte an IOA 100 zählen hoch. Ein Einzelbefehl an IOA 6000 schaltet IOA 300. Mit `--verbose` gibt der Server jeden Zustandswechsel, jeden Befehl und die gesetzte Uhrzeit aus. Beim Schließen der Verbindung meldet er, wie viele Anfragen und Befehle er beantwortet hat.
+Erwartung an die Leitstelle: Nach STARTDT kommt „Ende der Initialisierung“, eine Generalabfrage liefert IOA 100, 101 und 300, eine Zählerabfrage IOA 200, und die Messwerte an IOA 100 zählen hoch. Ein Einzelbefehl an IOA 6000 muss erst ausgewählt (Select) und dann innerhalb von 2 s ausgeführt werden; danach meldet IOA 300 den neuen Zustand. Ein direkter Einzelbefehl an IOA 6000 wird abgelehnt; so lässt sich prüfen, ob die Leitstelle Select/Execute beherrscht. Mit `--verbose` gibt der Server jeden Zustandswechsel, jeden Befehl und die gesetzte Uhrzeit aus. Beim Schließen der Verbindung meldet er, wie viele Anfragen und Befehle er beantwortet hat.
 
 ### 4.4 Abweichende Parameter der Gegenstelle
 
@@ -193,6 +209,8 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
 
 ## 6. Was der Selbsttest abdeckt und was nicht
 
-Abgedeckt: TCP-Verbindungsaufbau und -abbau, STARTDT/STOPDT, Folgenummern und Quittierung über viele Rahmen (mehr als k), Verbindungstest nach t3, Zeitüberwachung t1, Ende der Initialisierung, Generalabfrage (Station und Gruppe), Zählerabfrage, Uhrzeitsynchronisation, Befehle mit Bestätigung und Beendigung, Rückmeldung eines Befehls, negative Bestätigungen (abgelehnter Befehl, unbekannte Station).
+Abgedeckt: TCP-Verbindungsaufbau und -abbau, STARTDT/STOPDT, Folgenummern und Quittierung über viele Rahmen (mehr als k), Verbindungstest nach t3, Zeitüberwachung t1, Ende der Initialisierung, Generalabfrage (Station und Gruppe), Zählerabfrage, Uhrzeitsynchronisation, Befehle mit Bestätigung und Beendigung, Rückmeldung eines Befehls, negative Bestätigungen (abgelehnter Befehl, unbekannte IOA, unbekannte Station).
 
-Noch nicht abgedeckt: Select/Execute mit Zeitüberwachung je Befehl, maximale Befehlsverzögerung für Befehle mit Zeitmarke, Pufferung bei unterbrochener Verbindung, TLS, Redundanzgruppen.
+Ebenfalls abgedeckt: Befehlsmodelle je IOA (direkt, Select/Execute mit Zeitüberwachung der Auswahl), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung des Clients mit Ergebnis je Befehl.
+
+Noch nicht abgedeckt: Pufferung bei unterbrochener Verbindung, TLS, Redundanzgruppen.

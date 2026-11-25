@@ -38,7 +38,7 @@ using namespace iec104;
 namespace {
 
 class CollectingSender : public session::AsduSender {
-public:
+  public:
     std::vector<std::vector<std::uint8_t>> sent;
     bool can_send() override { return sent.size() < 10000U; }
     iec104_status send(const std::uint8_t* asdu, std::size_t length) override {
@@ -48,7 +48,7 @@ public:
 };
 
 class AlternatingHandler : public session::CommandHandler {
-public:
+  public:
     bool accept{false};
     bool on_command(const codec::AsduHeader& /*header*/,
                     const codec::InformationObject& /*object*/) override {
@@ -72,6 +72,14 @@ session::ProcessImage make_image() {
     return image;
 }
 
+session::CommandTable make_commands() {
+    session::CommandTable table;
+    (void)table.set(1, 6000, session::CommandPoint{45, session::CommandModel::SelectExecute, 5000});
+    (void)table.set(1, 5000, session::CommandPoint{49, session::CommandModel::Direct, 0});
+    (void)table.set(1, 6001, session::CommandPoint{58, session::CommandModel::Direct, 0});
+    return table;
+}
+
 bool answer_cause(std::uint8_t cause) {
     return cause == 4U || cause == 5U || cause == 7U || cause == 9U || cause == 10U ||
            (cause >= 20U && cause <= 41U) || (cause >= 44U && cause <= 47U);
@@ -87,10 +95,14 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     session::ServerSession s(codec::kIec104Profile, 0);
     AlternatingHandler handler;
     session::SessionOptions options;
+    options.max_command_delay_ms = 10000;
     CollectingSender sender;
 
+    static const session::CommandTable commands = make_commands();
+    const session::StationContext station{&image, &commands, &options,
+                                          session::SessionClock{1000, 1795604465931LL}};
     s.on_started(image, options);
-    (void)s.handle(data, size, image, handler, options);
+    (void)s.handle(data, size, station, handler);
     s.pump(sender);
 
     for (const auto& asdu : sender.sent) {
@@ -107,8 +119,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         if (h.cause != 44U) {
             std::array<codec::InformationObject, codec::kMaxObjects> objects{};
             codec::DecodedAsdu d{};
-            if (codec::decode_asdu(asdu.data(), asdu.size(), codec::kIec104Profile,
-                                   objects.data(), objects.size(), d) != IEC104_OK) {
+            if (codec::decode_asdu(asdu.data(), asdu.size(), codec::kIec104Profile, objects.data(),
+                                   objects.size(), d) != IEC104_OK) {
                 std::abort();
             }
         }

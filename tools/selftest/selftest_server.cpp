@@ -44,8 +44,7 @@ struct Peer {
     unsigned long sent{0};
     std::uint64_t next_send_ms{0};
     unsigned long requests{0}; // interrogations, counter interrogations, reads, tests
-    unsigned long commands{0}; // accepted commands
-    unsigned long rejected{0}; // rejected commands
+    unsigned long commands{0}; // commands that reached the application (incl. selects)
     unsigned long clock_syncs{0};
 };
 
@@ -89,8 +88,7 @@ void on_state(void* user, std::uint32_t id, iec104_link_state state, iec104_clos
         selftest::report_line("measured values sent",
                               std::to_string(p.sent) + "/" + std::to_string(s->opt.count));
         selftest::report_line("requests answered (100-107)", std::to_string(p.requests));
-        selftest::report_line("commands accepted / rejected",
-                              std::to_string(p.commands) + " / " + std::to_string(p.rejected));
+        selftest::report_line("commands passed to the application", std::to_string(p.commands));
         selftest::report_line("clock synchronizations", std::to_string(p.clock_syncs));
         const bool passed =
             p.sent == s->opt.count && (reason == IEC104_CLOSE_PEER || reason == IEC104_CLOSE_LOCAL);
@@ -137,12 +135,9 @@ int on_command(void* user, std::uint32_t id, const iec104_asdu_info* info,
         }
         return 1;
     }
-    const bool setpoint = info->type == 49U && command->ioa == selftest::kSetPointIoa;
+    // The library has already checked the command points (IOA, type, select
+    // before operate, maximum delay); this application accepts what arrives.
     const bool switching = info->type == 45U && command->ioa == selftest::kSwitchIoa;
-    if (!setpoint && !switching) {
-        ++p.rejected;
-        return 0;
-    }
     ++p.commands;
     if (switching && command->select == 0U) {
         // Execute: the switch follows the command and reports its new state.
@@ -240,6 +235,16 @@ int main(int argc, char** argv) {
         return 2;
     }
     add_points(s);
+    (void)iec104_server_add_command(s.handle, selftest::kStation, selftest::kSetPointIoa, 49,
+                                    IEC104_COMMAND_DIRECT, 0);
+    (void)iec104_server_add_command(s.handle, selftest::kStation, selftest::kSwitchIoa, 45,
+                                    IEC104_COMMAND_SELECT_EXECUTE, selftest::kSelectTimeoutMs);
+    (void)iec104_server_add_command(s.handle, selftest::kStation, selftest::kTimedIoa, 58,
+                                    IEC104_COMMAND_DIRECT, 0);
+    iec104_server_options options;
+    iec104_server_options_init(&options);
+    options.max_command_delay_ms = selftest::kMaxCommandDelayMs;
+    (void)iec104_server_set_options(s.handle, &options);
     st = iec104_server_listen(s.handle, s.opt.common.host.c_str(), s.opt.common.port);
     if (st != IEC104_OK) {
         std::fprintf(stderr, "cannot listen on port %u: %s\n", s.opt.common.port,

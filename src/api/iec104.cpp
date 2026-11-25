@@ -101,6 +101,26 @@ const char* iec104_link_state_string(iec104_link_state state) {
     return "unknown state";
 }
 
+const char* iec104_command_result_string(iec104_command_result result) {
+    switch (result) {
+    case IEC104_COMMAND_CONFIRMED:
+        return "confirmed";
+    case IEC104_COMMAND_TERMINATED:
+        return "executed (terminated)";
+    case IEC104_COMMAND_SELECTED:
+        return "selected";
+    case IEC104_COMMAND_REJECTED:
+        return "rejected";
+    case IEC104_COMMAND_NO_CONFIRMATION:
+        return "no confirmation";
+    case IEC104_COMMAND_NO_TERMINATION:
+        return "no termination";
+    case IEC104_COMMAND_CONNECTION_LOST:
+        return "connection lost";
+    }
+    return "unknown result";
+}
+
 const char* iec104_close_reason_string(iec104_close_reason reason) {
     switch (reason) {
     case IEC104_CLOSE_NONE:

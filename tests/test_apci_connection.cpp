@@ -445,3 +445,17 @@ TEST(ApciConnection, ClientAcknowledgesAtOnceWhileStopping) {
     EXPECT_EQ(output(p.client), s_frame(1));
     EXPECT_EQ(p.client.asdus(), 1U);
 }
+
+// Rule R10/R11: an open link test does not block STOPDT (and both are
+// supervised by t1 separately). Found by the self-test: the idle period ended
+// while a TESTFR act was still open, and stop() was refused.
+TEST(ApciConnection, StopWhileTestIsOpen) {
+    Pair p;
+    p.start();
+    p.client.conn.tick(p.now + 20000); // t3: TESTFR act sent, confirmation not yet received
+    EXPECT_EQ(p.client.conn.stop(p.now + 20000), IEC104_OK);
+    p.now += 20000;
+    p.pump();
+    EXPECT_EQ(p.client.conn.state(), State::Stopped);
+    EXPECT_EQ(p.client.close_reason(), CloseReason::None);
+}

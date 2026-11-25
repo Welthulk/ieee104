@@ -246,9 +246,8 @@ void Connection::handle_u_frame(UFunction function, TimeMs now) noexcept {
         (void)send_u(UFunction::TestFrCon, now);
         return;
     case UFunction::TestFrCon:
-        if (u_act_pending_ == UFunction::TestFrAct) {
-            u_act_pending_ = UFunction::None;
-            u_act_deadline_ = 0U;
+        if (test_deadline_ != 0U) {
+            test_deadline_ = 0U;
         } else if (config_.strict) {
             fail(CloseReason::UnexpectedFrame); // confirmation without activation
         }
@@ -349,7 +348,8 @@ void Connection::tick(TimeMs now) noexcept {
         fail(CloseReason::T1Timeout);
         return;
     }
-    if (u_act_pending_ != UFunction::None && now >= u_act_deadline_) {
+    if ((u_act_pending_ != UFunction::None && now >= u_act_deadline_) ||
+        (test_deadline_ != 0U && now >= test_deadline_)) {
         fail(CloseReason::T1Timeout);
         return;
     }
@@ -357,10 +357,9 @@ void Connection::tick(TimeMs now) noexcept {
     if (t2_deadline_ != 0U && now >= t2_deadline_) {
         (void)send_s(now);
     }
-    // R11: idle test. Only one act at a time is supervised by t1, so a
-    // test is not started while STARTDT or STOPDT is open.
+    // R11: idle test; a test that is still open is not repeated.
     if (t3_deadline_ != 0U && now >= t3_deadline_) {
-        if (u_act_pending_ == UFunction::None) {
+        if (test_deadline_ == 0U) {
             (void)send_u(UFunction::TestFrAct, now);
         }
         t3_deadline_ = now + config_.t3_ms;
@@ -377,6 +376,9 @@ TimeMs Connection::next_deadline() const noexcept {
     }
     if (u_act_pending_ != UFunction::None) {
         next = std::min(next, u_act_deadline_);
+    }
+    if (test_deadline_ != 0U) {
+        next = std::min(next, test_deadline_);
     }
     for (const TimeMs t : {t2_deadline_, t3_deadline_}) {
         if (t != 0U) {
@@ -461,10 +463,13 @@ bool Connection::send_u(UFunction function, TimeMs now) noexcept {
         return false;
     }
     // R10: every act is supervised by t1 until its confirmation arrives.
-    if (function == UFunction::StartDtAct || function == UFunction::StopDtAct ||
-        function == UFunction::TestFrAct) {
+    // Start/stop and the link test are supervised separately: a test may
+    // run while STARTDT or STOPDT is open and the other way round.
+    if (function == UFunction::StartDtAct || function == UFunction::StopDtAct) {
         u_act_pending_ = function;
         u_act_deadline_ = now + config_.t1_ms;
+    } else if (function == UFunction::TestFrAct) {
+        test_deadline_ = now + config_.t1_ms;
     }
     return true;
 }
@@ -540,7 +545,7 @@ void Connection::fail(CloseReason reason) noexcept {
     }
     state_ = State::Closed;
     u_act_pending_ = UFunction::None;
-    t2_deadline_ = t3_deadline_ = u_act_deadline_ = 0U;
+    t2_deadline_ = t3_deadline_ = u_act_deadline_ = test_deadline_ = 0U;
     // The close event must not get lost: drop the newest event if the queue is full.
     if (event_count_ == kEventCapacity) {
         --event_count_;

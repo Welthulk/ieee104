@@ -46,30 +46,38 @@ constexpr std::uint8_t kTestWithTime = 107;
 constexpr std::uint8_t kLastGroup = 36;  // QOI 21..36 = group 1..16
 constexpr std::uint8_t kAllCounters = 5; // RQT 5 = general counter request
 
-/** @brief Commands of the control direction (45..51 without, 58..64 with time tag). */
-bool is_command(std::uint8_t type) noexcept {
-    return (type >= 45U && type <= 51U) || (type >= 58U && type <= 64U);
-}
-
 /** @brief S/E bit of a command object; bitstring commands have none. */
-bool is_select(std::uint8_t type, const codec::InformationObject& o) noexcept {
+/**
+ * @brief True if two commands of @p type ask for the same action (state and
+ *        qualifier), ignoring S/E: the execute must repeat what was selected.
+ */
+bool same_command(std::uint8_t type, const codec::InformationObject& a,
+                  const codec::InformationObject& b) noexcept {
     switch (type) {
     case 45:
     case 58:
-        return o.sco.select;
+        return a.sco.on == b.sco.on && a.sco.qu == b.sco.qu;
     case 46:
     case 59:
-        return o.dco.select;
+        return a.dco.state == b.dco.state && a.dco.qu == b.dco.qu;
     case 47:
     case 60:
-        return o.rco.select;
+        return a.rco.state == b.rco.state && a.rco.qu == b.rco.qu;
     case 48:
-    case 49:
-    case 50:
     case 61:
+        return a.nva == b.nva && a.qos.ql == b.qos.ql;
+    case 49:
     case 62:
-    case 63:
-        return o.qos.select;
+        return a.sva == b.sva && a.qos.ql == b.qos.ql;
+    case 50:
+    case 63: {
+        // Compare the transmitted bit patterns, not float values (NaN, -0).
+        std::array<std::uint8_t, 4> x{};
+        std::array<std::uint8_t, 4> y{};
+        codec::encode_r32(a.r32, x.data());
+        codec::encode_r32(b.r32, y.data());
+        return x == y && a.qos.ql == b.qos.ql;
+    }
     default:
         return false;
     }
@@ -80,14 +88,37 @@ std::uint16_t broadcast_address(const codec::AsduProfile& profile) noexcept {
     return profile.ca_length == 1U ? 0xFFU : 0xFFFFU;
 }
 
+/**
+ * @brief Maximum command delay (amendment 1): true if a time-tagged command
+ *        must be discarded because it is older than the configured maximum.
+ */
+bool is_late(std::uint8_t type, const codec::InformationObject& o,
+             const StationContext& station) noexcept {
+    const std::uint32_t max_delay = station.options->max_command_delay_ms;
+    const bool time_tagged = (type >= 58U && type <= 64U) || type == kTestWithTime;
+    if (max_delay == 0U || !time_tagged) {
+        return false;
+    }
+    // A time tag that is invalid (IV) or out of range cannot prove that the
+    // command is in time; with the check enabled it is discarded as well.
+    // TODO(norm): maximum command delay, amendment 1 clause 6; handling of
+    // invalid time tags and of time tags in the future (N6).
+    if (o.cp56.invalid || codec::validate(o.cp56) != IEC104_OK) {
+        return true;
+    }
+    const std::int64_t age = station.clock.utc_ms - codec::to_unix_ms(o.cp56);
+    return age > static_cast<std::int64_t>(max_delay);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
 // Incoming requests
 // ---------------------------------------------------------------------------
 
-bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length, const ProcessImage& image,
-                           CommandHandler& handler, const SessionOptions& options) {
+bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
+                           const StationContext& station, CommandHandler& handler) {
+    const ProcessImage& image = *station.image;
     codec::AsduHeader header{};
     std::size_t header_length = 0;
     if (codec::decode_asdu_header(asdu, length, profile_, header, header_length) != IEC104_OK ||
@@ -115,6 +146,12 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length, const P
     }
     const codec::InformationObject& o = objects[0];
     const std::uint8_t type = header.type_id;
+
+    // Maximum command delay (amendment 1): a command with time tag that is
+    // older than the configured maximum is discarded without any answer.
+    if (is_late(type, o, station)) {
+        return true;
+    }
 
     // Station check. The broadcast address is accepted for the system
     // commands interrogation, counter interrogation, clock sync and reset.
@@ -147,8 +184,8 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length, const P
                           header.cause != kCotActivation));
         break;
     default:
-        if (is_command(type) || type == kClockSync || type == kResetProcess) {
-            answer_command(d, o, handler, options, asdu, length);
+        if (is_command_type(type) || type == kClockSync || type == kResetProcess) {
+            answer_command(d, o, station, handler, asdu, length);
         } else {
             // Control-direction types the library does not implement yet
             // (parameters 110..113, delay acquisition 106): negative confirmation.
@@ -268,13 +305,21 @@ void ServerSession::answer_read(const codec::DecodedAsdu& d, const codec::Inform
 }
 
 void ServerSession::answer_command(const codec::DecodedAsdu& d, const codec::InformationObject& o,
-                                   CommandHandler& handler, const SessionOptions& options,
+                                   const StationContext& station, CommandHandler& handler,
                                    const std::uint8_t* asdu, std::size_t length) {
     const codec::AsduHeader& h = d.header;
-    const bool command = is_command(h.type_id);
+    const bool command = is_command_type(h.type_id);
+    if (command && !station.commands->empty()) {
+        const CommandPoint* point = station.commands->find(h.common_address, o.ioa);
+        if (point == nullptr) {
+            push_ready(mirror(asdu, length, kCotUnknownIoa, true));
+            return;
+        }
+        answer_point_command(d, o, *point, station, handler, asdu, length);
+        return;
+    }
+    // Without command points the application alone decides (TASK-004 behaviour).
     if (h.cause == kCotDeactivation && command) {
-        // Breaking off a selected command. Select/execute supervision follows
-        // later; until then the deactivation is confirmed.
         push_ready(mirror(asdu, length, kCotDeactivationCon, false));
         return;
     }
@@ -282,10 +327,74 @@ void ServerSession::answer_command(const codec::DecodedAsdu& d, const codec::Inf
         push_ready(mirror(asdu, length, kCotUnknownCause, true));
         return;
     }
+    execute(d, o, station, handler, asdu, length);
+}
+
+void ServerSession::answer_point_command(const codec::DecodedAsdu& d,
+                                         const codec::InformationObject& o,
+                                         const CommandPoint& point, const StationContext& station,
+                                         CommandHandler& handler, const std::uint8_t* asdu,
+                                         std::size_t length) {
+    const codec::AsduHeader& h = d.header;
+    const auto key = std::make_pair(h.common_address, o.ioa);
+    if (h.type_id != point.type) {
+        // The point exists but accepts another type (e.g. only with time tag).
+        push_ready(mirror(asdu, length,
+                          h.cause == kCotDeactivation ? kCotDeactivationCon : kCotActivationCon,
+                          true));
+        return;
+    }
+    if (h.cause == kCotDeactivation) {
+        // Breaking off a selection: confirmed if one exists, else negative.
+        const bool selected = selections_.erase(key) > 0U;
+        push_ready(mirror(asdu, length, kCotDeactivationCon, !selected));
+        return;
+    }
+    if (h.cause != kCotActivation) {
+        push_ready(mirror(asdu, length, kCotUnknownCause, true));
+        return;
+    }
+    if (is_select(h.type_id, o)) {
+        if (point.model == CommandModel::Direct) {
+            push_ready(mirror(asdu, length, kCotActivationCon, true)); // no select on this point
+            return;
+        }
+        const bool accepted = handler.on_command(h, o);
+        push_ready(mirror(asdu, length, kCotActivationCon, !accepted));
+        if (accepted) {
+            selections_[key] =
+                Selection{h.type_id, o, station.clock.monotonic_ms + point.select_timeout_ms};
+        } else {
+            selections_.erase(key);
+        }
+        return;
+    }
+    if (point.model == CommandModel::SelectExecute) {
+        // Execute only the command that was selected, and only in time.
+        const auto it = selections_.find(key);
+        const bool valid =
+            it != selections_.end() && station.clock.monotonic_ms <= it->second.valid_until_ms &&
+            it->second.type == h.type_id && same_command(h.type_id, it->second.object, o);
+        if (it != selections_.end()) {
+            selections_.erase(it);
+        }
+        if (!valid) {
+            push_ready(mirror(asdu, length, kCotActivationCon, true));
+            return;
+        }
+    }
+    execute(d, o, station, handler, asdu, length);
+}
+
+void ServerSession::execute(const codec::DecodedAsdu& d, const codec::InformationObject& o,
+                            const StationContext& station, CommandHandler& handler,
+                            const std::uint8_t* asdu, std::size_t length) {
+    const codec::AsduHeader& h = d.header;
     const bool accepted = handler.on_command(h, o);
     push_ready(mirror(asdu, length, kCotActivationCon, !accepted));
     // Termination after an executed command; a select is only confirmed.
-    if (accepted && command && options.command_termination && !is_select(h.type_id, o)) {
+    if (accepted && is_command_type(h.type_id) && station.options->command_termination &&
+        !is_select(h.type_id, o)) {
         push_ready(mirror(asdu, length, kCotActivationTerm, false));
     }
 }

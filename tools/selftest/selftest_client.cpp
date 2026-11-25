@@ -21,9 +21,13 @@
  *   group interrogation 2        only IOA 300                  -
  *   clock synchronization        positive ACTCON               ACTCON (positive or negative)
  *   counter interrogation        ACTCON, counter, ACTTERM      ACTCON, ACTTERM, counters counted
- *   set point commands           M x ACTCON and ACTTERM        -
- *   single command               ACTCON, ACTTERM, IOA 300 = 1  -
- *   rejected command             negative ACTCON               -
+ *   set point commands           M x executed (direct point)   -
+ *   execute without select       rejected (SBO point)          -
+ *   select and execute           executed, IOA 300 = 1         -
+ *   selection expires            selected, execute rejected    -
+ *   command with time tag (58)   executed                      -
+ *   late command (60 s old)      discarded: no confirmation    -
+ *   unknown command IOA          rejected (cause 47)           -
  *   unknown station              negative, cause 46            -
  *   spontaneous values           N values in order             -
  *   idle period, STOPDT          yes                           yes
@@ -54,8 +58,17 @@ struct Received {
     iec104_object object;
 };
 
+/** @brief Final result of one command, as reported by on_command_result. */
+struct Result {
+    std::uint8_t type;
+    std::uint32_t ioa;
+    std::uint8_t select;
+    iec104_command_result result;
+};
+
 struct Client {
     Options opt;
+    std::vector<Result> results;
     iec104_client* handle{nullptr};
     iec104_link_state state{IEC104_LINK_CONNECTING};
     iec104_close_reason close_reason{IEC104_CLOSE_NONE};
@@ -92,6 +105,16 @@ void on_object(void* user, std::uint32_t /*id*/, const iec104_asdu_info* info,
     c->received.push_back(Received{*info, *object});
 }
 
+void on_command_result(void* user, std::uint16_t /*ca*/, const iec104_object* command,
+                       iec104_command_result result) {
+    auto* c = static_cast<Client*>(user);
+    if (c->opt.common.verbose) {
+        std::printf("command type %u ioa %u%s: %s\n", command->type, command->ioa,
+                    command->select != 0U ? " (select)" : "", iec104_command_result_string(result));
+    }
+    c->results.push_back(Result{command->type, command->ioa, command->select, result});
+}
+
 /** @brief Polls until @p done, the connection closes, or @p ms have passed. */
 bool wait_for(Client& c, std::uint64_t ms, const std::function<bool()>& done) {
     const std::uint64_t end = now_ms() + ms;
@@ -119,6 +142,114 @@ std::size_t count_cause(const Client& c, std::size_t from, std::uint8_t cause) {
         n += c.received[i].info.cause == cause ? 1U : 0U;
     }
     return n;
+}
+
+/** @brief Sends one command and waits for its result. @return the result, or -1 on timeout. */
+int command_result(Client& c, std::uint16_t ca, const iec104_object& cmd, bool select_execute,
+                   std::uint64_t wait_ms) {
+    const std::size_t before = c.results.size();
+    const iec104_status st = select_execute ? iec104_client_select_execute(c.handle, ca, &cmd)
+                                            : iec104_client_send_command(c.handle, ca, &cmd);
+    if (st != IEC104_OK) {
+        return -1;
+    }
+    if (!wait_for(c, wait_ms, [&] { return c.results.size() > before; })) {
+        return -1;
+    }
+    return static_cast<int>(c.results.back().result);
+}
+
+std::string result_text(int r) {
+    return r < 0 ? std::string("no result")
+                 : iec104_command_result_string(static_cast<iec104_command_result>(r));
+}
+
+/**
+ * @brief The command steps against the self-test server (select before operate,
+ *        direct execute, time tag, maximum delay, unknown IOA).
+ */
+template <typename Step> void commands(Client& c, Step& step, std::uint16_t ca) {
+    // Short time limits, so that the expected missing answer (late command) is quick.
+    iec104_client_options options;
+    iec104_client_options_init(&options);
+    options.confirmation_timeout_ms = 3000;
+    options.termination_timeout_ms = 3000;
+    (void)iec104_client_set_options(c.handle, &options);
+    const std::uint64_t wait_ms = 5000;
+
+    // Set points at the direct point 5000: each confirmed and terminated.
+    const std::size_t before = c.results.size();
+    unsigned long sent = 0;
+    (void)wait_for(c, c.opt.timeout_s * 1000U, [&] {
+        while (sent < c.opt.count) {
+            iec104_object sp{};
+            sp.type = 49;
+            sp.ioa = selftest::kSetPointIoa;
+            sp.value = static_cast<double>(sent);
+            if (iec104_client_send_command(c.handle, ca, &sp) != IEC104_OK) {
+                break; // window k full: retry after the next poll
+            }
+            ++sent;
+        }
+        return c.results.size() >= before + c.opt.count;
+    });
+    std::size_t done = 0;
+    for (std::size_t i = before; i < c.results.size(); ++i) {
+        done += c.results[i].result == IEC104_COMMAND_TERMINATED ? 1U : 0U;
+    }
+    step("set point commands (direct)", done == c.opt.count,
+         std::to_string(done) + "/" + std::to_string(c.opt.count) + " executed");
+
+    iec104_object sc{};
+    sc.type = 45;
+    sc.ioa = selftest::kSwitchIoa;
+    sc.value = 1;
+
+    // Select before operate: an execute without selection is rejected.
+    int r = command_result(c, ca, sc, false, wait_ms);
+    step("execute without select (rejected)", r == IEC104_COMMAND_REJECTED, result_text(r));
+
+    // Select and execute in one call; the switch reports IOA 300 = 1.
+    const std::size_t mark = c.received.size();
+    r = command_result(c, ca, sc, true, wait_ms);
+    const bool feedback = wait_for(c, wait_ms, [&] {
+        const long i = find(c, mark, 1, IEC104_COT_SPONTANEOUS);
+        return i >= 0 && c.received[static_cast<std::size_t>(i)].object.value == 1.0;
+    });
+    step("select and execute with feedback", r == IEC104_COMMAND_TERMINATED && feedback,
+         result_text(r));
+
+    // A selection is valid for 2 s only.
+    iec104_object sel = sc;
+    sel.select = 1;
+    r = command_result(c, ca, sel, false, wait_ms);
+    (void)wait_for(c, selftest::kSelectTimeoutMs + 500U, [] { return false; });
+    const int late_exec = command_result(c, ca, sc, false, wait_ms);
+    step("selection expires after 2 s",
+         r == IEC104_COMMAND_SELECTED && late_exec == IEC104_COMMAND_REJECTED,
+         result_text(r) + ", then " + result_text(late_exec));
+
+    // Command with time tag: current time is accepted, a time tag 60 s old is
+    // discarded by the server without answer.
+    iec104_object timed{};
+    timed.type = 58;
+    timed.ioa = selftest::kTimedIoa;
+    timed.value = 1;
+    const std::int64_t now_ms = static_cast<std::int64_t>(std::time(nullptr)) * 1000;
+    (void)iec104_time_from_unix_ms(now_ms, &timed.time);
+    r = command_result(c, ca, timed, false, wait_ms);
+    step("command with time tag (type 58)", r == IEC104_COMMAND_TERMINATED, result_text(r));
+    (void)iec104_time_from_unix_ms(now_ms - 60000, &timed.time);
+    r = command_result(c, ca, timed, false, wait_ms);
+    step("late command discarded (max. delay)", r == IEC104_COMMAND_NO_CONFIRMATION,
+         result_text(r));
+
+    // An IOA without command point: negative answer with cause 47.
+    iec104_object bad{};
+    bad.type = 49;
+    bad.ioa = 9999;
+    r = command_result(c, ca, bad, false, wait_ms);
+    step("unknown command IOA (cause 47)", r == IEC104_COMMAND_REJECTED, result_text(r));
 }
 
 void print_help() {
@@ -173,6 +304,7 @@ int main(int argc, char** argv) {
     cb.user = &c;
     cb.on_state = on_state;
     cb.on_object = on_object;
+    cb.on_command_result = on_command_result;
     iec104_status st = iec104_client_create(&c.opt.common.link, &cb, &c.handle);
     if (st != IEC104_OK) {
         std::fprintf(stderr, "invalid configuration: %s\n", iec104_status_string(st));
@@ -304,48 +436,8 @@ int main(int argc, char** argv) {
         }
 
         if (!c.opt.foreign) {
-            // Set points: each confirmed and terminated.
-            mark = c.received.size();
-            unsigned long sent = 0;
-            ok = wait_for(c, step_ms, [&] {
-                while (sent < c.opt.count) {
-                    iec104_object sp{};
-                    sp.type = 49;
-                    sp.ioa = selftest::kSetPointIoa;
-                    sp.value = static_cast<double>(sent);
-                    if (iec104_client_send_command(c.handle, ca, &sp) != IEC104_OK) {
-                        break; // window k full: retry after the next poll
-                    }
-                    ++sent;
-                }
-                return count_cause(c, mark, IEC104_COT_ACTIVATION_TERMINATION) >= c.opt.count;
-            });
-            const std::size_t cons = count_cause(c, mark, IEC104_COT_ACTIVATION_CON);
-            step("set point commands (type 49)", ok && cons == c.opt.count,
-                 std::to_string(cons) + "/" + std::to_string(c.opt.count) + " confirmed");
-
-            // Single command: confirmation, termination and the feedback of IOA 300.
-            mark = c.received.size();
-            iec104_object sc{};
-            sc.type = 45;
-            sc.ioa = selftest::kSwitchIoa;
-            sc.value = 1;
-            ok =
-                iec104_client_send_command(c.handle, ca, &sc) == IEC104_OK &&
-                confirmed(mark, 45, true) &&
-                wait_for(c, step_ms, [&] { return find(c, mark, 1, IEC104_COT_SPONTANEOUS) >= 0; });
-            const long fb = find(c, mark, 1, IEC104_COT_SPONTANEOUS);
-            step("single command with feedback",
-                 ok && positive(mark, 45) && fb >= 0 && value_at(fb).value == 1.0);
-
-            // A command for an address the server does not know is rejected.
-            mark = c.received.size();
-            iec104_object bad{};
-            bad.type = 49;
-            bad.ioa = 9999;
-            ok = iec104_client_send_command(c.handle, ca, &bad) == IEC104_OK &&
-                 confirmed(mark, 49, false);
-            step("rejected command (negative ACTCON)", ok && !positive(mark, 49));
+            // Commands: every result comes from the library's command tracking.
+            commands(c, step, ca);
 
             // An unknown station is answered with cause 46.
             mark = c.received.size();

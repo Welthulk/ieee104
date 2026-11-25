@@ -37,11 +37,14 @@
 
 #include "codec/asdu.hpp"
 #include "iec104/iec104.h"
+#include "session/command_table.hpp"
 #include "session/process_image.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <map>
+#include <utility>
 #include <vector>
 
 namespace iec104::session {
@@ -80,6 +83,27 @@ struct SessionOptions {
     bool send_end_of_init{true};    ///< Type 70 on the first STARTDT of the connection.
     bool command_termination{true}; ///< ACTTERM after an accepted execute command.
     std::uint8_t cause_of_init{0};  ///< COI cause in type 70.
+    /**
+     * @brief Maximum age of a command with time tag (58..64, 107), 0 = no check.
+     *
+     * Older commands are discarded without answer (amendment 1, maximum
+     * command delay; docs/05_Normfragen_und_Festlegungen.md, N6).
+     */
+    std::uint32_t max_command_delay_ms{0};
+};
+
+/** @brief The two clocks the session needs. */
+struct SessionClock {
+    std::uint64_t monotonic_ms{0}; ///< For the validity of selections.
+    std::int64_t utc_ms{0};        ///< Wall clock (UTC, ms since 1970) for the command delay.
+};
+
+/** @brief Everything the station provides to a session for handling one request (never NULL). */
+struct StationContext {
+    const ProcessImage* image{nullptr};     ///< Data points (interrogation, read).
+    const CommandTable* commands{nullptr};  ///< Command points (empty = application decides).
+    const SessionOptions* options{nullptr}; ///< Behaviour.
+    SessionClock clock;                     ///< Current time.
 };
 
 /** @brief Application layer of one connection of the controlled station. */
@@ -95,8 +119,8 @@ class ServerSession {
      *         false if it is data for the application (monitor direction,
      *         private type, malformed), which the caller passes on.
      */
-    bool handle(const std::uint8_t* asdu, std::size_t length, const ProcessImage& image,
-                CommandHandler& handler, const SessionOptions& options);
+    bool handle(const std::uint8_t* asdu, std::size_t length, const StationContext& station,
+                CommandHandler& handler);
 
     /** @brief Data transfer was started: queue end of initialization once per connection. */
     void on_started(const ProcessImage& image, const SessionOptions& options);
@@ -138,14 +162,29 @@ class ServerSession {
     void answer_read(const codec::DecodedAsdu& d, const codec::InformationObject& o,
                      const ProcessImage& image, const std::uint8_t* asdu, std::size_t length);
     void answer_command(const codec::DecodedAsdu& d, const codec::InformationObject& o,
-                        CommandHandler& handler, const SessionOptions& options,
+                        const StationContext& station, CommandHandler& handler,
                         const std::uint8_t* asdu, std::size_t length);
+    void answer_point_command(const codec::DecodedAsdu& d, const codec::InformationObject& o,
+                              const CommandPoint& point, const StationContext& station,
+                              CommandHandler& handler, const std::uint8_t* asdu,
+                              std::size_t length);
+    void execute(const codec::DecodedAsdu& d, const codec::InformationObject& o,
+                 const StationContext& station, CommandHandler& handler, const std::uint8_t* asdu,
+                 std::size_t length);
     bool pump_job(Item& job, AsduSender& sender);
 
     codec::AsduProfile profile_;
     std::uint8_t originator_;
     std::deque<Item> queue_;
     bool init_sent_{false};
+
+    /** @brief A selected command waiting for its execute (select before operate). */
+    struct Selection {
+        std::uint8_t type{0};
+        codec::InformationObject object{};
+        std::uint64_t valid_until_ms{0};
+    };
+    std::map<std::pair<std::uint16_t, std::uint32_t>, Selection> selections_;
 };
 
 } // namespace iec104::session

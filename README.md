@@ -14,7 +14,8 @@ Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
 | `session` | Abläufe der gesteuerten Station: Prozessabbild, Generalabfrage (Station und Gruppen), Zählerabfrage, Lesebefehl, Testbefehl, Uhrzeit, Befehle mit Bestätigung und Beendigung, Ende der Initialisierung, negative Bestätigungen (Ursachen 44–47) |
 | C-API | Server und Client mit Handles, konfigurierbaren Ports, Timern und ASDU-Profil; Werte statt Oktette (`iec104_object`), Callbacks für Objekte, Befehle und Zustandswechsel |
 | Selbsttest | `iec104_selftest_server` und `iec104_selftest_client` für automatische und manuelle Tests |
-| in Arbeit | Select/Execute mit Zeitüberwachung, maximale Befehlsverzögerung, Pufferung, TLS (OpenSSL 3.x), Redundanzgruppen |
+| Befehle | Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung am Client mit Ergebnis je Befehl und getrennten Timeouts |
+| in Arbeit | Pufferung, TLS (OpenSSL 3.x), Redundanzgruppen, Logging und Statistik |
 
 ## Unterlagen
 
@@ -24,7 +25,7 @@ Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
 | `docs/02_Technik_und_Quellen.md` | Architektur, Protokollaufbau, Parameter, Typkennungen, Elemente, Quellen |
 | `docs/03_Quellen_APCI.md` | Öffentliche Belege für die Regeln der Verbindungssteuerung |
 | `docs/04_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
-| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E6), auf die der Code verweist |
+| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E7), auf die der Code verweist |
 
 ## Verzeichnisse
 
@@ -114,7 +115,9 @@ int main(void) {
 }
 ```
 
-Der Client funktioniert entsprechend: `iec104_client_create`, `iec104_client_connect(client, host, port)`, nach dem Zustand `IEC104_LINK_STOPPED` `iec104_client_start`, danach zum Beispiel `iec104_client_interrogation(client, 1, 20)`; die Antworten kommen als Objekte über `on_object`. Befehle sendet `iec104_client_send_command`. Alle Funktionen liefern einen `iec104_status`; `iec104_status_string()` gibt einen lesbaren Text dazu.
+Befehlspunkte legt der Server mit `iec104_server_add_command` fest (direkt oder Select/Execute); die maximale Befehlsverzögerung steht in `iec104_server_options`.
+
+Der Client funktioniert entsprechend: `iec104_client_create`, `iec104_client_connect(client, host, port)`, nach dem Zustand `IEC104_LINK_STOPPED` `iec104_client_start`, danach zum Beispiel `iec104_client_interrogation(client, 1, 20)`; die Antworten kommen als Objekte über `on_object`. Befehle sendet `iec104_client_send_command` oder, zweistufig, `iec104_client_select_execute`; das Ergebnis jedes Befehls (ausgeführt, abgelehnt, keine Bestätigung, …) meldet `on_command_result`. Alle Funktionen liefern einen `iec104_status`; `iec104_status_string()` gibt einen lesbaren Text dazu.
 
 ## Lizenz
 

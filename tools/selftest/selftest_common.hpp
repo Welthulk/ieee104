@@ -18,10 +18,14 @@
  *                     IOA 200 integrated totals (15)    counter group 1
  *     after STARTDT:  end of initialization (70), then N spontaneous values
  *                     of IOA 100 (11, cause 3): 0, 1, 2, ...
- *     commands:       set point scaled (49) at IOA 5000 accepted;
- *                     single command (45) at IOA 6000 accepted, switches
- *                     IOA 300 and reports it spontaneously;
- *                     clock synchronization accepted; everything else rejected
+ *     command points: IOA 5000 set point scaled (49), direct execute;
+ *                     IOA 6000 single command (45), select before operate
+ *                     (selection valid 2 s), switches IOA 300 and reports it
+ *                     spontaneously;
+ *                     IOA 6001 single command with time tag (58), direct;
+ *                     time-tagged commands older than 10 s are discarded;
+ *                     other IOAs are rejected with cause 47;
+ *                     clock synchronization accepted
  *
  *   iec104_selftest_client  (controlling station)
  *     checks every sequence against these points (see selftest_client.cpp);
@@ -43,8 +47,12 @@ inline constexpr std::uint32_t kMeasurementIoa = 100; // type 11, spontaneous se
 inline constexpr std::uint32_t kFloatIoa = 101;       // type 13
 inline constexpr std::uint32_t kCounterIoa = 200;     // type 15
 inline constexpr std::uint32_t kSinglePointIoa = 300; // type 1
-inline constexpr std::uint32_t kSetPointIoa = 5000;   // commands type 49
-inline constexpr std::uint32_t kSwitchIoa = 6000;     // commands type 45, switches IOA 300
+inline constexpr std::uint32_t kSetPointIoa = 5000;   // type 49, direct execute
+inline constexpr std::uint32_t kSwitchIoa =
+    6000;                                        // type 45, select before operate, switches IOA 300
+inline constexpr std::uint32_t kTimedIoa = 6001; // type 58 (with time tag), direct execute
+inline constexpr std::uint32_t kSelectTimeoutMs = 2000;    // validity of a selection at IOA 6000
+inline constexpr std::uint32_t kMaxCommandDelayMs = 10000; // older time-tagged commands are dropped
 inline constexpr double kFloatValue = 49.95;
 inline constexpr double kCounterValue = 123456;
 

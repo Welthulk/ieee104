@@ -10,7 +10,7 @@ Exemplarische IEC-60870-5-104-Library: Client und Server, Kern C++17, stabile C-
 - `docs/01_IEC104_verstehen.md` ist die Einführung.
 - `docs/02_Technik_und_Quellen.md` ist die namensfreie Fassung von Konzept und Recherche; Code zitiert nur diese.
 - `docs/03_Quellen_APCI.md` belegt die Regeln der Zustandsmaschine aus öffentlichen Quellen (Normtexte liegen nicht vor, F4).
-- `docs/05_Normfragen_und_Festlegungen.md` ist die weitergabefähige Fassung der offenen Normfragen (N1–N13) und Festlegungen (E1–E6). Code und Tests verweisen nur darauf, nie auf `intern/04_Analyse.md` oder `tasks/`.
+- `docs/05_Normfragen_und_Festlegungen.md` ist die weitergabefähige Fassung der offenen Normfragen (N1–N13) und Festlegungen (E1–E7). Code und Tests verweisen nur darauf, nie auf `intern/04_Analyse.md` oder `tasks/`.
 
 ## Weitergabe-Zip
 
