@@ -117,6 +117,27 @@ bool is_late(std::uint8_t type, const codec::InformationObject& o,
 // Incoming requests
 // ---------------------------------------------------------------------------
 
+bool ServerSession::known_station(std::uint16_t common_address, std::uint8_t type,
+                                  const StationContext& station) const {
+    // A station is known by its data points or its command points. The
+    // broadcast address is accepted for the system commands interrogation,
+    // counter interrogation, clock sync and reset. Without any points the
+    // application manages its stations itself.
+    // TODO(norm): broadcast address per type, clause unknown
+    // (docs/05_Normfragen_und_Festlegungen.md, N10).
+    const ProcessImage& image = *station.image;
+    const CommandTable& commands = *station.commands;
+    if (image.empty() && commands.empty()) {
+        return true;
+    }
+    const bool system = type == kInterrogation || type == kCounterInterrogation ||
+                        type == kClockSync || type == kResetProcess;
+    if (system && common_address == broadcast_address(profile_)) {
+        return true;
+    }
+    return image.has_station(common_address) || commands.has_station(common_address);
+}
+
 bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
                            const StationContext& station, CommandHandler& handler) {
     const ProcessImage& image = *station.image;
@@ -159,15 +180,7 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
         return true;
     }
 
-    // Station check. The broadcast address is accepted for the system
-    // commands interrogation, counter interrogation, clock sync and reset.
-    // An empty image means the application manages its stations itself.
-    // TODO(norm): broadcast address per type, clause unknown
-    // (docs/05_Normfragen_und_Festlegungen.md, N10).
-    const bool broadcast = header.common_address == broadcast_address(profile_);
-    const bool system = type == kInterrogation || type == kCounterInterrogation ||
-                        type == kClockSync || type == kResetProcess;
-    if (!image.empty() && !(broadcast && system) && !image.has_station(header.common_address)) {
+    if (!known_station(header.common_address, type, station)) {
         answer(asdu, length, kCotUnknownStation, true);
         return true;
     }

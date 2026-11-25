@@ -135,7 +135,7 @@ constexpr std::array<CauseRule, 0> kCauseMatrix{};
 } // namespace
 
 const TypeInfo* find_type(std::uint8_t type_id) noexcept {
-    // A linear search over 66 entries is fast enough and easier to read than
+    // A linear search over 59 entries is fast enough and easier to read than
     // an index table.
     for (const TypeInfo& t : kTypes) {
         if (t.id == type_id) {

@@ -294,3 +294,82 @@ overflow = reject
     const std::string range = write_file("groups_range.conf", "event_buffer_size = 2000000\n");
     EXPECT_EQ(iec104_config_load(range.c_str(), &c, &line), IEC104_ERR_OUT_OF_RANGE);
 }
+
+namespace {
+
+struct Received {
+    std::vector<std::pair<iec104_asdu_info, iec104_object>> objects;
+    iec104_link_state state{IEC104_LINK_CONNECTING};
+    static void on_object(void* user, uint32_t, const iec104_asdu_info* info,
+                          const iec104_object* o) {
+        static_cast<Received*>(user)->objects.emplace_back(*info, *o);
+    }
+    static void on_state(void* user, uint32_t, iec104_link_state s, iec104_close_reason) {
+        static_cast<Received*>(user)->state = s;
+    }
+};
+
+} // namespace
+
+// Rule: a read command (type 102) is a request with cause 5; the station
+// answers with the object itself (its type, cause 5) or negatively with
+// cause 47. iec104_client_send_command() with type 102 sends the same.
+TEST(ClientRead, RequestAndAnswer) {
+    iec104_server* s = nullptr;
+    ASSERT_EQ(iec104_server_create(nullptr, nullptr, &s), IEC104_OK);
+    iec104_object p{};
+    p.type = 13;
+    p.ioa = 100;
+    p.value = 2.5;
+    ASSERT_EQ(iec104_server_add_point(s, 1, &p, 1), IEC104_OK);
+    ASSERT_EQ(iec104_server_listen(s, "127.0.0.1", 0), IEC104_OK);
+    Received r;
+    iec104_callbacks cb{};
+    cb.user = &r;
+    cb.on_object = Received::on_object;
+    cb.on_state = Received::on_state;
+    iec104_client* c = nullptr;
+    ASSERT_EQ(iec104_client_create(nullptr, &cb, &c), IEC104_OK);
+    ASSERT_EQ(iec104_client_connect(c, "127.0.0.1", iec104_server_port(s)), IEC104_OK);
+    ASSERT_TRUE(run_until(s, c, [&] { return r.state == IEC104_LINK_STOPPED; }));
+    ASSERT_EQ(iec104_client_start(c), IEC104_OK);
+    ASSERT_TRUE(run_until(s, c, [&] { return r.state == IEC104_LINK_STARTED; }));
+    r.objects.clear();
+
+    ASSERT_EQ(iec104_client_read(c, 1, 100), IEC104_OK);
+    ASSERT_TRUE(run_until(s, c, [&] { return !r.objects.empty(); }));
+    EXPECT_EQ(r.objects[0].first.type, 13U);
+    EXPECT_EQ(r.objects[0].first.cause, IEC104_COT_REQUEST);
+    EXPECT_EQ(r.objects[0].first.negative, 0U);
+    EXPECT_DOUBLE_EQ(r.objects[0].second.value, 2.5);
+
+    r.objects.clear();
+    iec104_object read{};
+    read.type = 102;
+    read.ioa = 999;
+    ASSERT_EQ(iec104_client_send_command(c, 1, &read), IEC104_OK);
+    ASSERT_TRUE(run_until(s, c, [&] { return !r.objects.empty(); }));
+    EXPECT_EQ(r.objects[0].first.type, 102U);
+    EXPECT_EQ(r.objects[0].first.cause, IEC104_COT_UNKNOWN_IOA);
+    EXPECT_EQ(r.objects[0].first.negative, 1U);
+
+    iec104_client_destroy(c);
+    iec104_server_destroy(s);
+}
+
+// Rule: server options are checked before anything is applied; the cause of
+// initialization has 7 bits.
+TEST(ServerOptions, RangeCheckedBeforeApplying) {
+    iec104_server* s = nullptr;
+    ASSERT_EQ(iec104_server_create(nullptr, nullptr, &s), IEC104_OK);
+    iec104_server_options o{};
+    iec104_server_options_init(&o);
+    o.cause_of_init = 127;
+    EXPECT_EQ(iec104_server_set_options(s, &o), IEC104_OK);
+    o.cause_of_init = 128;
+    EXPECT_EQ(iec104_server_set_options(s, &o), IEC104_ERR_OUT_OF_RANGE);
+    o.cause_of_init = 0;
+    o.event_buffer_size = 0;
+    EXPECT_EQ(iec104_server_set_options(s, &o), IEC104_ERR_OUT_OF_RANGE);
+    iec104_server_destroy(s);
+}

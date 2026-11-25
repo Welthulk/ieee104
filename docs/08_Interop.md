@@ -68,7 +68,7 @@ Alles Folgende steht in der Interoperabilitätsliste der Gegenstelle (Abschnitt 
 
 ### 5.2 Ablauf
 
-1. Werte aus 5.1 in eine Konfigurationsdatei übernehmen: Vorlage `tools/interop/gegenstelle.conf`.
+1. Werte aus 5.1 in eine Konfigurationsdatei übernehmen: Vorlage `tools/interop/gegenstelle.conf`. Daraus die eigene Interoperabilitätsliste erzeugen und neben die der Gegenstelle legen: `iec104_interop_list --config gegenstelle.conf --role station --format csv > eigene_liste.csv` (Rolle `master` für die Leitstelle); Abweichungen klären, bevor getestet wird.
 2. Verbindung und Abläufe mit den Selbsttest-Programmen prüfen, bevor die Anwendung beteiligt ist:
 
    | Gegenstelle ist | Aufruf |

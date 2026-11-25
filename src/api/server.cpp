@@ -566,12 +566,15 @@ iec104_status iec104_server_set_options(iec104_server* server,
     if (server == nullptr || options == nullptr) {
         return IEC104_ERR_INVALID_ARGUMENT;
     }
+    // Check everything first: on error nothing is applied. COI is 7 bit
+    // (bit 8 is "parameters changed", not settable here).
+    if (options->cause_of_init > 127U || options->event_buffer_size == 0U ||
+        options->event_buffer_size > IEC104_MAX_EVENT_BUFFER) {
+        return IEC104_ERR_OUT_OF_RANGE;
+    }
     server->options.send_end_of_init = options->send_end_of_init != 0;
     server->options.command_termination = options->command_termination != 0;
     server->options.cause_of_init = options->cause_of_init;
-    if (options->event_buffer_size == 0U || options->event_buffer_size > IEC104_MAX_EVENT_BUFFER) {
-        return IEC104_ERR_OUT_OF_RANGE;
-    }
     server->options.max_command_delay_ms = options->max_command_delay_ms;
     server->own_group.capacity = options->event_buffer_size;
     server->own_group.overflow = options->overflow == IEC104_OVERFLOW_REJECT

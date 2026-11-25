@@ -161,6 +161,7 @@ if(IEC104_BUILD_TESTS)
         tests/test_cp56time2a.cpp
         tests/test_elements.cpp
         tests/test_operation.cpp
+        tests/test_interop_list.cpp
         tests/test_redundancy.cpp
         tests/test_session.cpp
         tests/test_tcp_loopback.cpp
@@ -168,7 +169,7 @@ if(IEC104_BUILD_TESTS)
         tests/test_type_table.cpp
         tests/test_values.cpp)
     # Tests use the internal C++ headers directly (sans-I/O, no network)
-    target_include_directories(iec104_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_include_directories(iec104_tests PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/tools)
     # Reference data (captures of foreign implementations), read at run time
     target_compile_definitions(iec104_tests PRIVATE
         IEC104_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
@@ -200,6 +201,20 @@ if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
         target_link_libraries(iec104_selftest_${role} PRIVATE iec104::iec104)
         iec104_set_warnings(iec104_selftest_${role} TRUE)
     endforeach()
+    # Interoperability list of the library (clause 9), see docs/09_Interoperabilitaetsliste.md.
+    add_executable(iec104_interop_list tools/interop_list/interop_list.cpp)
+    target_link_libraries(iec104_interop_list PRIVATE iec104::iec104)
+    iec104_set_warnings(iec104_interop_list TRUE)
+    set_target_properties(iec104_interop_list PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+    install(TARGETS iec104_interop_list RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    if(IEC104_BUILD_TESTS)
+        add_test(NAME Doc.InteropListUpToDate
+            COMMAND ${CMAKE_COMMAND} -DTOOL=$<TARGET_FILE:iec104_interop_list>
+                    -DDOC=${PROJECT_SOURCE_DIR}/docs/09_Interoperabilitaetsliste.md
+                    -P ${PROJECT_SOURCE_DIR}/cmake/check_interop_list.cmake)
+    endif()
+
     # Installed programs find the library next to them (bin/../lib), wherever the tree is unpacked.
     set_target_properties(iec104_selftest_server iec104_selftest_client PROPERTIES
         INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
@@ -270,6 +285,26 @@ if(IEC104_BUILD_EXAMPLES AND NOT IEC104_BUILD_FUZZERS)
             COMMAND ${PROJECT_SOURCE_DIR}/tools/check_install.sh ${CMAKE_BINARY_DIR}
                     ${PROJECT_SOURCE_DIR})
         set_tests_properties(Examples.HelloWorldInstalled PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# API documentation (Doxygen): target "doc", output <build>/doc/html
+# ---------------------------------------------------------------------------
+find_package(Doxygen QUIET)
+if(DOXYGEN_FOUND)
+    configure_file(cmake/Doxyfile.in ${CMAKE_BINARY_DIR}/Doxyfile @ONLY)
+    add_custom_target(doc
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/doc
+        COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_BINARY_DIR}/Doxyfile
+        COMMENT "API documentation: ${CMAKE_BINARY_DIR}/doc/html/index.html"
+        VERBATIM)
+    if(IEC104_BUILD_TESTS)
+        add_test(NAME Doc.NoDoxygenWarnings
+            COMMAND ${CMAKE_COMMAND} -DDOXYGEN=${DOXYGEN_EXECUTABLE}
+                    -DDOXYFILE=${CMAKE_BINARY_DIR}/Doxyfile
+                    -DLOG=${CMAKE_BINARY_DIR}/doc/warnings.log
+                    -P ${PROJECT_SOURCE_DIR}/cmake/check_doxygen.cmake)
     endif()
 endif()
 

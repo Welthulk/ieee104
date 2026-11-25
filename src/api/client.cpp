@@ -28,7 +28,8 @@ using namespace iec104;
 
 namespace {
 constexpr std::uint32_t kClientLinkId = 1;
-}
+constexpr std::uint8_t kReadType = 102; // C_RD_NA_1
+} // namespace
 
 struct iec104_client : api::CallbackSink {
     iec104_client(const apci::ApciConfig& c, const iec104_link_config& link,
@@ -178,6 +179,11 @@ struct iec104_client : api::CallbackSink {
         const iec104_status st = api::to_codec(command, o);
         if (st != IEC104_OK) {
             return st;
+        }
+        if (command.type == kReadType) {
+            // A read is a request (cause 5), answered by the point itself, not
+            // by a confirmation: nothing to follow.
+            return send_object(common_address, IEC104_COT_REQUEST, o, kReadType);
         }
         const iec104_status sent =
             send_object(common_address, IEC104_COT_ACTIVATION, o, command.type);
@@ -341,6 +347,16 @@ iec104_status iec104_client_set_options(iec104_client* client,
     client->timeouts.termination_ms = options->termination_timeout_ms;
     client->timeouts.expect_termination = options->expect_termination != 0;
     return IEC104_OK;
+}
+
+iec104_status iec104_client_read(iec104_client* client, uint16_t common_address, uint32_t ioa) {
+    if (client == nullptr) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    iec104_object read{};
+    read.type = kReadType;
+    read.ioa = ioa;
+    return client->send_tracked(common_address, read, false);
 }
 
 iec104_status iec104_client_interrogation(iec104_client* client, uint16_t common_address,

@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 SOPTIM AG
+# SPDX-License-Identifier: LicenseRef-Proprietary
+# Author: Udo Schmitz (SOPTIM AG)
+# All rights reserved by SOPTIM AG.
+#
+# API documentation: the public header plus README and docs/ as pages.
+# Configured by CMake (target "doc"); output in <build>/doc/html/index.html.
+# Only keys known to Doxygen 1.9.1 (AlmaLinux 9).
+
+PROJECT_NAME           = "IEC 60870-5-104 Library"
+PROJECT_NUMBER         = @PROJECT_VERSION@
+OUTPUT_DIRECTORY       = @CMAKE_BINARY_DIR@/doc
+OUTPUT_LANGUAGE        = English
+INPUT                  = @PROJECT_SOURCE_DIR@/include/iec104/iec104.h \
+                         @PROJECT_SOURCE_DIR@/README.md \
+                         @PROJECT_SOURCE_DIR@/docs
+FILE_PATTERNS          = *.h *.md
+RECURSIVE              = NO
+INPUT_ENCODING         = UTF-8
+USE_MDFILE_AS_MAINPAGE = @PROJECT_SOURCE_DIR@/README.md
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES
+TOC_INCLUDE_HEADINGS   = 3
+FULL_PATH_NAMES        = YES
+STRIP_FROM_PATH        = @PROJECT_SOURCE_DIR@
+OPTIMIZE_OUTPUT_FOR_C  = YES
+TYPEDEF_HIDES_STRUCT   = NO
+EXTRACT_ALL            = NO
+EXTRACT_STATIC         = NO
+EXTRACT_PRIVATE        = NO
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = IEC104_API=
+SOURCE_BROWSER         = NO
+VERBATIM_HEADERS       = YES
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_TREEVIEW      = YES
+HAVE_DOT               = NO
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = NO
+WARN_AS_ERROR          = NO
+WARN_LOGFILE           = @CMAKE_BINARY_DIR@/doc/warnings.log

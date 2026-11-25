@@ -36,7 +36,7 @@ julia julia/gui/iec104_gui.jl                                                   
 | Sicherheit | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3: gegenseitige Authentifizierung, Sperrlisten, Prüfung von Name oder Fingerprint, Key Update und Renegotiation, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse; Abweisung unbekannter Absender |
 | Betrieb | Log mit Stufen bis zum APDU-Hexdump, Statistik je Verbindung und Gruppe, Konfigurationsdatei, kein interner Thread (Poll im Thread der Anwendung) |
 | Einbindung | stabile C-Schnittstelle (ein Header), statisch oder geteilt, `find_package(iec104)`, Anbindung für Julia per `ccall`; fertig gebaute Library |
-| Werkzeuge | Test-GUI im Browser (Leitstelle und Station); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870 |
+| Werkzeuge | Test-GUI im Browser (Leitstelle und Station); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870; Interoperabilitätsliste für die eigene Konfiguration (`iec104_interop_list`, Markdown oder CSV) |
 
 ## Tests
 
@@ -46,7 +46,7 @@ julia julia/gui/iec104_gui.jl                                                   
 | Referenzdaten | Mitschnitte einer fremden Implementierung, auch über TLS (`tests/data/`); jede APDU wird dekodiert und bitgenau neu kodiert |
 | Selbsttest | Server und Client über TCP, über TLS und mit Umschaltung einer Redundanzgruppe, als Teil von `ctest` (162 Fälle gesamt) |
 | Sanitizer | alle Tests mit AddressSanitizer und UBSan (Preset `asan`) |
-| Statische Analyse | clang-tidy ohne Befunde, Übersetzung mit `-Werror` |
+| Statische Analyse | clang-tidy ohne Befunde, Übersetzung mit `-Werror`; API-Doku ohne Doxygen-Warnungen (Test `Doc.NoDoxygenWarnings`) |
 | Fuzzing | libFuzzer für Codec, Zustandsmaschine und Abläufe der Station |
 | Interop | gegen lib60870 als fremde Gegenstelle, mit und ohne TLS: `tools/interop/run_lib60870.sh`, Ergebnisse in `docs/08_Interop.md` |
 
@@ -62,6 +62,8 @@ julia julia/gui/iec104_gui.jl                                                   
 | `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Redundanz, TLS, Regeln |
 | `docs/07_Julia.md` | Library aus Julia verwenden: Schnellstart, Typen, Callbacks, Beispiele |
 | `docs/08_Interop.md` | Tests gegen eine fremde Implementierung, Befunde, Vorbereitung des Integrationstests mit einer Gegenstelle |
+| `docs/09_Interoperabilitaetsliste.md` | Interoperabilitätsliste nach Abschnitt 9 der Norm (Standardwerte), erzeugt mit `iec104_interop_list` |
+| API-Doku | `cmake --build --preset debug --target doc`, dann `build/debug/doc/html/index.html` (Doxygen) |
 
 ## Verzeichnisse
 

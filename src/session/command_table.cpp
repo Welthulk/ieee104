@@ -55,6 +55,11 @@ iec104_status CommandTable::set(std::uint16_t common_address, std::uint32_t ioa,
     return IEC104_OK;
 }
 
+bool CommandTable::has_station(std::uint16_t common_address) const {
+    const auto it = points_.lower_bound({common_address, 0U});
+    return it != points_.end() && it->first.first == common_address;
+}
+
 const CommandPoint* CommandTable::find(std::uint16_t common_address, std::uint32_t ioa) const {
     const auto it = points_.find({common_address, ioa});
     return it != points_.end() ? &it->second : nullptr;

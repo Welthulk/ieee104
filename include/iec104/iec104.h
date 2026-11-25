@@ -157,8 +157,10 @@ IEC104_API const char* iec104_status_string(iec104_status status);
  *
  * Ranges: t0..t2 1..255 s, t3 1 s .. 48 h or 0 = off (only with tolerant = 1),
  * k and w 1..32767. t2 < t1 and w <= 2/3 k are recommended; violations are
- * accepted (the library reports them nowhere yet). The field lengths of the
- * ASDU deviate from 2/2/3 only for peers outside the standard.
+ * accepted and logged as warnings (iec104_server_set_log(),
+ * iec104_client_set_log()). The field lengths of the ASDU are 2/2/3 in
+ * IEC 104; other lengths are a deliberate setting for peers outside the
+ * standard and are accepted also in strict mode.
  */
 typedef struct iec104_link_config {
     uint32_t t0_ms; /**< Time-out of connection establishment, default 30000. */
@@ -347,39 +349,44 @@ IEC104_API int64_t iec104_time_to_unix_ms(const iec104_time* time);
 #define IEC104_FLAG_PARAMETERS_CHANGED                                                             \
     0x01U /**< End of initialization (70): after parameter change. */
 
+/* The table is kept out of automatic reformatting: re-wrapping destroys it. */
+/* clang-format off */
 /**
  * @brief One information object as a value.
  *
- * Which fields are used depends on @ref type:
+ * Which fields are used depends on iec104_object::type:
  *
- * | type                         | value                      | other fields |
- * |------------------------------|----------------------------|-------------------------------------|
- * | 1, 30 single point           | 0 off, 1 on                | quality | | 3, 31 double point |
- * 0..3 (1 off, 2 on)         | quality                             | | 5, 32 step position |
- * -64..63                    | quality, flags TRANSIENT            | | 7, 33 bitstring | - | bits,
- * quality                       | | 9, 34 normalized             | -1.0 .. 1.0 - 2^-15        |
- * quality                             | | 11, 35 scaled                | -32768..32767 | quality |
- * | 13, 36 short float           | float                      | quality | | 15, 37 integrated
- * totals     | counter, 32 bit signed     | qualifier = sequence 0..31,         | | | | flags
- * CARRY/ADJUSTED, quality IV    | | 21 normalized, no quality    | -1.0 .. 1.0 - 2^-15        | - |
- * | 45, 58 single command        | 0 off, 1 on                | qualifier = QU 0..31, select | |
- * 46, 59 double command        | 1 off, 2 on                | qualifier = QU, select              |
- * | 47, 60 regulating step       | 1 lower, 2 higher          | qualifier = QU, select | | 48, 61
- * set point normalized  | -1.0 .. 1.0 - 2^-15        | qualifier = QL 0..127, select       | | 49,
- * 62 set point scaled      | -32768..32767              | qualifier = QL, select              | |
- * 50, 63 set point float       | float                      | qualifier = QL, select              |
- * | 51, 64 bitstring command     | -                          | bits | | 70 end of initialization
- * | -                          | qualifier = cause 0..127, flags     | | 100 interrogation | - |
- * qualifier = QOI (20 station, 21..36 group 1..16) | | 101 counter interrogation    | - | qualifier
- * = RQT (1..4 group, 5 all), bits = FRZ 0..3 | | 102 read                     | - | - | | 103 clock
- * synchronization    | -                          | time                                | | 105
- * reset process            | -                          | qualifier = QRP                     | |
- * 107 test with time tag       | test sequence counter      | time                                |
+ * | type                       | value                  | other fields                                      |
+ * |----------------------------|------------------------|---------------------------------------------------|
+ * | 1, 30 single point         | 0 off, 1 on            | quality                                           |
+ * | 3, 31 double point         | 0..3 (1 off, 2 on)     | quality                                           |
+ * | 5, 32 step position        | -64..63                | quality, flags TRANSIENT                          |
+ * | 7, 33 bitstring            | -                      | bits, quality                                     |
+ * | 9, 34 normalized           | -1.0 .. 1.0 - 2^-15    | quality                                           |
+ * | 11, 35 scaled              | -32768..32767          | quality                                           |
+ * | 13, 36 short float         | float                  | quality                                           |
+ * | 15, 37 integrated totals   | counter, 32 bit signed | qualifier = sequence 0..31, flags CARRY/ADJUSTED, quality IV |
+ * | 21 normalized, no quality  | -1.0 .. 1.0 - 2^-15    | -                                                 |
+ * | 45, 58 single command      | 0 off, 1 on            | qualifier = QU 0..31, select                      |
+ * | 46, 59 double command      | 1 off, 2 on            | qualifier = QU, select                            |
+ * | 47, 60 regulating step     | 1 lower, 2 higher      | qualifier = QU, select                            |
+ * | 48, 61 set point normalized| -1.0 .. 1.0 - 2^-15    | qualifier = QL 0..127, select                     |
+ * | 49, 62 set point scaled    | -32768..32767          | qualifier = QL, select                            |
+ * | 50, 63 set point float     | float                  | qualifier = QL, select                            |
+ * | 51, 64 bitstring command   | -                      | bits                                              |
+ * | 70 end of initialization   | -                      | qualifier = cause 0..127, flags                   |
+ * | 100 interrogation          | -                      | qualifier = QOI (20 station, 21..36 group 1..16)  |
+ * | 101 counter interrogation  | -                      | qualifier = RQT (1..4 group, 5 all), bits = FRZ 0..3 |
+ * | 102 read                   | -                      | - (sent with cause 5, see iec104_client_read())   |
+ * | 103 clock synchronization  | -                      | time                                              |
+ * | 105 reset process          | -                      | qualifier = QRP                                   |
+ * | 107 test with time tag     | test sequence counter  | time                                              |
  *
- * Types 30..37, 58..64 and 107 carry @ref time as time tag. Other types
- * (e.g. CP24Time2a types, parameters, protection events) are available as
- * raw ASDUs (on_asdu, *_send_asdu).
+ * Types 30..37, 58..64 and 107 carry iec104_object::time as time tag. Other
+ * types (e.g. CP24Time2a types, parameters, protection events) are available
+ * as raw ASDUs (on_asdu, *_send_asdu).
  */
+/* clang-format on */
 typedef struct iec104_object {
     uint8_t type;      /**< Type identification, e.g. 13 = M_ME_NC_1. */
     uint32_t ioa;      /**< Information object address, 0..16777215. */
@@ -515,7 +522,10 @@ typedef enum iec104_log_level {
 
 /**
  * @brief Receives one log message (English, one line, without newline).
+ * @param user The pointer given to iec104_server_set_log() / iec104_client_set_log().
+ * @param level Level of the message.
  * @param connection Connection id, 0 for messages that concern no connection.
+ * @param message The text, valid only during the call.
  */
 typedef void (*iec104_log_fn)(void* user, iec104_log_level level, uint32_t connection,
                               const char* message);
@@ -567,6 +577,7 @@ IEC104_API iec104_status iec104_server_create(const iec104_link_config* config,
 /**
  * @brief Starts listening.
  *
+ * @param server The server.
  * @param address Local address to bind to; NULL or "" = all addresses.
  * @param port    TCP port; IEC104_DEFAULT_PORT is the standard, 0 = any free port.
  * @return IEC104_OK; IEC104_ERR_WRONG_STATE if already listening;
@@ -582,6 +593,7 @@ IEC104_API uint16_t iec104_server_port(const iec104_server* server);
 /**
  * @brief Does all pending work: accept, receive, timers, send, callbacks.
  *
+ * @param server The server.
  * @param timeout_ms Maximum time to wait for activity; 0 = do not wait.
  *                   The call returns earlier when a timer is due.
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL; IEC104_ERR_IO if poll() fails.
@@ -591,6 +603,9 @@ IEC104_API iec104_status iec104_server_poll(iec104_server* server, int timeout_m
 /**
  * @brief Sends an ASDU on one connection, or on all started connections.
  *
+ * @param server The server.
+ * @param asdu Complete ASDU (data unit identifier and objects), encoded by the caller.
+ * @param length Octets of @p asdu, 1..249.
  * @param connection Connection id from a callback, or 0 = all started connections.
  * @return IEC104_OK (for 0: sent on at least one connection);
  *         IEC104_ERR_INVALID_ARGUMENT for NULL or a bad length;
@@ -604,7 +619,6 @@ IEC104_API iec104_status iec104_server_send_asdu(iec104_server* server, uint32_t
 /** @brief Number of open connections. */
 IEC104_API size_t iec104_server_connection_count(const iec104_server* server);
 
-/** @brief Behaviour of the server's application layer. */
 /** @brief What happens when an event arrives at a full event buffer. */
 /* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
 typedef enum iec104_overflow {
@@ -612,6 +626,7 @@ typedef enum iec104_overflow {
     IEC104_OVERFLOW_REJECT = 1       /**< The new event is rejected: IEC104_ERR_WOULD_BLOCK. */
 } iec104_overflow;
 
+/** @brief Behaviour of the server's application layer (iec104_server_set_options()). */
 typedef struct iec104_server_options {
     /** 1 (default) = send end of initialization (type 70, cause 4) on the first STARTDT
      *  of every connection after the server was created. */
@@ -637,7 +652,8 @@ IEC104_API void iec104_server_options_init(iec104_server_options* options);
 /**
  * @brief Applies options.
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL; IEC104_ERR_OUT_OF_RANGE
- *         for an event buffer size outside 1..IEC104_MAX_EVENT_BUFFER.
+ *         for cause_of_init above 127 or an event buffer size outside
+ *         1..IEC104_MAX_EVENT_BUFFER. On error nothing is changed.
  */
 IEC104_API iec104_status iec104_server_set_options(iec104_server* server,
                                                    const iec104_server_options* options);
@@ -681,6 +697,8 @@ IEC104_API void iec104_group_config_init(iec104_group_config* config);
  * at once (logged as warning). Without any group, every connection is a
  * group of its own (buffer from ::iec104_server_options).
  *
+ * @param server The server.
+ * @param config Settings of the group.
  * @param group Receives the id of the group (1, 2, ...); may be NULL.
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL or an address
  *         without NUL; IEC104_ERR_OUT_OF_RANGE for a buffer size outside
@@ -723,6 +741,7 @@ IEC104_API uint32_t iec104_server_connection_group(const iec104_server* server,
  * address and IOA. Points with a time tag type (30..37) are stored as their
  * type without time tag and answered as such in an interrogation.
  *
+ * @param server The server.
  * @param common_address Station address, 1..65534 (the common address must be known
  *                       to the server; unknown addresses are answered with cause 46).
  * @param point          Initial value; type 1, 3, 5, 7, 9, 11, 13, 15, 21 or 30..37.
@@ -755,6 +774,11 @@ typedef enum iec104_command_model {
  *     less than @p select_timeout_ms ago; a deactivation (cause 8) cancels
  *     the selection.
  *
+ * @param server The server.
+ * @param common_address Station of the command point.
+ * @param ioa Information object address of the command point.
+ * @param model Direct execute or select before operate.
+ * @param select_timeout_ms Validity of a selection (select before operate), ms.
  * @param type Command type 45..51 or 58..64 the point accepts.
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, a type that is not a
  *         command, or select-execute for a bitstring command (51, 64).
@@ -769,11 +793,14 @@ IEC104_API iec104_status iec104_server_add_command(iec104_server* server, uint16
  *
  * The object may carry the time tag variant of the point's type (e.g. 36
  * for a point added as 13); it is sent as given, the image keeps the value.
- * Connections that are not started do not receive it (no buffering yet).
+ * The event goes into the buffer of every redundancy group (see
+ * iec104_server_add_group()) and stays there until the active connection
+ * has acknowledged it; without a started connection it waits there.
  *
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT if the point is unknown or
  *         the type does not fit; IEC104_ERR_OUT_OF_RANGE for a bad value;
- *         IEC104_ERR_WOULD_BLOCK if the send queue of a connection is full.
+ *         IEC104_ERR_WOULD_BLOCK if a group buffer is full and set to
+ *         IEC104_OVERFLOW_REJECT.
  */
 IEC104_API iec104_status iec104_server_update(iec104_server* server, uint16_t common_address,
                                               const iec104_object* object);
@@ -783,6 +810,11 @@ IEC104_API iec104_status iec104_server_update(iec104_server* server, uint16_t co
  *
  * Long lists are split into several ASDUs. Objects are not stored in the image.
  *
+ * @param server The server.
+ * @param common_address Station of the objects.
+ * @param cause Cause of transmission, e.g. IEC104_COT_PERIODIC.
+ * @param objects Objects of one type.
+ * @param count Number of @p objects.
  * @param connection Connection id, or 0 = all started connections.
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, count 0, mixed or
  *         unsupported types; IEC104_ERR_OUT_OF_RANGE for a bad value;
@@ -852,6 +884,7 @@ IEC104_API iec104_status iec104_client_create(const iec104_link_config* config,
 /**
  * @brief Starts connecting; completion is reported by the state callback (STOPPED).
  *
+ * @param client The client.
  * @param host Name or address of the server.
  * @param port TCP port, e.g. IEC104_DEFAULT_PORT.
  * @return IEC104_OK; IEC104_ERR_WRONG_STATE if a connection exists;
@@ -924,6 +957,18 @@ IEC104_API iec104_status iec104_client_send_command(iec104_client* client, uint1
 IEC104_API iec104_status iec104_client_select_execute(iec104_client* client,
                                                       uint16_t common_address,
                                                       const iec104_object* command);
+
+/**
+ * @brief Read command (type 102, cause 5 "request") for one information object.
+ *
+ * The station answers with the object itself (its type, cause 5) via
+ * on_object, or negatively with cause 47 (unknown IOA) or 46 (unknown
+ * station). A read has no confirmation and is not followed by
+ * on_command_result. iec104_client_send_command() with type 102 does the same.
+ * @return As iec104_client_send_command().
+ */
+IEC104_API iec104_status iec104_client_read(iec104_client* client, uint16_t common_address,
+                                            uint32_t ioa);
 
 /** @brief General (qoi 20) or group (21..36) interrogation; results via on_object. */
 IEC104_API iec104_status iec104_client_interrogation(iec104_client* client, uint16_t common_address,
@@ -1020,6 +1065,8 @@ IEC104_API void iec104_config_init(iec104_config* config);
  *
  * Relative file names are relative to the directory of the configuration file.
  *
+ * @param path Configuration file.
+ * @param config Receives the values; keys not in the file keep their value.
  * @param error_line Receives the line number of the first error (0 if none); may be NULL.
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, an unknown key or
  *         a malformed line; IEC104_ERR_OUT_OF_RANGE for a value outside its

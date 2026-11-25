@@ -147,9 +147,11 @@ class ServerSession {
 
     /**
      * @brief Handles a received ASDU.
-     * @return true if the session handled it (a request or a rejected ASDU);
-     *         false if it is data for the application (monitor direction,
-     *         private type, malformed), which the caller passes on.
+     * @return true if the session handled it (a request, a rejected ASDU, or
+     *         a malformed body, which is dropped: the caller has already
+     *         passed the raw ASDU on); false if it is data for the
+     *         application (monitor direction, private type, unreadable
+     *         header), which the caller passes on as objects.
      */
     bool handle(const std::uint8_t* asdu, std::size_t length, const StationContext& station,
                 CommandHandler& handler);
@@ -198,6 +200,8 @@ class ServerSession {
         codec::AsduHeader header{};     // job: header of the data ASDUs
     };
 
+    [[nodiscard]] bool known_station(std::uint16_t common_address, std::uint8_t type,
+                                     const StationContext& station) const;
     void answer(const std::uint8_t* asdu, std::size_t length, std::uint8_t cause, bool negative);
     void push_ready(std::vector<std::uint8_t> asdu);
     void push_encoded(const codec::AsduHeader& header, const codec::InformationObject& object);

@@ -1,5 +1,14 @@
 # Änderungen
 
+## In Arbeit (nächste Lieferung)
+
+| Bereich | Änderung |
+| --- | --- |
+| Interop | `iec104_interop_list`: Interoperabilitätsliste nach Abschnitt 9 für Rolle und Konfiguration, Markdown oder CSV; `docs/09_Interoperabilitaetsliste.md` für die Standardwerte, Test hält sie aktuell |
+| Doku | API-Doku mit Doxygen (Ziel `doc`), öffentlicher Header ohne Warnungen (Test `Doc.NoDoxygenWarnings`); Typentabelle bei `iec104_object` repariert |
+| Client | `iec104_client_read()`; Lesebefehl (102) jetzt mit Ursache 5 statt 6 (vorher von jeder Station abgelehnt) |
+| Server | Station ist auch über ihre Befehlspunkte bekannt (vorher Ursache 46 ohne Datenpunkte); `iec104_server_set_options` prüft `cause_of_init` (≤ 127) und übernimmt bei Fehler nichts |
+
 ## 0.5.0 (25.11.2026)
 
 | Bereich | Änderung |

@@ -546,3 +546,23 @@ TEST(ServerCommands, TableChecks) {
     EXPECT_NE(t.find(1, 1), nullptr);
     EXPECT_EQ(t.find(2, 1), nullptr);
 }
+
+// Rule (N10): a station is known by its data points or by its command
+// points; a station with command points only accepts commands, an unknown
+// station is answered with cause 46.
+TEST(ServerCommands, StationWithCommandPointsOnly) {
+    CommandFixture f;
+    ASSERT_EQ(f.commands.set(7, 100, CommandPoint{45, CommandModel::Direct, 0}), IEC104_OK);
+    codec::InformationObject sc{};
+    sc.ioa = 100;
+    sc.sco.on = true;
+    auto a = f.step(request(45, 6, 7, sc)); // station 7 has no data points
+    ASSERT_EQ(a.size(), 2U);
+    EXPECT_EQ(a[0].header.cause, 7U);
+    EXPECT_FALSE(a[0].header.negative);
+    EXPECT_EQ(a[1].header.cause, 10U);
+    a = f.step(request(45, 6, 8, sc)); // station 8: neither data nor command points
+    ASSERT_EQ(a.size(), 1U);
+    EXPECT_EQ(a[0].header.cause, 46U);
+    EXPECT_TRUE(a[0].header.negative);
+}

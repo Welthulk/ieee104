@@ -63,6 +63,9 @@ class CommandTable {
     /** @brief True if no command point is defined. */
     [[nodiscard]] bool empty() const { return points_.empty(); }
 
+    /** @brief True if at least one command point belongs to @p common_address. */
+    [[nodiscard]] bool has_station(std::uint16_t common_address) const;
+
   private:
     std::map<std::pair<std::uint16_t, std::uint32_t>, CommandPoint> points_;
 };
