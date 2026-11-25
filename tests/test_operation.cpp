@@ -209,3 +209,55 @@ TEST(Operation, ConfigWarningsAreLogged) {
     EXPECT_TRUE(log.contains("warning 0 configuration: t2 is not below t1"));
     iec104_server_destroy(server);
 }
+
+// Rule: TLS keys fill iec104_config.tls; relative file names are relative to
+// the directory of the configuration file, absolute ones stay.
+TEST(ConfigFile, TlsKeys) {
+    const std::string path = write_file("tls.conf", R"(tls = yes
+port = 19998
+tls_ca = pki/ca.pem
+tls_certificate = /etc/pki/server.pem
+tls_key = pki/server.key
+tls_key_password = secret
+tls_crl = pki/crl.pem
+tls_peer_name = station1.example
+tls_peer_fingerprint = AB:CD
+tls_min_version = 1.3
+tls_max_version = 1.3
+tls_ciphers = ECDHE-ECDSA-AES128-GCM-SHA256
+tls_ciphersuites = TLS_AES_256_GCM_SHA384
+tls_verify_peer = 1
+tls_renegotiation = off
+tls_session_resumption = no
+tls_renewal_interval = 3600
+tls_session_lifetime = 600
+)");
+    iec104_config c{};
+    iec104_config_init(&c);
+    EXPECT_EQ(c.use_tls, 0);
+    EXPECT_EQ(c.tls.min_version, IEC104_TLS_1_2);
+    int line = -1;
+    ASSERT_EQ(iec104_config_load(path.c_str(), &c, &line), IEC104_OK) << line;
+    const std::string dir = testing::TempDir(); // ends with '/'
+    EXPECT_EQ(c.use_tls, 1);
+    EXPECT_EQ(c.port, 19998U);
+    EXPECT_EQ(std::string(c.tls.ca_file), dir.substr(0, dir.size() - 1U) + "/pki/ca.pem");
+    EXPECT_STREQ(c.tls.certificate_file, "/etc/pki/server.pem");
+    EXPECT_EQ(std::string(c.tls.private_key_file),
+              dir.substr(0, dir.size() - 1U) + "/pki/server.key");
+    EXPECT_STREQ(c.tls.key_password, "secret");
+    EXPECT_STREQ(c.tls.peer_name, "station1.example");
+    EXPECT_STREQ(c.tls.peer_fingerprint, "AB:CD");
+    EXPECT_EQ(c.tls.min_version, IEC104_TLS_1_3);
+    EXPECT_EQ(c.tls.max_version, IEC104_TLS_1_3);
+    EXPECT_STREQ(c.tls.cipher_list, "ECDHE-ECDSA-AES128-GCM-SHA256");
+    EXPECT_STREQ(c.tls.cipher_suites, "TLS_AES_256_GCM_SHA384");
+    EXPECT_EQ(c.tls.renegotiation, 0);
+    EXPECT_EQ(c.tls.session_resumption, 0);
+    EXPECT_EQ(c.tls.renewal_interval_s, 3600U);
+    EXPECT_EQ(c.tls.session_lifetime_s, 600U);
+
+    const std::string bad = write_file("tls_bad.conf", "tls_min_version = 1.1\n");
+    EXPECT_EQ(iec104_config_load(bad.c_str(), &c, &line), IEC104_ERR_INVALID_ARGUMENT);
+    EXPECT_EQ(line, 1);
+}

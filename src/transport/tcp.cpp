@@ -187,7 +187,11 @@ std::uint16_t local_port(const Socket& socket) noexcept {
 
 iec104_status read_some(const Socket& socket, std::uint8_t* buf, std::size_t size,
                         std::size_t& read) noexcept {
-    const ssize_t n = ::recv(socket.fd(), buf, size, 0);
+    return read_some(socket.fd(), buf, size, read);
+}
+
+iec104_status read_some(int fd, std::uint8_t* buf, std::size_t size, std::size_t& read) noexcept {
+    const ssize_t n = ::recv(fd, buf, size, 0);
     if (n > 0) {
         read = static_cast<std::size_t>(n);
         return IEC104_OK;
@@ -203,11 +207,16 @@ iec104_status read_some(const Socket& socket, std::uint8_t* buf, std::size_t siz
 
 iec104_status write_some(const Socket& socket, const std::uint8_t* data, std::size_t size,
                          std::size_t& written) noexcept {
+    return write_some(socket.fd(), data, size, written);
+}
+
+iec104_status write_some(int fd, const std::uint8_t* data, std::size_t size,
+                         std::size_t& written) noexcept {
     written = 0;
     if (size == 0U) {
         return IEC104_OK;
     }
-    const ssize_t n = ::send(socket.fd(), data, size, MSG_NOSIGNAL);
+    const ssize_t n = ::send(fd, data, size, MSG_NOSIGNAL);
     if (n >= 0) {
         written = static_cast<std::size_t>(n);
         return IEC104_OK;

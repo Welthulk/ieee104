@@ -7,5 +7,11 @@
 # iec104::iec104 (include directory and library).
 @PACKAGE_INIT@
 
+# TLS: the library links OpenSSL (a static library passes it on).
+if(@IEC104_TLS@)
+    include(CMakeFindDependencyMacro)
+    find_dependency(OpenSSL 3.0)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/iec104Targets.cmake")
 check_required_components(iec104)

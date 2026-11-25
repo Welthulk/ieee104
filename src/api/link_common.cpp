@@ -17,7 +17,11 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <climits>
+#include <cstdint>
+#include <cstring>
 #include <poll.h>
+#include <utility>
 
 namespace iec104::api {
 
@@ -65,6 +69,8 @@ iec104_close_reason to_c(transport::LinkCloseReason reason, apci::CloseReason pr
         return IEC104_CLOSE_T0_TIMEOUT;
     case transport::LinkCloseReason::SocketError:
         return IEC104_CLOSE_SOCKET_ERROR;
+    case transport::LinkCloseReason::TlsError:
+        return IEC104_CLOSE_TLS;
     case transport::LinkCloseReason::Protocol:
         break;
     }
@@ -106,6 +112,112 @@ void CallbackSink::on_frame(std::uint32_t id, bool outgoing, const std::uint8_t*
         logger_.write(IEC104_LOG_TRACE, id,
                       std::string(outgoing ? "sent " : "received ") + Logger::hex(apdu, length));
     }
+}
+
+void CallbackSink::on_tls(std::uint32_t id, transport::TlsEvent event, const std::string& text) {
+    iec104_security_event e = IEC104_SECURITY_TLS_ERROR;
+    iec104_log_level level = IEC104_LOG_ERROR;
+    switch (event) {
+    case transport::TlsEvent::Established:
+        e = IEC104_SECURITY_TLS_ESTABLISHED;
+        level = IEC104_LOG_INFO;
+        break;
+    case transport::TlsEvent::HandshakeFailed:
+        e = IEC104_SECURITY_HANDSHAKE_FAILED;
+        break;
+    case transport::TlsEvent::CertificateRejected:
+        e = IEC104_SECURITY_CERTIFICATE_REJECTED;
+        break;
+    case transport::TlsEvent::Error:
+        e = IEC104_SECURITY_TLS_ERROR;
+        break;
+    case transport::TlsEvent::Renewal:
+        e = IEC104_SECURITY_KEY_RENEWAL;
+        level = IEC104_LOG_DEBUG;
+        break;
+    }
+    logger_.write(level, id, std::string(iec104_security_event_string(e)) + ": " + text);
+    if (callbacks_.on_security != nullptr) {
+        callbacks_.on_security(callbacks_.user, id, e, text.c_str());
+    }
+}
+
+namespace {
+
+// Copies a C string field of bounded size (the field may lack the NUL).
+template <std::size_t N>
+std::string field(const char (&text)[N]) { // NOLINT(*-avoid-c-arrays): field of a C struct
+    const auto* begin = static_cast<const char*>(text);
+    const auto* end = static_cast<const char*>(std::memchr(begin, '\0', N));
+    return {begin, end != nullptr ? static_cast<std::size_t>(end - begin) : N};
+}
+
+template <std::size_t N>
+void put(char (&out)[N], // NOLINT(*-avoid-c-arrays): field of a C struct
+         const std::string& text) noexcept {
+    const std::size_t n = std::min(text.size(), N - 1U);
+    std::memcpy(static_cast<char*>(out), text.data(), n);
+    out[n] = '\0';
+}
+
+transport::TlsSettings to_settings(const iec104_tls_config& c) {
+    transport::TlsSettings t;
+    t.ca_file = field(c.ca_file);
+    t.certificate_file = field(c.certificate_file);
+    t.private_key_file = field(c.private_key_file);
+    t.key_password = field(c.key_password);
+    t.crl_file = field(c.crl_file);
+    t.peer_name = field(c.peer_name);
+    t.peer_fingerprint = field(c.peer_fingerprint);
+    t.cipher_list = field(c.cipher_list);
+    t.cipher_suites = field(c.cipher_suites);
+    t.min_version = c.min_version;
+    t.max_version = c.max_version;
+    t.verify_peer = c.verify_peer != 0;
+    t.renegotiation = c.renegotiation != 0;
+    t.renewal_interval_ms =
+        c.renewal_interval_s > UINT32_MAX / 1000U ? UINT32_MAX : c.renewal_interval_s * 1000U;
+    t.session_resumption = c.session_resumption != 0;
+    t.session_lifetime_s = c.session_lifetime_s;
+    return t;
+}
+
+} // namespace
+
+iec104_status make_tls_context(transport::TlsRole role, const iec104_tls_config* config,
+                               const Logger& logger, std::shared_ptr<transport::TlsContext>& out) {
+    if (config == nullptr) {
+        out.reset();
+        logger.write(IEC104_LOG_INFO, 0, "TLS off for new connections");
+        return IEC104_OK;
+    }
+    std::shared_ptr<transport::TlsContext> ctx;
+    std::string error;
+    const iec104_status st = transport::create_tls_context(role, to_settings(*config), ctx, error);
+    if (st != IEC104_OK) {
+        logger.write(IEC104_LOG_ERROR, 0, "TLS settings: " + error);
+        return st;
+    }
+    if (config->verify_peer == 0) {
+        logger.write(IEC104_LOG_WARNING, 0, "TLS: peer is not verified (verify_peer = 0)");
+    }
+    out = std::move(ctx);
+    logger.write(IEC104_LOG_INFO, 0, "TLS on for new connections");
+    return IEC104_OK;
+}
+
+bool copy_tls_info(const transport::Link& link, iec104_tls_info& out) noexcept {
+    transport::TlsInfo info;
+    if (!link.tls_info(info)) {
+        return false;
+    }
+    out = iec104_tls_info{};
+    put(out.version, info.version);
+    put(out.cipher, info.cipher);
+    put(out.peer_subject, info.peer_subject);
+    put(out.peer_fingerprint, info.peer_fingerprint);
+    out.resumed = info.resumed ? 1 : 0;
+    return true;
 }
 
 void log_config_warnings(const apci::ApciConfig& config, const Logger& logger) {

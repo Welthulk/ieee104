@@ -82,6 +82,13 @@ std::uint64_t now_ms() {
            (static_cast<std::uint64_t>(ts.tv_nsec) / 1000000U);
 }
 
+void on_security(void* user, std::uint32_t id, iec104_security_event event, const char* detail) {
+    const auto* self = static_cast<const Client*>(user);
+    if (self->opt.common.verbose || event != IEC104_SECURITY_KEY_RENEWAL) {
+        selftest::print_security(id, event, detail);
+    }
+}
+
 void on_state(void* user, std::uint32_t /*id*/, iec104_link_state state,
               iec104_close_reason reason) {
     auto* c = static_cast<Client*>(user);
@@ -303,6 +310,7 @@ int main(int argc, char** argv) {
     iec104_callbacks cb{};
     cb.user = &c;
     cb.on_state = on_state;
+    cb.on_security = on_security;
     cb.on_object = on_object;
     cb.on_command_result = on_command_result;
     iec104_status st = iec104_client_create(&c.opt.common.link, &cb, &c.handle);
@@ -314,6 +322,13 @@ int main(int argc, char** argv) {
     if (c.opt.common.log_level >= 0) {
         iec104_client_set_log(c.handle, static_cast<iec104_log_level>(c.opt.common.log_level),
                               selftest::print_log, nullptr);
+    }
+    if (c.opt.common.use_tls &&
+        (st = iec104_client_set_tls(c.handle, &c.opt.common.tls)) != IEC104_OK) {
+        std::fprintf(stderr, "TLS settings: %s (details with --log error)\n",
+                     iec104_status_string(st));
+        iec104_client_destroy(c.handle);
+        return 2;
     }
     const auto ca = static_cast<std::uint16_t>(c.opt.ca);
     const std::uint64_t step_ms = c.opt.timeout_s * 1000U;
@@ -375,6 +390,12 @@ int main(int argc, char** argv) {
         iec104_client_destroy(c.handle);
         std::printf("result: FAILED\n");
         return 1;
+    }
+    if (c.opt.common.use_tls) {
+        iec104_tls_info tls{};
+        (void)iec104_client_get_tls_info(c.handle, &tls);
+        step("TLS", tls.version[0] != '\0',
+             std::string(tls.version) + ", " + tls.cipher + ", peer " + tls.peer_subject);
     }
     ok = iec104_client_start(c.handle) == IEC104_OK &&
          wait_for(c, step_ms, [&] { return c.state == IEC104_LINK_STARTED; });

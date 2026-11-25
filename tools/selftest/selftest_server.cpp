@@ -72,6 +72,13 @@ iec104_object make(std::uint8_t type, std::uint32_t ioa, double value) {
     return o;
 }
 
+void on_security(void* user, std::uint32_t id, iec104_security_event event, const char* detail) {
+    const auto* self = static_cast<const Server*>(user);
+    if (self->opt.common.verbose || event != IEC104_SECURITY_KEY_RENEWAL) {
+        selftest::print_security(id, event, detail);
+    }
+}
+
 void on_state(void* user, std::uint32_t id, iec104_link_state state, iec104_close_reason reason) {
     auto* s = static_cast<Server*>(user);
     Peer& p = s->peers[id];
@@ -235,6 +242,7 @@ int main(int argc, char** argv) {
     cb.user = &s;
     cb.on_asdu = on_asdu;
     cb.on_state = on_state;
+    cb.on_security = on_security;
     cb.on_object = on_object;
     cb.on_command = on_command;
     iec104_status st = iec104_server_create(&s.opt.common.link, &cb, &s.handle);
@@ -253,6 +261,13 @@ int main(int argc, char** argv) {
     if (s.opt.common.log_level >= 0) {
         iec104_server_set_log(s.handle, static_cast<iec104_log_level>(s.opt.common.log_level),
                               selftest::print_log, nullptr);
+    }
+    if (s.opt.common.use_tls &&
+        (st = iec104_server_set_tls(s.handle, &s.opt.common.tls)) != IEC104_OK) {
+        std::fprintf(stderr, "TLS settings: %s (details with --log error)\n",
+                     iec104_status_string(st));
+        iec104_server_destroy(s.handle);
+        return 2;
     }
     st = iec104_server_listen(s.handle, s.opt.common.host.c_str(), s.opt.common.port);
     if (st != IEC104_OK) {

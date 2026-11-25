@@ -14,6 +14,8 @@
  */
 #include "iec104/iec104.h"
 
+#include "transport/tls.hpp"
+
 /*
  * The build system passes the project version (CMakeLists.txt, project()) as
  * IEC104_VERSION_STRING. The fallback only exists so that the file still
@@ -148,7 +150,7 @@ const char* iec104_close_reason_string(iec104_close_reason reason) {
     case IEC104_CLOSE_CONNECT_FAILED:
         return "connect failed";
     case IEC104_CLOSE_T0_TIMEOUT:
-        return "t0 timeout (connect)";
+        return "t0 timeout (connect or TLS handshake)";
     case IEC104_CLOSE_T1_TIMEOUT:
         return "t1 timeout (no acknowledgement)";
     case IEC104_CLOSE_SEQUENCE_ERROR:
@@ -161,8 +163,46 @@ const char* iec104_close_reason_string(iec104_close_reason reason) {
         return "unexpected frame";
     case IEC104_CLOSE_SOCKET_ERROR:
         return "socket error";
+    case IEC104_CLOSE_TLS:
+        return "TLS failure";
     }
     return "unknown reason";
+}
+
+const char* iec104_security_event_string(iec104_security_event event) {
+    switch (event) {
+    case IEC104_SECURITY_TLS_ESTABLISHED:
+        return "TLS established";
+    case IEC104_SECURITY_HANDSHAKE_FAILED:
+        return "TLS handshake failed";
+    case IEC104_SECURITY_CERTIFICATE_REJECTED:
+        return "peer certificate rejected";
+    case IEC104_SECURITY_TLS_ERROR:
+        return "TLS error";
+    case IEC104_SECURITY_KEY_RENEWAL:
+        return "key renewal";
+    }
+    return "unknown event";
+}
+
+void iec104_tls_config_init(iec104_tls_config* config) {
+    if (config == nullptr) {
+        return;
+    }
+    // Defaults of the profile: docs/05_Normfragen_und_Festlegungen.md, N12.
+    const iec104::transport::TlsSettings defaults{};
+    *config = iec104_tls_config{};
+    config->min_version = defaults.min_version;
+    config->max_version = defaults.max_version;
+    config->verify_peer = defaults.verify_peer ? 1 : 0;
+    config->renegotiation = defaults.renegotiation ? 1 : 0;
+    config->renewal_interval_s = defaults.renewal_interval_ms / 1000U;
+    config->session_resumption = defaults.session_resumption ? 1 : 0;
+    config->session_lifetime_s = defaults.session_lifetime_s;
+}
+
+int iec104_tls_available(void) {
+    return iec104::transport::tls_available() ? 1 : 0;
 }
 
 } // extern "C"

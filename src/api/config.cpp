@@ -85,15 +85,111 @@ template <typename T> iec104_status parse_small(const std::string& text, unsigne
     return st;
 }
 
-/** @brief Applies one key; IEC104_ERR_INVALID_ARGUMENT for an unknown key. */
-iec104_status apply(const std::string& key, const std::string& value, iec104_config& c) {
-    iec104_link_config& l = c.link;
-    if (key == "host") {
-        if (value.size() >= sizeof c.host) {
-            return IEC104_ERR_OUT_OF_RANGE;
-        }
-        std::memcpy(static_cast<char*>(c.host), value.c_str(), value.size() + 1U);
+/** @brief Copies @p value into a fixed-size text field of the C structure. */
+template <std::size_t N>
+iec104_status parse_text(const std::string& value,
+                         char (&out)[N]) { // NOLINT(*-avoid-c-arrays): field of a C struct
+    if (value.size() >= N) {
+        return IEC104_ERR_OUT_OF_RANGE;
+    }
+    std::memcpy(static_cast<char*>(out), value.c_str(), value.size() + 1U);
+    return IEC104_OK;
+}
+
+/** @brief A file name; relative names are taken relative to @p base (directory of the file). */
+template <std::size_t N>
+iec104_status parse_path(const std::string& value, const std::string& base,
+                         char (&out)[N]) { // NOLINT(*-avoid-c-arrays): field of a C struct
+    if (value.empty() || value[0] == '/' || base.empty()) {
+        return parse_text(value, out);
+    }
+    return parse_text(base + "/" + value, out);
+}
+
+/** @brief "1.2" or "1.3". */
+iec104_status parse_tls_version(const std::string& text, std::uint16_t& out) {
+    if (text == "1.2") {
+        out = IEC104_TLS_1_2;
         return IEC104_OK;
+    }
+    if (text == "1.3") {
+        out = IEC104_TLS_1_3;
+        return IEC104_OK;
+    }
+    return IEC104_ERR_INVALID_ARGUMENT;
+}
+
+/** @brief Whole seconds. */
+iec104_status parse_whole_seconds(const std::string& text, std::uint32_t& out) {
+    return parse_small(text, 7UL * 24UL * 3600UL, out); // at most one week
+}
+
+/** @brief Applies one TLS key ("tls_..."); IEC104_ERR_INVALID_ARGUMENT for an unknown key. */
+iec104_status apply_tls(const std::string& key, const std::string& value, const std::string& base,
+                        iec104_tls_config& t) {
+    if (key == "tls_ca") {
+        return parse_path(value, base, t.ca_file);
+    }
+    if (key == "tls_certificate") {
+        return parse_path(value, base, t.certificate_file);
+    }
+    if (key == "tls_key") {
+        return parse_path(value, base, t.private_key_file);
+    }
+    if (key == "tls_crl") {
+        return parse_path(value, base, t.crl_file);
+    }
+    if (key == "tls_key_password") {
+        return parse_text(value, t.key_password);
+    }
+    if (key == "tls_peer_name") {
+        return parse_text(value, t.peer_name);
+    }
+    if (key == "tls_peer_fingerprint") {
+        return parse_text(value, t.peer_fingerprint);
+    }
+    if (key == "tls_ciphers") {
+        return parse_text(value, t.cipher_list);
+    }
+    if (key == "tls_ciphersuites") {
+        return parse_text(value, t.cipher_suites);
+    }
+    if (key == "tls_min_version") {
+        return parse_tls_version(value, t.min_version);
+    }
+    if (key == "tls_max_version") {
+        return parse_tls_version(value, t.max_version);
+    }
+    if (key == "tls_verify_peer") {
+        return parse_flag(value, t.verify_peer);
+    }
+    if (key == "tls_renegotiation") {
+        return parse_flag(value, t.renegotiation);
+    }
+    if (key == "tls_session_resumption") {
+        return parse_flag(value, t.session_resumption);
+    }
+    if (key == "tls_renewal_interval") {
+        return parse_whole_seconds(value, t.renewal_interval_s);
+    }
+    if (key == "tls_session_lifetime") {
+        return parse_whole_seconds(value, t.session_lifetime_s);
+    }
+    return IEC104_ERR_INVALID_ARGUMENT;
+}
+
+/** @brief Applies one key; IEC104_ERR_INVALID_ARGUMENT for an unknown key. */
+iec104_status apply(const std::string& key, const std::string& value, const std::string& base,
+                    iec104_config& c) {
+    iec104_link_config& l = c.link;
+    if (key == "tls") {
+        return parse_flag(value, c.use_tls);
+    }
+    if (key.compare(0, 4, "tls_") == 0) {
+        return apply_tls(key, value, base, c.tls);
+    }
+    if (key == "host") {
+        return parse_text(value, c.host);
     }
     if (key == "port") {
         return parse_small(value, 65535, c.port);
@@ -170,6 +266,7 @@ void iec104_config_init(iec104_config* config) {
     iec104_link_config_init(&config->link);
     iec104_server_options_init(&config->server);
     iec104_client_options_init(&config->client);
+    iec104_tls_config_init(&config->tls);
     config->port = IEC104_DEFAULT_PORT;
 }
 
@@ -186,6 +283,9 @@ iec104_status iec104_config_load(const char* path, iec104_config* config, int* e
     }
     // Work on a copy, so that a broken file leaves the caller's config unchanged.
     iec104_config c = *config;
+    const std::string file(path);
+    const std::size_t slash = file.rfind('/');
+    const std::string base = slash == std::string::npos ? std::string() : file.substr(0, slash);
     std::string line;
     int number = 0;
     while (std::getline(in, line)) {
@@ -198,7 +298,7 @@ iec104_status iec104_config_load(const char* path, iec104_config* config, int* e
         const std::size_t eq = text.find('=');
         iec104_status st = IEC104_ERR_INVALID_ARGUMENT;
         if (eq != std::string::npos) {
-            st = apply(trim(text.substr(0, eq)), trim(text.substr(eq + 1U)), c);
+            st = apply(trim(text.substr(0, eq)), trim(text.substr(eq + 1U)), base, c);
         }
         if (st != IEC104_OK) {
             if (error_line != nullptr) {

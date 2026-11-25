@@ -15,8 +15,17 @@
  * It reads from the socket into the state machine, writes the state
  * machine's output to the socket, drives the timers with the monotonic
  * clock, and hands the events to a sink (the C API layer). It also covers
- * the connection set-up of the client with time-out t0, which the sans-I/O
- * state machine does not know about.
+ * the connection set-up, which the sans-I/O state machine does not know
+ * about:
+ *
+ * | Phase       | Ends when                        | Time limit |
+ * |-------------|----------------------------------|------------|
+ * | Connecting  | TCP connect complete (client)    | t0         |
+ * | Handshaking | TLS handshake complete (if TLS)  | t0 (E9)    |
+ * | Open        | close                            | t1..t3     |
+ *
+ * With TLS (tls.hpp) every octet goes through the TLS session instead of
+ * the socket; the state machine sees the same plain APDUs either way.
  *
  * Layer: transport (I/O).
  */
@@ -24,10 +33,12 @@
 
 #include "apci/connection.hpp"
 #include "transport/tcp.hpp"
+#include "transport/tls.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 namespace iec104::transport {
@@ -38,8 +49,18 @@ enum class LinkCloseReason : std::uint8_t {
     Protocol,      ///< The state machine closed; see apci::CloseReason.
     PeerClosed,    ///< The peer closed the TCP connection.
     ConnectFailed, ///< The TCP connect failed (refused, unreachable).
-    T0Timeout,     ///< The TCP connect did not complete within t0.
+    T0Timeout,     ///< TCP connect or TLS handshake not complete within t0.
     SocketError,   ///< A read or write failed.
+    TlsError,      ///< TLS handshake failed or TLS error on the open connection.
+};
+
+/** @brief Security events of a TLS link (reported with a text). */
+enum class TlsEvent : std::uint8_t {
+    Established,         ///< Handshake complete; text: version, suite, peer, resumed.
+    HandshakeFailed,     ///< Handshake failed or did not complete within t0.
+    CertificateRejected, ///< The peer certificate was rejected; text: reason.
+    Error,               ///< TLS error on the open connection; text: reason.
+    Renewal,             ///< This side started a key update or renegotiation.
 };
 
 /** @brief Receiver of what happens on a link (implemented by the API layer). */
@@ -61,6 +82,8 @@ class LinkSink {
     /** @brief A complete APDU was sent or received on link @p id (for a raw data trace). */
     virtual void on_frame(std::uint32_t /*id*/, bool /*outgoing*/, const std::uint8_t* /*apdu*/,
                           std::size_t /*length*/) {}
+    /** @brief A security event on TLS link @p id. */
+    virtual void on_tls(std::uint32_t /*id*/, TlsEvent /*event*/, const std::string& /*text*/) {}
 };
 
 /** @brief A TCP connection plus its state machine (see file comment). */
@@ -68,19 +91,23 @@ class Link {
   public:
     /**
      * @brief Sets up a link for an accepted socket (server side, already connected).
-     * @return Status of apci::Connection::init().
+     * @param tls TLS context of the server, NULL for plain TCP.
+     * @return Status of apci::Connection::init() or of the TLS session.
      */
     iec104_status init_accepted(std::uint32_t id, const apci::ApciConfig& config, Socket socket,
-                                apci::TimeMs now) noexcept;
+                                apci::TimeMs now,
+                                std::shared_ptr<TlsContext> tls = nullptr) noexcept;
 
     /**
      * @brief Sets up a link for a socket with a connect in progress (client side).
+     * @param tls TLS context of the client, NULL for plain TCP.
      * @return Status of apci::Connection::init().
      */
     iec104_status init_connecting(std::uint32_t id, const apci::ApciConfig& config, Socket socket,
-                                  apci::TimeMs now) noexcept;
+                                  apci::TimeMs now,
+                                  std::shared_ptr<TlsContext> tls = nullptr) noexcept;
 
-    /** @brief Events for poll(): POLLIN always, POLLOUT while connecting or output is pending. */
+    /** @brief Events for poll(): depend on the phase and on what TLS waits for. */
     [[nodiscard]] short poll_events() const noexcept;
 
     /** @brief Handles the poll() result for this link and runs the timers. */
@@ -105,7 +132,12 @@ class Link {
     [[nodiscard]] bool closed() const noexcept { return close_reason_ != LinkCloseReason::None; }
     /** @brief True once the close has been reported to the sink; the link can be removed. */
     [[nodiscard]] bool finished() const noexcept { return reported_closed_; }
-    [[nodiscard]] bool connecting() const noexcept { return connecting_; }
+    /** @brief True until the connection is open (TCP connect and TLS handshake done). */
+    [[nodiscard]] bool connecting() const noexcept { return phase_ != Phase::Open; }
+    /** @brief True if the link runs over TLS. */
+    [[nodiscard]] bool secured() const noexcept { return tls_ != nullptr; }
+    /** @brief TLS details of an open TLS link; false for plain TCP or before the handshake. */
+    bool tls_info(TlsInfo& out) const;
     [[nodiscard]] apci::State state() const noexcept { return conn_.state(); }
     [[nodiscard]] bool can_send() const noexcept { return conn_.can_send(); }
     /** @brief Frame and octet counters of the state machine. */
@@ -120,6 +152,15 @@ class Link {
     }
 
   private:
+    enum class Phase : std::uint8_t { Connecting, Handshaking, Open };
+
+    iec104_status start_tls_or_open(apci::TimeMs now) noexcept;
+    bool continue_connect(short revents, apci::TimeMs now, LinkSink& sink) noexcept;
+    bool continue_handshake(apci::TimeMs now, LinkSink& sink) noexcept;
+    void renew_keys(apci::TimeMs now, LinkSink& sink) noexcept;
+    iec104_status io_read(std::uint8_t* buf, std::size_t size, std::size_t& n) noexcept;
+    iec104_status io_write(const std::uint8_t* data, std::size_t size, std::size_t& n) noexcept;
+    [[nodiscard]] LinkCloseReason io_failure(iec104_status st) const noexcept;
     void read_input(apci::TimeMs now, LinkSink& sink) noexcept;
     void dispatch_events(LinkSink& sink) noexcept;
     void flush_output() noexcept;
@@ -130,8 +171,12 @@ class Link {
     std::uint32_t id_{0};
     Socket socket_;
     apci::Connection conn_;
-    bool connecting_{false};
-    apci::TimeMs connect_deadline_{0};
+    Phase phase_{Phase::Connecting};
+    apci::TimeMs setup_deadline_{0}; // end of connect and handshake (t0)
+    // TLS: the context outlives the session (declared first, destroyed last).
+    std::shared_ptr<TlsContext> tls_context_;
+    std::unique_ptr<TlsSession> tls_;
+    apci::TimeMs next_renewal_{apci::kNoDeadline};
     LinkCloseReason close_reason_{LinkCloseReason::None};
     apci::CloseReason protocol_reason_{apci::CloseReason::None};
     bool reported_closed_{false};

@@ -134,6 +134,13 @@ iec104_status read_some(const Socket& socket, std::uint8_t* buf, std::size_t siz
 iec104_status write_some(const Socket& socket, const std::uint8_t* data, std::size_t size,
                          std::size_t& written) noexcept;
 
+/** @brief read_some() on a plain descriptor (used by the TLS backend underneath TLS). */
+iec104_status read_some(int fd, std::uint8_t* buf, std::size_t size, std::size_t& read) noexcept;
+
+/** @brief write_some() on a plain descriptor (used by the TLS backend underneath TLS). */
+iec104_status write_some(int fd, const std::uint8_t* data, std::size_t size,
+                         std::size_t& written) noexcept;
+
 /** @brief Monotonic time in milliseconds (CLOCK_MONOTONIC), the clock of the APCI layer. */
 std::uint64_t monotonic_ms() noexcept;
 

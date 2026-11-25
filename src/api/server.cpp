@@ -59,6 +59,7 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
     codec::AsduProfile profile;
     std::uint8_t originator;
     transport::Socket listener;
+    std::shared_ptr<transport::TlsContext> tls; // NULL = plain TCP; for new connections
     std::vector<std::unique_ptr<transport::Link>> links;
     std::map<std::uint32_t, session::ServerSession> sessions;
     session::ProcessImage image;
@@ -84,8 +85,8 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
                 return;
             }
             auto link = std::make_unique<transport::Link>();
-            if (link->init_accepted(next_id, config, std::move(s), transport::monotonic_ms()) ==
-                IEC104_OK) {
+            if (link->init_accepted(next_id, config, std::move(s), transport::monotonic_ms(),
+                                    tls) == IEC104_OK) {
                 link->set_trace(this);
                 logger().write(IEC104_LOG_INFO, next_id,
                                "connection accepted from " + link->peer());
@@ -444,6 +445,26 @@ iec104_status iec104_server_get_stats(const iec104_server* server, uint32_t conn
         }
         *out = s;
         return IEC104_OK;
+    }
+    return IEC104_ERR_WRONG_STATE;
+}
+
+iec104_status iec104_server_set_tls(iec104_server* server, const iec104_tls_config* config) {
+    if (server == nullptr) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    return api::make_tls_context(transport::TlsRole::Server, config, server->logger(), server->tls);
+}
+
+iec104_status iec104_server_get_tls_info(const iec104_server* server, uint32_t connection,
+                                         iec104_tls_info* out) {
+    if (server == nullptr || out == nullptr) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    for (const auto& link : server->links) {
+        if (link->id() == connection) {
+            return api::copy_tls_info(*link, *out) ? IEC104_OK : IEC104_ERR_WRONG_STATE;
+        }
     }
     return IEC104_ERR_WRONG_STATE;
 }

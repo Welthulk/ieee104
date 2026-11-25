@@ -22,6 +22,7 @@
 #include "codec/asdu.hpp"
 #include "iec104/iec104.h"
 #include "transport/link.hpp"
+#include "transport/tls.hpp"
 
 #include <memory>
 #include <vector>
@@ -51,6 +52,7 @@ class CallbackSink : public transport::LinkSink {
                    apci::CloseReason protocol_reason) override;
     void on_frame(std::uint32_t id, bool outgoing, const std::uint8_t* apdu,
                   std::size_t length) override;
+    void on_tls(std::uint32_t id, transport::TlsEvent event, const std::string& text) override;
 
     /** @brief The log output of this handle. */
     [[nodiscard]] Logger& logger() noexcept { return logger_; }
@@ -73,6 +75,18 @@ class CallbackSink : public transport::LinkSink {
     iec104_callbacks callbacks_{};
     Logger logger_;
 };
+
+/**
+ * @brief Builds the TLS context of a server or client from the C settings.
+ *
+ * @param config NULL = no TLS (out is reset).
+ * @return Status of transport::create_tls_context(); failures are logged as errors.
+ */
+iec104_status make_tls_context(transport::TlsRole role, const iec104_tls_config* config,
+                               const Logger& logger, std::shared_ptr<transport::TlsContext>& out);
+
+/** @brief TLS details of @p link into the C structure; false if the link is not open TLS. */
+bool copy_tls_info(const transport::Link& link, iec104_tls_info& out) noexcept;
 
 /** @brief Logs the violated recommendations of @p config (t2 < t1, w <= 2/3 k) as warnings. */
 void log_config_warnings(const apci::ApciConfig& config, const Logger& logger);

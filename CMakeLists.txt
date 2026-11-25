@@ -6,7 +6,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(iec104
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
     LANGUAGES C CXX)
 
@@ -19,6 +19,7 @@ option(IEC104_ENABLE_SANITIZERS    "Build with ASan and UBSan"                OF
 option(IEC104_WARNINGS_AS_ERRORS   "Treat warnings as errors (library code)"  ON)
 option(IEC104_ENABLE_CLANG_TIDY    "Run clang-tidy while compiling"           OFF)
 option(IEC104_BUILD_SELFTEST       "Build the self-test programs"             ON)
+option(IEC104_TLS                  "TLS support with OpenSSL 3.x"             ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -87,7 +88,19 @@ add_library(iec104_objects OBJECT
     src/session/process_image.cpp
     src/session/server_session.cpp
     src/transport/link.cpp
-    src/transport/tcp.cpp)
+    src/transport/tcp.cpp
+    src/transport/tls.cpp)
+# TLS backend (src/transport/tls.hpp): OpenSSL 3.x, or a stub without TLS.
+if(IEC104_TLS)
+    find_package(OpenSSL 3.0 REQUIRED)
+    target_sources(iec104_objects PRIVATE src/transport/tls_openssl.cpp)
+    # Only functions of OpenSSL 3.0, so that the library runs with every 3.x.
+    target_compile_definitions(iec104_objects PRIVATE OPENSSL_API_COMPAT=30000
+        OPENSSL_NO_DEPRECATED)
+    target_link_libraries(iec104_objects PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+else()
+    target_sources(iec104_objects PRIVATE src/transport/tls_none.cpp)
+endif()
 # The sources are compiled once; the library (static or shared, see
 # BUILD_SHARED_LIBS) is made from these objects. Tests and fuzzers link the
 # objects directly because they check internal functions.
@@ -116,6 +129,10 @@ set_target_properties(iec104 PROPERTIES
     LINKER_LANGUAGE CXX
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR})
+if(IEC104_TLS)
+    # Exported as link-only dependency of a static library (find_dependency in iec104Config).
+    target_link_libraries(iec104 PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()
 if(NOT BUILD_SHARED_LIBS)
     # A static library carries no dependencies: users that link with the C
     # compiler need the C++ runtime and libm explicitly.
@@ -145,6 +162,7 @@ if(IEC104_BUILD_TESTS)
         tests/test_operation.cpp
         tests/test_session.cpp
         tests/test_tcp_loopback.cpp
+        tests/test_tls.cpp
         tests/test_type_table.cpp
         tests/test_values.cpp)
     # Tests use the internal C++ headers directly (sans-I/O, no network)
@@ -155,6 +173,19 @@ if(IEC104_BUILD_TESTS)
     target_link_libraries(iec104_tests PRIVATE iec104_objects GTest::gtest GTest::gtest_main)
     iec104_set_warnings(iec104_tests FALSE)
     gtest_discover_tests(iec104_tests)
+
+    # Test PKI for the TLS tests and the self-test over TLS, made at build time.
+    set(IEC104_TEST_CERT_DIR ${CMAKE_BINARY_DIR}/tls)
+    if(IEC104_TLS)
+        add_custom_command(OUTPUT ${IEC104_TEST_CERT_DIR}/foreign.pem
+            COMMAND ${PROJECT_SOURCE_DIR}/tools/make_test_certs.sh ${IEC104_TEST_CERT_DIR}
+            DEPENDS ${PROJECT_SOURCE_DIR}/tools/make_test_certs.sh
+            COMMENT "Test certificates for TLS")
+        add_custom_target(iec104_test_certs DEPENDS ${IEC104_TEST_CERT_DIR}/foreign.pem)
+        add_dependencies(iec104_tests iec104_test_certs)
+    endif()
+    target_compile_definitions(iec104_tests PRIVATE
+        IEC104_TEST_CERT_DIR="${IEC104_TEST_CERT_DIR}")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -167,6 +198,9 @@ if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
         target_link_libraries(iec104_selftest_${role} PRIVATE iec104::iec104)
         iec104_set_warnings(iec104_selftest_${role} TRUE)
     endforeach()
+    # Installed programs find the library next to them (bin/../lib), wherever the tree is unpacked.
+    set_target_properties(iec104_selftest_server iec104_selftest_client PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
     install(TARGETS iec104_selftest_server iec104_selftest_client
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     if(IEC104_BUILD_TESTS)
@@ -174,6 +208,13 @@ if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
             COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
                     $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>)
         set_tests_properties(SelfTest.ServerAndClientOverTcp PROPERTIES TIMEOUT 90)
+        if(IEC104_TLS)
+            add_test(NAME SelfTest.ServerAndClientOverTls
+                COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
+                        $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>
+                        --tls ${IEC104_TEST_CERT_DIR})
+            set_tests_properties(SelfTest.ServerAndClientOverTls PROPERTIES TIMEOUT 90)
+        endif()
     endif()
 endif()
 
@@ -227,6 +268,9 @@ install(TARGETS iec104 EXPORT iec104Targets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES README.md CHANGELOG.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(DIRECTORY docs LICENSES examples DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(PROGRAMS tools/make_test_certs.sh DESTINATION ${CMAKE_INSTALL_DOCDIR}/tools)
 install(EXPORT iec104Targets NAMESPACE iec104:: DESTINATION ${IEC104_CMAKE_DIR})
 configure_package_config_file(cmake/iec104Config.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/iec104Config.cmake

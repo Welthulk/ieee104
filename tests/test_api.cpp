@@ -14,14 +14,17 @@
 
 #include <cstring>
 #include <gtest/gtest.h>
+#include <string>
 
-// Rule: the version string reported by the built library matches the project
-// version. Source: CMakeLists.txt (project VERSION 0.2.0) and the
-// IEC104_VERSION_* macros in iec104.h.
+// Rule: the version string reported by the built library (CMakeLists.txt,
+// project VERSION) matches the IEC104_VERSION_* macros in iec104.h.
 TEST(Api, VersionStringMatchesMacros) {
     const char* v = iec104_version_string();
     ASSERT_NE(v, nullptr);
-    EXPECT_STREQ(v, "0.2.0");
+    const std::string expected = std::to_string(IEC104_VERSION_MAJOR) + "." +
+                                 std::to_string(IEC104_VERSION_MINOR) + "." +
+                                 std::to_string(IEC104_VERSION_PATCH);
+    EXPECT_EQ(v, expected);
 }
 
 // Rule: iec104_status_string() never returns NULL, also for values that are

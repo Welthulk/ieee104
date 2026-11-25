@@ -66,11 +66,14 @@ struct CommonOptions {
     bool verbose{false};
     bool stats{false};
     int log_level{-1}; ///< -1 = no log output, else iec104_log_level
+    bool use_tls{false};
+    iec104_tls_config tls{};
 
     CommonOptions() {
         iec104_link_config_init(&link);
         iec104_server_options_init(&server);
         iec104_client_options_init(&client);
+        iec104_tls_config_init(&tls);
     }
 };
 
@@ -89,6 +92,8 @@ inline void load_config_option(int argc, char** argv, CommonOptions& o) {
         c.server = o.server;
         c.client = o.client;
         c.port = o.port;
+        c.use_tls = o.use_tls ? 1 : 0;
+        c.tls = o.tls;
         std::snprintf(c.host, sizeof c.host, "%s", o.host.c_str());
         int line = 0;
         const iec104_status st = iec104_config_load(argv[i + 1], &c, &line);
@@ -101,6 +106,8 @@ inline void load_config_option(int argc, char** argv, CommonOptions& o) {
         o.client = c.client;
         o.port = c.port;
         o.host = c.host;
+        o.use_tls = c.use_tls != 0;
+        o.tls = c.tls;
     }
 }
 
@@ -141,11 +148,18 @@ inline void print_common_help() {
                 "  --tolerant       accept known deviations of peers (default: strict)\n"
                 "  --config FILE    read parameters from FILE (key = value, see docs/06);\n"
                 "                   options on the command line override the file\n"
+                "  --tls            TLS (IEC 62351-3); the standard port is %d\n"
+                "  --tls-ca FILE --tls-cert FILE --tls-key FILE --tls-crl FILE\n"
+                "                   CA, own certificate and key, revocation list (PEM)\n"
+                "  --tls-peer-name NAME   expected name or address in the peer certificate\n"
+                "  --tls-fingerprint HEX  expected SHA-256 fingerprint of the peer certificate\n"
+                "  --tls-version V  highest TLS version: 1.2 or 1.3 (default 1.3)\n"
+                "  --tls-renewal S  key update / renegotiation every S seconds\n"
                 "  --log LEVEL      library log: error, warning, info, debug, trace\n"
                 "  --stats          print the counters of each connection at the end\n"
                 "  --verbose        print every state change and object\n"
                 "  --help           this text\n",
-                IEC104_DEFAULT_PORT);
+                IEC104_DEFAULT_PORT, IEC104_DEFAULT_TLS_PORT);
 }
 
 /** @brief Reads an unsigned number or exits with a message. */
@@ -157,6 +171,55 @@ inline unsigned long parse_number(const char* option, const char* text, unsigned
         std::exit(2);
     }
     return v;
+}
+
+/** @brief Copies @p text into a field of iec104_tls_config or exits if it is too long. */
+template <std::size_t N> void set_text(const char* option, const char* text, char (&field)[N]) {
+    const std::string t = text != nullptr ? text : "";
+    if (t.empty() || t.size() >= N) {
+        std::fprintf(stderr, "invalid value for %s\n", option);
+        std::exit(2);
+    }
+    std::snprintf(static_cast<char*>(field), N, "%s", t.c_str());
+}
+
+/** @brief Handles a --tls option; every one of them switches TLS on. */
+template <typename Value> bool parse_tls(const std::string& arg, Value&& value, CommonOptions& o) {
+    o.use_tls = true;
+    iec104_tls_config& t = o.tls;
+    if (arg == "--tls") {
+        return true;
+    }
+    if (arg == "--tls-ca") {
+        set_text("--tls-ca", value(), t.ca_file);
+    } else if (arg == "--tls-cert") {
+        set_text("--tls-cert", value(), t.certificate_file);
+    } else if (arg == "--tls-key") {
+        set_text("--tls-key", value(), t.private_key_file);
+    } else if (arg == "--tls-crl") {
+        set_text("--tls-crl", value(), t.crl_file);
+    } else if (arg == "--tls-peer-name") {
+        set_text("--tls-peer-name", value(), t.peer_name);
+    } else if (arg == "--tls-fingerprint") {
+        set_text("--tls-fingerprint", value(), t.peer_fingerprint);
+    } else if (arg == "--tls-version") {
+        const char* v = value();
+        const std::string version = v != nullptr ? v : "";
+        if (version == "1.2") {
+            t.max_version = IEC104_TLS_1_2;
+        } else if (version == "1.3") {
+            t.max_version = IEC104_TLS_1_3;
+        } else {
+            std::fprintf(stderr, "invalid value for --tls-version: %s\n", version.c_str());
+            std::exit(2);
+        }
+    } else if (arg == "--tls-renewal") {
+        t.renewal_interval_s =
+            static_cast<std::uint32_t>(parse_number("--tls-renewal", value(), 7UL * 24UL * 3600UL));
+    } else {
+        return false;
+    }
+    return true;
 }
 
 /**
@@ -206,10 +269,17 @@ inline bool parse_common(int argc, char** argv, int& i, CommonOptions& o) {
         o.link.tolerant = 1;
     } else if (arg == "--verbose") {
         o.verbose = true;
+    } else if (arg.compare(0, 5, "--tls") == 0) {
+        return parse_tls(arg, value, o);
     } else {
         return false;
     }
     return true;
+}
+
+/** @brief Prints a security event of a TLS connection (with --verbose). */
+inline void print_security(uint32_t connection, iec104_security_event event, const char* detail) {
+    std::printf("  %u: %s: %s\n", connection, iec104_security_event_string(event), detail);
 }
 
 /** @brief Prints an object in one line (for --verbose). */

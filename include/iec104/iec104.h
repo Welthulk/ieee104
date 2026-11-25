@@ -61,7 +61,7 @@ extern "C" {
 /** @brief Major version of this header. Incompatible API changes increment it. */
 #define IEC104_VERSION_MAJOR 0
 /** @brief Minor version of this header. Compatible additions increment it. */
-#define IEC104_VERSION_MINOR 2
+#define IEC104_VERSION_MINOR 3
 /** @brief Patch version of this header. Fixes without API change increment it. */
 #define IEC104_VERSION_PATCH 0
 
@@ -196,19 +196,105 @@ typedef enum iec104_close_reason {
     IEC104_CLOSE_LOCAL = 1,             /**< Closed by this side (close or destroy). */
     IEC104_CLOSE_PEER = 2,              /**< The peer closed the TCP connection. */
     IEC104_CLOSE_CONNECT_FAILED = 3,    /**< TCP connect refused or unreachable. */
-    IEC104_CLOSE_T0_TIMEOUT = 4,        /**< TCP connect not complete within t0. */
+    IEC104_CLOSE_T0_TIMEOUT = 4,        /**< TCP connect or TLS handshake not complete within t0. */
     IEC104_CLOSE_T1_TIMEOUT = 5,        /**< Frame not acknowledged/confirmed within t1. */
     IEC104_CLOSE_SEQUENCE_ERROR = 6,    /**< Received N(S) not as expected. */
     IEC104_CLOSE_ACK_OUT_OF_WINDOW = 7, /**< Received N(R) acknowledges frames never sent. */
     IEC104_CLOSE_MALFORMED = 8,         /**< The byte stream is not a valid APDU sequence. */
     IEC104_CLOSE_UNEXPECTED_FRAME = 9,  /**< Frame not allowed in the current state or role. */
-    IEC104_CLOSE_SOCKET_ERROR = 10      /**< A socket operation failed. */
+    IEC104_CLOSE_SOCKET_ERROR = 10,     /**< A socket operation failed. */
+    IEC104_CLOSE_TLS = 11               /**< TLS handshake failed or TLS error (see on_security). */
 } iec104_close_reason;
 
 /** @brief Short English name of a link state. Never NULL. */
 IEC104_API const char* iec104_link_state_string(iec104_link_state state);
 /** @brief Short English name of a close reason. Never NULL. */
 IEC104_API const char* iec104_close_reason_string(iec104_close_reason reason);
+
+/* ------------------------------------------------------------------------- */
+/* TLS (IEC 62351-3)                                                         */
+/* ------------------------------------------------------------------------- */
+
+/** @brief Size of the path fields of ::iec104_tls_config, including the terminating NUL. */
+#define IEC104_TLS_PATH_SIZE 512
+
+/** @brief TLS protocol versions. */
+/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
+typedef enum iec104_tls_version {
+    IEC104_TLS_1_2 = 0x0303, /**< TLS 1.2 (RFC 5246). */
+    IEC104_TLS_1_3 = 0x0304  /**< TLS 1.3 (RFC 8446). */
+} iec104_tls_version;
+
+/**
+ * @brief TLS settings of a server or client.
+ *
+ * Strings are NUL-terminated; "" means "not set". Files are PEM. The
+ * defaults (iec104_tls_config_init()) follow the TLS profile of IEC 62351-3
+ * as far as it is known (docs/05_Normfragen_und_Festlegungen.md, N12):
+ * mutual authentication, TLS 1.2 and 1.3, for TLS 1.2 only ECDHE suites
+ * with AEAD.
+ */
+typedef struct iec104_tls_config {
+    char ca_file[IEC104_TLS_PATH_SIZE];          /**< Trusted CA certificates; required. */
+    char certificate_file[IEC104_TLS_PATH_SIZE]; /**< Own certificate, then intermediates. */
+    char private_key_file[IEC104_TLS_PATH_SIZE]; /**< Private key of the own certificate. */
+    char key_password[128];                      /**< Password of an encrypted key, "" = none. */
+    char crl_file[IEC104_TLS_PATH_SIZE];         /**< Revocation lists, "" = no CRL check. */
+    /** Expected DNS name or IP address in the peer certificate, "" = no name check. */
+    char peer_name[256];
+    /** Expected SHA-256 fingerprint of the peer certificate (hex, colons optional), "" = any. */
+    char peer_fingerprint[128];
+    char cipher_list[512];   /**< TLS 1.2 suites (OpenSSL syntax), "" = default. */
+    char cipher_suites[256]; /**< TLS 1.3 suites (OpenSSL syntax), "" = default. */
+    uint16_t min_version;    /**< ::iec104_tls_version; default 1.2. */
+    uint16_t max_version;    /**< ::iec104_tls_version; default 1.3. */
+    /**
+     * 1 (default): the peer must present a valid certificate (server: client
+     * certificate required). 0 only for tests; IEC 62351-3 requires mutual
+     * authentication.
+     */
+    int verify_peer;
+    /** 1 (default): TLS 1.2 renegotiation allowed in both directions (always RFC 5746). */
+    int renegotiation;
+    /** Key renewal by this side every n seconds: key update (1.3), renegotiation (1.2); 0 = off. */
+    uint32_t renewal_interval_s;
+    int session_resumption;      /**< 1 (default): sessions can be resumed. */
+    uint32_t session_lifetime_s; /**< Lifetime of a resumable session; default 3600. */
+} iec104_tls_config;
+
+/** @brief Defaults (see ::iec104_tls_config); all files empty. Does nothing for NULL. */
+IEC104_API void iec104_tls_config_init(iec104_tls_config* config);
+
+/** @brief 1 if the library was built with TLS support, else 0. */
+IEC104_API int iec104_tls_available(void);
+
+/** @brief Security events of TLS connections (see on_security). */
+/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
+typedef enum iec104_security_event {
+    /** Handshake complete; detail: version, suite, peer subject, "resumed". */
+    IEC104_SECURITY_TLS_ESTABLISHED = 0,
+    /** Handshake failed or not complete within t0; detail: reason. */
+    IEC104_SECURITY_HANDSHAKE_FAILED = 1,
+    /** Peer certificate rejected (untrusted, expired, revoked, name, fingerprint); detail: reason.
+     */
+    IEC104_SECURITY_CERTIFICATE_REJECTED = 2,
+    /** TLS error on an open connection, e.g. an alert of the peer; detail: reason. */
+    IEC104_SECURITY_TLS_ERROR = 3,
+    /** This side started a key renewal; detail: "key update" or "renegotiation". */
+    IEC104_SECURITY_KEY_RENEWAL = 4
+} iec104_security_event;
+
+/** @brief Short English name of a security event. Never NULL. */
+IEC104_API const char* iec104_security_event_string(iec104_security_event event);
+
+/** @brief Details of an open TLS connection. */
+typedef struct iec104_tls_info {
+    char version[16];          /**< e.g. "TLSv1.3". */
+    char cipher[64];           /**< e.g. "TLS_AES_128_GCM_SHA256". */
+    char peer_subject[256];    /**< Subject of the peer certificate (RFC 2253), "" if none. */
+    char peer_fingerprint[96]; /**< SHA-256 of the peer certificate, "AB:CD:...". */
+    int resumed;               /**< 1 if an earlier session was resumed. */
+} iec104_tls_info;
 
 /* ------------------------------------------------------------------------- */
 /* Values: time, information objects, ASDU information                       */
@@ -401,6 +487,15 @@ typedef struct iec104_callbacks {
      */
     void (*on_command_result)(void* user, uint16_t common_address, const iec104_object* command,
                               iec104_command_result result);
+    /**
+     * @brief A security event of a TLS connection (see ::iec104_security_event).
+     *
+     * Failures are followed by the close of the connection with
+     * IEC104_CLOSE_TLS or IEC104_CLOSE_T0_TIMEOUT.
+     * @param detail Text, valid only during the call. Never NULL.
+     */
+    void (*on_security)(void* user, uint32_t connection, iec104_security_event event,
+                        const char* detail);
 } iec104_callbacks;
 
 /* ------------------------------------------------------------------------- */
@@ -624,6 +719,30 @@ IEC104_API void iec104_server_set_log(iec104_server* server, iec104_log_level ma
 IEC104_API iec104_status iec104_server_get_stats(const iec104_server* server, uint32_t connection,
                                                  iec104_link_stats* out);
 
+/**
+ * @brief Switches TLS on for connections accepted from now on.
+ *
+ * Loads CA, certificate, key and CRL at once. Can be called again at any
+ * time, e.g. to change the certificate: open connections keep their TLS
+ * session, new ones use the new settings. NULL switches TLS off for new
+ * connections. Errors are also logged with their reason.
+ *
+ * @return IEC104_OK; IEC104_ERR_IO if a file cannot be read;
+ *         IEC104_ERR_INVALID_ARGUMENT for inconsistent settings (key does not
+ *         match, no usable suite, no certificate); IEC104_ERR_UNSUPPORTED
+ *         without TLS support. On error the previous settings stay.
+ */
+IEC104_API iec104_status iec104_server_set_tls(iec104_server* server,
+                                               const iec104_tls_config* config);
+
+/**
+ * @brief TLS details of an open connection.
+ * @return IEC104_OK; IEC104_ERR_WRONG_STATE if the connection does not
+ *         exist, is not TLS or the handshake is not complete.
+ */
+IEC104_API iec104_status iec104_server_get_tls_info(const iec104_server* server,
+                                                    uint32_t connection, iec104_tls_info* out);
+
 /** @brief Closes all connections and the listening socket and frees the handle. NULL is ignored. */
 IEC104_API void iec104_server_destroy(iec104_server* server);
 
@@ -746,6 +865,19 @@ IEC104_API void iec104_client_set_log(iec104_client* client, iec104_log_level ma
 IEC104_API iec104_status iec104_client_get_stats(const iec104_client* client,
                                                  iec104_link_stats* out);
 
+/**
+ * @brief Uses TLS for the next connect (see iec104_server_set_tls()).
+ *
+ * A session of the previous connection is offered for resumption unless
+ * the settings changed in between.
+ */
+IEC104_API iec104_status iec104_client_set_tls(iec104_client* client,
+                                               const iec104_tls_config* config);
+
+/** @brief TLS details of the open connection (see iec104_server_get_tls_info()). */
+IEC104_API iec104_status iec104_client_get_tls_info(const iec104_client* client,
+                                                    iec104_tls_info* out);
+
 /* ------------------------------------------------------------------------- */
 /* Configuration file                                                        */
 /* ------------------------------------------------------------------------- */
@@ -757,6 +889,8 @@ typedef struct iec104_config {
     iec104_client_options client; /**< Client time limits. */
     char host[256];               /**< Address: server = bind address, client = peer. */
     uint16_t port;                /**< TCP port. */
+    int use_tls;                  /**< 1: apply @p tls with *_set_tls(). */
+    iec104_tls_config tls;        /**< TLS settings. */
 } iec104_config;
 
 /** @brief Defaults of all parts (standard values, host "", port 2404). Does nothing for NULL. */
@@ -777,6 +911,15 @@ IEC104_API void iec104_config_init(iec104_config* config);
  * | send_end_of_init, command_termination, cause_of_init | server |
  * | max_command_delay | server (s) |
  * | confirmation_timeout, termination_timeout, expect_termination | client (s) |
+ * | tls | use_tls |
+ * | tls_ca, tls_certificate, tls_key, tls_crl | tls (files) |
+ * | tls_key_password, tls_peer_name, tls_peer_fingerprint | tls |
+ * | tls_min_version, tls_max_version | tls ("1.2", "1.3") |
+ * | tls_ciphers, tls_ciphersuites | tls (cipher_list, cipher_suites) |
+ * | tls_verify_peer, tls_renegotiation, tls_session_resumption | tls |
+ * | tls_renewal_interval, tls_session_lifetime | tls (s) |
+ *
+ * Relative file names are relative to the directory of the configuration file.
  *
  * @param error_line Receives the line number of the first error (0 if none); may be NULL.
  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, an unknown key or

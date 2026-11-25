@@ -39,6 +39,7 @@ struct iec104_client : api::CallbackSink {
     apci::ApciConfig config;
     codec::AsduProfile profile;
     std::uint8_t originator;
+    std::shared_ptr<transport::TlsContext> tls; // NULL = plain TCP; keeps the session cache
     // A vector of at most one entry, so that the shared poll loop can be used.
     std::vector<std::unique_ptr<transport::Link>> links;
 
@@ -251,13 +252,14 @@ iec104_status iec104_client_connect(iec104_client* client, const char* host, uin
     }
     auto link = std::make_unique<transport::Link>();
     const iec104_status init = link->init_connecting(kClientLinkId, client->config, std::move(s),
-                                                     transport::monotonic_ms());
+                                                     transport::monotonic_ms(), client->tls);
     if (init != IEC104_OK) {
         return init;
     }
     link->set_trace(client);
     client->logger().write(IEC104_LOG_INFO, kClientLinkId,
-                           "connecting to " + std::string(host) + ":" + std::to_string(port));
+                           "connecting to " + std::string(host) + ":" + std::to_string(port) +
+                               (client->tls ? " (TLS)" : ""));
     client->links.push_back(std::move(link));
     client->had_connection = true;
     client->counters = iec104_link_stats{};
@@ -413,6 +415,22 @@ iec104_status iec104_client_get_stats(const iec104_client* client, iec104_link_s
     }
     *out = client->last_stats;
     return IEC104_OK;
+}
+
+iec104_status iec104_client_set_tls(iec104_client* client, const iec104_tls_config* config) {
+    if (client == nullptr) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    return api::make_tls_context(transport::TlsRole::Client, config, client->logger(), client->tls);
+}
+
+iec104_status iec104_client_get_tls_info(const iec104_client* client, iec104_tls_info* out) {
+    if (client == nullptr || out == nullptr) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    return !client->links.empty() && api::copy_tls_info(*client->links.front(), *out)
+               ? IEC104_OK
+               : IEC104_ERR_WRONG_STATE;
 }
 
 void iec104_client_destroy(iec104_client* client) {
