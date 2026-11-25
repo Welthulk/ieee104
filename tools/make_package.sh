@@ -7,6 +7,7 @@
 #
 # Aufruf: tools/make_package.sh            -> dist/iec104-<version>.zip
 #                                             dist/iec104-<vorige>-to-<version>.patch
+#                                             dist/iec104-<version>-linux-x86_64.zip
 #
 # Lieferungen sind mit Git-Tags lieferung-<version> markiert. Der Patch
 # enthält die Änderungen der Paketdateien seit der vorigen Lieferung und
@@ -22,6 +23,13 @@
 #   1. Begriffsliste mit tools/check_neutral.sh --root (Kunden, Projekte,
 #      Hersteller; erlaubt sind nur die SPDX-Kopfzeilen und LICENSES/);
 #   2. Verweise auf die internen Unterlagen und den Arbeitsablauf.
+#
+# Fertig gebaute Library: aus dem geprüften Quell-Zip gebaut (Release,
+# geteilt, mit TLS) und installiert: lib/, include/, bin/ (Selbsttest),
+# share/doc/iec104/. Geprüft werden die Zeichenketten der Binärdateien
+# (Begriffsliste, interne Verweise, Pfade des Bau-Rechners) und die
+# benötigten Symbolversionen, damit die Library auch auf älteren Systemen
+# läuft (glibc 2.34, OpenSSL 3.0, z. B. AlmaLinux 9, Ubuntu 22.04, WSL2).
 
 set -eu
 
@@ -86,6 +94,47 @@ if [ -n "$PREV" ]; then
         || { cat "$WORK/diff.log" >&2; rm -f "$PATCH"; fail "Patch ergibt nicht den Inhalt des Zips"; }
     echo "make_package: $PATCH (Änderungen seit $PREV)"
 fi
+# --- Fertig gebaute Library -------------------------------------------------
+BIN="$NAME-linux-x86_64"
+BOUT="dist/$BIN.zip"
+rm -f "$BOUT"
+mkdir -p "$WORK/bin"
+{
+    cmake -S "$WORK/$NAME" -B "$WORK/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON -DIEC104_TLS=ON -DIEC104_BUILD_TESTS=OFF \
+        -DIEC104_BUILD_EXAMPLES=OFF -DCMAKE_INSTALL_LIBDIR=lib &&
+    cmake --build "$WORK/build" &&
+    cmake --install "$WORK/build" --prefix "$WORK/bin/$BIN" --strip
+} > "$WORK/bin.log" 2>&1 || { tail -30 "$WORK/bin.log" >&2; fail "Bau der Library fehlgeschlagen"; }
+
+mapfile -t ELF < <(find "$WORK/bin/$BIN" -type f -exec sh -c \
+    'head -c 4 "$1" | grep -q "ELF" && echo "$1"' _ {} \;)
+[ "${#ELF[@]}" -gt 0 ] || fail "keine Binärdateien im Paket"
+
+# Zeichenketten der Binärdateien als Text prüfen.
+mkdir -p "$WORK/bincheck"
+for f in "${ELF[@]}"; do strings -a "$f" > "$WORK/bincheck/$(basename "$f").txt"; done
+cp -r "$WORK/bin/$BIN/lib/cmake" "$WORK/bincheck/"
+"$ROOT/tools/check_neutral.sh" --root "$WORK/bincheck" > "$WORK/neutral_bin.log" 2>&1 \
+    || { cat "$WORK/neutral_bin.log" >&2; fail "verbotene Begriffe in den Binärdateien"; }
+if grep -r -n -i -E "intern/|tasks/|TASK-[0-9]|claude|anthropic|$HOME|$ROOT" \
+        "$WORK/bincheck" > "$WORK/binrefs.log"; then
+    head -20 "$WORK/binrefs.log" >&2
+    fail "interne Verweise oder Pfade des Bau-Rechners in den Binärdateien"
+fi
+
+# Benötigte Symbolversionen: höchstens glibc 2.34, OpenSSL 3.0.0.
+newest() { objdump -T "${ELF[@]}" | grep -o "$1[0-9.]*" | sed "s/^$1//" | sort -V -u | tail -1; }
+not_above() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$2" ]; }
+GLIBC="$(newest GLIBC_)"
+OPENSSL="$(newest OPENSSL_)"
+GLIBCXX="$(newest GLIBCXX_)"
+not_above "$GLIBC" 2.34 || fail "braucht glibc $GLIBC (höchstens 2.34)"
+not_above "${OPENSSL:-3.0.0}" 3.0.0 || fail "braucht OpenSSL $OPENSSL (höchstens 3.0.0)"
+
+(cd "$WORK/bin" && zip -q -r -y "$ROOT/$BOUT" "$BIN")
+echo "make_package: $BOUT (glibc $GLIBC, libstdc++ $GLIBCXX, OpenSSL $OPENSSL)"
+
 if ! git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
     git tag "$TAG"
     echo "make_package: Tag $TAG gesetzt (mit 'git push origin $TAG' übertragen)"
