@@ -1,0 +1,12 @@
+build/
+.cache/
+compile_commands.json
+CMakeUserPresets.json
+.vscode/*
+!.vscode/extensions.json
+crash-*
+leak-*
+timeout-*
+oom-*
+fuzz/corpus/
+*.swp
