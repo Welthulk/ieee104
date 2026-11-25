@@ -1,0 +1,3646 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index d80d0df..2c3ac77 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,19 @@
+ # Änderungen
+ 
++## 0.3.0 (25.11.2026)
++
++| Bereich | Änderung |
++| --- | --- |
++| TLS | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3.x: `iec104_tls_config`, `iec104_server_set_tls`, `iec104_client_set_tls` |
++| TLS | gegenseitige Authentifizierung, Sperrliste, Name oder SHA-256-Fingerprint der Gegenstelle, Schlüssel mit Passwort |
++| TLS | Key Update (1.3) und Renegotiation (1.2) nach Zeit, Session Resumption, Zertifikatswechsel zur Laufzeit |
++| TLS | Callback `on_security`, Schließgrund `IEC104_CLOSE_TLS`, `iec104_*_get_tls_info` |
++| Konfiguration | Schlüssel `tls`, `tls_*`; relative Pfade ab dem Verzeichnis der Datei |
++| Selbsttest | Optionen `--tls*`; ctest auch über TLS; Test-PKI `tools/make_test_certs.sh` |
++| Build | Option `IEC104_TLS` (Default an); `find_package(iec104)` zieht OpenSSL nach |
++| Lieferung | zusätzlich fertig gebaute Library `iec104-<version>-linux-x86_64.zip` |
++| Festlegung | E9: TLS-Handshake fällt unter t0 |
++
+ ## 0.2.0 (25.11.2026)
+ 
+ | Bereich | Änderung |
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f8f0e2a..33deb8b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,7 @@
+ cmake_minimum_required(VERSION 3.21)
+ 
+ project(iec104
+-    VERSION 0.2.0
++    VERSION 0.3.0
+     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
+     LANGUAGES C CXX)
+ 
+@@ -19,6 +19,7 @@ option(IEC104_ENABLE_SANITIZERS    "Build with ASan and UBSan"                OF
+ option(IEC104_WARNINGS_AS_ERRORS   "Treat warnings as errors (library code)"  ON)
+ option(IEC104_ENABLE_CLANG_TIDY    "Run clang-tidy while compiling"           OFF)
+ option(IEC104_BUILD_SELFTEST       "Build the self-test programs"             ON)
++option(IEC104_TLS                  "TLS support with OpenSSL 3.x"             ON)
+ 
+ set(CMAKE_CXX_STANDARD 17)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+@@ -87,7 +88,19 @@ add_library(iec104_objects OBJECT
+     src/session/process_image.cpp
+     src/session/server_session.cpp
+     src/transport/link.cpp
+-    src/transport/tcp.cpp)
++    src/transport/tcp.cpp
++    src/transport/tls.cpp)
++# TLS backend (src/transport/tls.hpp): OpenSSL 3.x, or a stub without TLS.
++if(IEC104_TLS)
++    find_package(OpenSSL 3.0 REQUIRED)
++    target_sources(iec104_objects PRIVATE src/transport/tls_openssl.cpp)
++    # Only functions of OpenSSL 3.0, so that the library runs with every 3.x.
++    target_compile_definitions(iec104_objects PRIVATE OPENSSL_API_COMPAT=30000
++        OPENSSL_NO_DEPRECATED)
++    target_link_libraries(iec104_objects PUBLIC OpenSSL::SSL OpenSSL::Crypto)
++else()
++    target_sources(iec104_objects PRIVATE src/transport/tls_none.cpp)
++endif()
+ # The sources are compiled once; the library (static or shared, see
+ # BUILD_SHARED_LIBS) is made from these objects. Tests and fuzzers link the
+ # objects directly because they check internal functions.
+@@ -116,6 +129,10 @@ set_target_properties(iec104 PROPERTIES
+     LINKER_LANGUAGE CXX
+     VERSION ${PROJECT_VERSION}
+     SOVERSION ${PROJECT_VERSION_MAJOR})
++if(IEC104_TLS)
++    # Exported as link-only dependency of a static library (find_dependency in iec104Config).
++    target_link_libraries(iec104 PRIVATE OpenSSL::SSL OpenSSL::Crypto)
++endif()
+ if(NOT BUILD_SHARED_LIBS)
+     # A static library carries no dependencies: users that link with the C
+     # compiler need the C++ runtime and libm explicitly.
+@@ -145,6 +162,7 @@ if(IEC104_BUILD_TESTS)
+         tests/test_operation.cpp
+         tests/test_session.cpp
+         tests/test_tcp_loopback.cpp
++        tests/test_tls.cpp
+         tests/test_type_table.cpp
+         tests/test_values.cpp)
+     # Tests use the internal C++ headers directly (sans-I/O, no network)
+@@ -155,6 +173,19 @@ if(IEC104_BUILD_TESTS)
+     target_link_libraries(iec104_tests PRIVATE iec104_objects GTest::gtest GTest::gtest_main)
+     iec104_set_warnings(iec104_tests FALSE)
+     gtest_discover_tests(iec104_tests)
++
++    # Test PKI for the TLS tests and the self-test over TLS, made at build time.
++    set(IEC104_TEST_CERT_DIR ${CMAKE_BINARY_DIR}/tls)
++    if(IEC104_TLS)
++        add_custom_command(OUTPUT ${IEC104_TEST_CERT_DIR}/foreign.pem
++            COMMAND ${PROJECT_SOURCE_DIR}/tools/make_test_certs.sh ${IEC104_TEST_CERT_DIR}
++            DEPENDS ${PROJECT_SOURCE_DIR}/tools/make_test_certs.sh
++            COMMENT "Test certificates for TLS")
++        add_custom_target(iec104_test_certs DEPENDS ${IEC104_TEST_CERT_DIR}/foreign.pem)
++        add_dependencies(iec104_tests iec104_test_certs)
++    endif()
++    target_compile_definitions(iec104_tests PRIVATE
++        IEC104_TEST_CERT_DIR="${IEC104_TEST_CERT_DIR}")
+ endif()
+ 
+ # ---------------------------------------------------------------------------
+@@ -167,6 +198,9 @@ if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
+         target_link_libraries(iec104_selftest_${role} PRIVATE iec104::iec104)
+         iec104_set_warnings(iec104_selftest_${role} TRUE)
+     endforeach()
++    # Installed programs find the library next to them (bin/../lib), wherever the tree is unpacked.
++    set_target_properties(iec104_selftest_server iec104_selftest_client PROPERTIES
++        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+     install(TARGETS iec104_selftest_server iec104_selftest_client
+         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+     if(IEC104_BUILD_TESTS)
+@@ -174,6 +208,13 @@ if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
+             COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
+                     $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>)
+         set_tests_properties(SelfTest.ServerAndClientOverTcp PROPERTIES TIMEOUT 90)
++        if(IEC104_TLS)
++            add_test(NAME SelfTest.ServerAndClientOverTls
++                COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
++                        $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>
++                        --tls ${IEC104_TEST_CERT_DIR})
++            set_tests_properties(SelfTest.ServerAndClientOverTls PROPERTIES TIMEOUT 90)
++        endif()
+     endif()
+ endif()
+ 
+@@ -227,6 +268,9 @@ install(TARGETS iec104 EXPORT iec104Targets
+     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+ install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
++install(FILES README.md CHANGELOG.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
++install(DIRECTORY docs LICENSES examples DESTINATION ${CMAKE_INSTALL_DOCDIR})
++install(PROGRAMS tools/make_test_certs.sh DESTINATION ${CMAKE_INSTALL_DOCDIR}/tools)
+ install(EXPORT iec104Targets NAMESPACE iec104:: DESTINATION ${IEC104_CMAKE_DIR})
+ configure_package_config_file(cmake/iec104Config.cmake.in
+     ${CMAKE_CURRENT_BINARY_DIR}/iec104Config.cmake
+diff --git a/README.md b/README.md
+index 368a575..bf0a3ff 100644
+--- a/README.md
++++ b/README.md
+@@ -1,8 +1,8 @@
+ # IEC 60870-5-104 Library
+ 
+-Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`). Jede Protokollregel im Code nennt ihre Quelle.
++Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
+ 
+-Stand: 25.11.2026, Version 0.2.0, Linux x86-64.
++Stand: 25.11.2026, Version 0.3.0, Linux x86-64.
+ 
+ ## Stand
+ 
+@@ -10,13 +10,14 @@ Stand: 25.11.2026, Version 0.2.0, Linux x86-64.
+ | --- | --- |
+ | `codec` | APCI (I/S/U-Format), ASDU-Kopf mit parametrierbaren Feldlängen, alle Informationselemente, Typtabelle mit 59 Typkennungen, vollständige ASDUs mit SQ = 0 und SQ = 1, Aufteilen langer Objektlisten nach maximaler ASDU-Länge, strikter und toleranter Modus, CP56Time2a |
+ | `apci` | Zustandsmaschine der Verbindung ohne eigenes I/O: STARTDT/STOPDT/TESTFR, Folgenummern, Quittierung nach k und w, Timer t1–t3 |
+-| `transport` | TCP für Linux (nicht blockierend, `poll`), Verbindungsaufbau mit t0 |
++| `transport` | TCP für Linux (nicht blockierend, `poll`), Verbindungsaufbau mit t0; TLS 1.2/1.3 mit OpenSSL 3.x |
+ | `session` | Abläufe der gesteuerten Station: Prozessabbild, Generalabfrage (Station und Gruppen), Zählerabfrage, Lesebefehl, Testbefehl, Uhrzeit, Befehle mit Bestätigung und Beendigung, Ende der Initialisierung, negative Bestätigungen (Ursachen 44–47) |
+ | C-API | Server und Client mit Handles, konfigurierbaren Ports, Timern und ASDU-Profil; Werte statt Oktette (`iec104_object`), Callbacks für Objekte, Befehle und Zustandswechsel |
+ | Selbsttest | `iec104_selftest_server` und `iec104_selftest_client` für automatische und manuelle Tests |
+ | Befehle | Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung am Client mit Ergebnis je Befehl und getrennten Timeouts |
+ | Betrieb | Log-Callback mit Stufen und APDU-Trace, Statistik je Verbindung, Konfigurationsdatei, `find_package(iec104)`, statisch oder geteilt |
+-| in Arbeit | Pufferung, TLS (OpenSSL 3.x), Redundanzgruppen |
++| TLS | IEC 62351-3: gegenseitige Authentifizierung mit X.509, Sperrlisten, Name oder Fingerprint der Gegenstelle, Key Update und Renegotiation nach Zeit, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse |
++| in Arbeit | Pufferung, Redundanzgruppen |
+ 
+ ## Unterlagen
+ 
+@@ -26,8 +27,8 @@ Stand: 25.11.2026, Version 0.2.0, Linux x86-64.
+ | `docs/02_Technik_und_Quellen.md` | Architektur, Protokollaufbau, Parameter, Typkennungen, Elemente, Quellen |
+ | `docs/03_Quellen_APCI.md` | Öffentliche Belege für die Regeln der Verbindungssteuerung |
+ | `docs/04_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
+-| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E8), auf die der Code verweist |
+-| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Regeln |
++| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E9), auf die der Code verweist |
++| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, TLS, Regeln |
+ 
+ ## Verzeichnisse
+ 
+@@ -37,17 +38,17 @@ Stand: 25.11.2026, Version 0.2.0, Linux x86-64.
+ | `src/codec/` | reine Funktionen auf Byte-Puffern, kein I/O, keine Allokation |
+ | `src/apci/` | Zustandsmaschine: Bytes und Zeit rein, Bytes und Ereignisse raus |
+ | `src/session/` | Anwendungsabläufe der gesteuerten Station, Prozessabbild |
+-| `src/transport/` | Sockets, Verbindungsaufbau, Zeitbasis |
++| `src/transport/` | Sockets, Verbindungsaufbau, Zeitbasis, TLS-Backend |
+ | `src/api/` | Implementierung der C-Schnittstelle |
+ | `tests/` | Unit-Tests (GoogleTest), Referenzdaten unter `tests/data/` |
+ | `fuzz/` | libFuzzer-Ziele für Codec und Zustandsmaschine |
+ | `examples/` | Hello World: kleinster Server und Client |
+ | `tools/selftest/` | Selbsttest-Programme und Testskript |
+-| `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer |
++| `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer, Test-PKI für TLS |
+ 
+ ## Bauen und testen
+ 
+-Werkzeuge einmalig installieren (AlmaLinux 9): `./tools/setup_tools.sh`
++Werkzeuge einmalig installieren (AlmaLinux 9): `./tools/setup_tools.sh`. TLS braucht OpenSSL 3 mit Headern (`openssl-devel`); ohne OpenSSL: `-DIEC104_TLS=OFF`.
+ 
+ ```bash
+ cmake --preset debug && cmake --build --preset debug && ctest --preset debug    # Build und alle Tests
+@@ -73,6 +74,8 @@ Die Library baut mit `-Werror`, ohne Exceptions und ohne RTTI. Formatierung nach
+ build/debug/iec104_selftest_server --port 2404 --count 100
+ build/debug/iec104_selftest_client --host 127.0.0.1 --port 2404 --idle 25
+ build/debug/iec104_selftest_client --host <Gerät> --foreign --ca <Adresse> --idle 60     # fremder Server
++tools/selftest/run_selftest.sh build/debug/iec104_selftest_server \
++    build/debug/iec104_selftest_client --tls build/debug/tls                            # über TLS
+ ```
+ 
+ Der Client meldet jeden Schritt mit `ok` oder `FAILED` und endet mit `result: PASSED` (Exit-Code 0) oder `result: FAILED` (Exit-Code 1). `ctest` lässt beide Programme automatisch über Loopback gegeneinander laufen. Testfälle gegen fremde Geräte, Fehlerfälle und alle Optionen: `docs/04_Selbsttest.md`.
+@@ -122,6 +125,8 @@ Befehlspunkte legt der Server mit `iec104_server_add_command` fest (direkt oder
+ 
+ Der Client funktioniert entsprechend: `iec104_client_create`, `iec104_client_connect(client, host, port)`, nach dem Zustand `IEC104_LINK_STOPPED` `iec104_client_start`, danach zum Beispiel `iec104_client_interrogation(client, 1, 20)`; die Antworten kommen als Objekte über `on_object`. Befehle sendet `iec104_client_send_command` oder, zweistufig, `iec104_client_select_execute`; das Ergebnis jedes Befehls (ausgeführt, abgelehnt, keine Bestätigung, …) meldet `on_command_result`. Alle Funktionen liefern einen `iec104_status`; `iec104_status_string()` gibt einen lesbaren Text dazu.
+ 
++TLS: `iec104_server_set_tls` bzw. `iec104_client_set_tls` mit CA, Zertifikat und Schlüssel vor `listen`/`connect`, sonst ändert sich nichts (`docs/06_Anleitung.md`, Abschnitt 6).
++
+ ## Lizenz
+ 
+ Die Lizenztexte liegen in `LICENSES/`. Der öffentliche Header `include/iec104/iec104.h` steht unter Apache-2.0, alle übrigen Dateien sind proprietär. Jede Quelldatei nennt ihre Lizenz im SPDX-Kopf.
+diff --git a/cmake/iec104Config.cmake.in b/cmake/iec104Config.cmake.in
+index 82fcc01..5053bc4 100644
+--- a/cmake/iec104Config.cmake.in
++++ b/cmake/iec104Config.cmake.in
+@@ -7,5 +7,11 @@
+ # iec104::iec104 (include directory and library).
+ @PACKAGE_INIT@
+ 
++# TLS: the library links OpenSSL (a static library passes it on).
++if(@IEC104_TLS@)
++    include(CMakeFindDependencyMacro)
++    find_dependency(OpenSSL 3.0)
++endif()
++
+ include("${CMAKE_CURRENT_LIST_DIR}/iec104Targets.cmake")
+ check_required_components(iec104)
+diff --git a/docs/02_Technik_und_Quellen.md b/docs/02_Technik_und_Quellen.md
+index 468e5af..7d46dca 100644
+--- a/docs/02_Technik_und_Quellen.md
++++ b/docs/02_Technik_und_Quellen.md
+@@ -133,7 +133,10 @@ UTC oder Ortszeit ist nicht genormt, sondern Teil der Interoperabilitätsliste.
+ | Punkt | Stand |
+ | --- | --- |
+ | IEC 104 | keine Integrität, Authentifizierung oder Verschlüsselung |
+-| TLS | IEC 62351-3 Ed. 2 (2023), TLS 1.2/1.3 [62351]; Umsetzung über OpenSSL 3.x geplant |
++| TLS | IEC 62351-3 Ed. 2 (2023), TLS 1.2/1.3 [62351]; umgesetzt mit OpenSSL 3.x hinter einer Backend-Schnittstelle (`src/transport/tls.hpp`), Profil siehe docs/05, N12 |
++| Authentifizierung | gegenseitig mit X.509: CA, eigenes Zertifikat mit Kette, Sperrlisten (CRL), optional Name oder SHA-256-Fingerprint der Gegenstelle |
++| Schlüsselerneuerung | Key Update (TLS 1.3, RFC 8446), Renegotiation (TLS 1.2, RFC 5746), nach Zeit |
++| Ereignisse | Callback `on_security`: Handshake, abgelehntes Zertifikat, TLS-Fehler, Schlüsselerneuerung |
+ | Port | 2404 ohne TLS, 19998 mit TLS („iec-104-sec“) [IANA] |
+ 
+ ## Designfolgerungen
+diff --git a/docs/04_Selbsttest.md b/docs/04_Selbsttest.md
+index 494cf63..34e4f2f 100644
+--- a/docs/04_Selbsttest.md
++++ b/docs/04_Selbsttest.md
+@@ -75,14 +75,16 @@ Exit-Code: `0` = bestanden, `1` = ein Schritt fehlgeschlagen, `2` = falscher Auf
+ 
+ ## 2. Bauen
+ 
+-Voraussetzungen: Linux x86-64, CMake ab 3.21, GCC oder Clang mit C++17, GoogleTest (`tools/setup_tools.sh` installiert alles unter AlmaLinux 9).
++Voraussetzungen: Linux x86-64, CMake ab 3.21, GCC oder Clang mit C++17, GoogleTest, OpenSSL 3 mit Headern und dem Programm `openssl` (`tools/setup_tools.sh` installiert alles unter AlmaLinux 9).
+ 
+ ```bash
+ cmake --preset debug
+ cmake --build --preset debug
+-ctest --preset debug          # alle automatischen Tests, darunter der Selbsttest über TCP
++ctest --preset debug          # alle automatischen Tests, darunter der Selbsttest über TCP und TLS
+ ```
+ 
++Der Build legt unter `build/debug/tls/` eine Test-PKI an (`tools/make_test_certs.sh`): CA, Server- und Client-Zertifikat, dazu gesperrte, abgelaufene und fremde Zertifikate für Negativtests. Nur für Tests.
++
+ Die Programme liegen danach unter `build/debug/iec104_selftest_server` und `build/debug/iec104_selftest_client`. Mit `cmake --install build/debug --prefix /opt/iec104` landen sie in `/opt/iec104/bin`.
+ 
+ ## 3. Automatischer Selbsttest
+@@ -93,10 +95,14 @@ Die Programme liegen danach unter `build/debug/iec104_selftest_server` und `buil
+ 2. startet den Client gegen diesen Port mit kurzem t3 (1 s) und 3 s Ruhe, damit auch der Verbindungstest mit TESTFR läuft,
+ 3. wertet die Exit-Codes beider Programme aus.
+ 
++Ein zweiter Lauf macht dasselbe über TLS mit gegenseitiger Authentifizierung, Sperrliste, Namensprüfung und Schlüsselerneuerung alle 2 s.
++
+ Von Hand:
+ 
+ ```bash
+ tools/selftest/run_selftest.sh build/debug/iec104_selftest_server build/debug/iec104_selftest_client
++tools/selftest/run_selftest.sh build/debug/iec104_selftest_server build/debug/iec104_selftest_client \
++    --tls build/debug/tls
+ ```
+ 
+ ## 4. Manuelle Tests
+@@ -156,14 +162,54 @@ iec104_selftest_client --host <Gerät> --foreign --t1 250 --t2 240 --t3 255 --k
+ | Test | Vorgehen | Erwartung |
+ | --- | --- | --- |
+ | Port falsch | Client gegen einen Port ohne Server | `connect … FAILED (connect failed)`, Exit-Code 1 |
+-| Server nicht erreichbar | Client gegen eine Adresse, die nicht antwortet, `--t0 5` | nach 5 s `FAILED (t0 timeout (connect))` |
++| Server nicht erreichbar | Client gegen eine Adresse, die nicht antwortet, `--t0 5` | nach 5 s `FAILED (t0 timeout (connect or TLS handshake))` |
+ | Gegenstelle antwortet nicht mehr | Server mit `kill -STOP <pid>` anhalten, während der Client in der Ruhephase ist (`--idle 60 --t3 5`) | nach t3 + t1 (5 s + 15 s) `idle period … FAILED (t1 timeout (no acknowledgement))` |
+ | Verbindungsabbruch | Server während der Übertragung mit Strg-C beenden | Client: `FAILED (closed by peer)` |
+ | Port belegt | zweiten Server auf demselben Port starten | `cannot listen on port 2404: i/o error`, Exit-Code 2 |
+ 
+ Nach `kill -STOP` den Server mit `kill -CONT <pid>` wieder fortsetzen oder beenden.
+ 
+-### 4.6 Mitschnitt mit Wireshark
++### 4.6 TLS
++
++Mit eigenen Zertifikaten oder der Test-PKI (`P=build/debug/tls`):
++
++```bash
++iec104_selftest_server --port 19998 --tls-ca $P/ca.pem --tls-cert $P/server.pem --tls-key $P/server.key \
++    --tls-crl $P/crl.pem --log info
++iec104_selftest_client --host <Adresse> --port 19998 --tls-ca $P/ca.pem --tls-cert $P/client.pem \
++    --tls-key $P/client.key --tls-peer-name localhost
++```
++
++Der Client zeigt nach dem Verbindungsaufbau Version, Suite und Zertifikat der Gegenstelle:
++
++```
++  1: TLS established: TLSv1.3, TLS_AES_128_GCM_SHA256, peer CN=localhost
++  connect .............................. ok
++  TLS .................................. TLSv1.3, TLS_AES_128_GCM_SHA256, peer CN=localhost
++```
++
++| Test | Client-Optionen statt `client.pem`/`client.key` | Erwartung am Server |
++| --- | --- | --- |
++| gesperrtes Zertifikat | `--tls-cert $P/revoked.pem --tls-key $P/revoked.key` | `peer certificate rejected: certificate revoked` |
++| abgelaufenes Zertifikat | `--tls-cert $P/expired.pem --tls-key $P/expired.key` | `peer certificate rejected: certificate has expired` |
++| fremde CA | `--tls-cert $P/foreign.pem --tls-key $P/foreign.key` | `peer certificate rejected: unable to get local issuer certificate` |
++| ohne Zertifikat | `--tls` ohne `--tls-cert`/`--tls-key` | `TLS handshake failed: peer did not return a certificate` |
++| ohne TLS | keine `--tls`-Option | `TLS handshake failed: …`, Client `FAILED (closed by peer)` |
++| falscher Name | `--tls-peer-name other.test` | Client: `peer certificate rejected: hostname mismatch` |
++| TLS 1.2 | `--tls-version 1.2` | `TLS established: TLSv1.2, ECDHE-…` |
++
++Mit TLS 1.3 prüft der Server das Client-Zertifikat erst, wenn der Client seinen Teil des Handshakes schon abgeschlossen hat. Der Client meldet deshalb zunächst `connect … ok` und scheitert im nächsten Schritt (`TLS failure` oder `closed by peer`).
++
++Gegenprobe ohne eigene Software, mit OpenSSL als Client (sendet STARTDT act und zeigt die Antwort als Hexdump, beginnend mit `6804 0b00 0000` = STARTDT con):
++
++```bash
++( printf '\x68\x04\x07\x00\x00\x00'; sleep 2 ) | openssl s_client -connect <Adresse>:19998 \
++    -CAfile $P/ca.pem -cert $P/client.pem -key $P/client.key -quiet | xxd | head
++```
++
++`openssl s_client … -tls1_2 -msg` zeigt bei `--tls-renewal 1` am Server jede Sekunde HelloRequest und den neuen Handshake.
++
++### 4.7 Mitschnitt mit Wireshark
+ 
+ Wireshark dekodiert IEC 104 auf Port 2404 von selbst. Für einen anderen Port: *Analyze → Decode As… → TCP port → IEC 60870-5-104*. Mitschnitt ohne Oberfläche:
+ 
+@@ -210,10 +256,27 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
+ | `--log STUFE` | Log der Library: error, warning, info, debug, trace (trace = jede APDU als Hexdump) | aus |
+ | `--stats` | Zähler je Verbindung am Ende ausgeben | aus |
+ 
++### TLS (beide)
++
++Jede dieser Optionen schaltet TLS ein.
++
++| Option | Bedeutung | Default |
++| --- | --- | --- |
++| `--tls` | TLS ohne weitere Angaben (nur zusammen mit `--config`) | aus |
++| `--tls-ca F` | vertrauenswürdige CA (PEM) | – |
++| `--tls-cert F`, `--tls-key F` | eigenes Zertifikat und Schlüssel | – |
++| `--tls-crl F` | Sperrliste | keine |
++| `--tls-peer-name N` | erwarteter Name oder Adresse im Zertifikat der Gegenstelle | keine Prüfung |
++| `--tls-fingerprint H` | erwarteter SHA-256-Fingerprint der Gegenstelle | keine Prüfung |
++| `--tls-version V` | höchste Version, 1.2 oder 1.3 | 1.3 |
++| `--tls-renewal S` | Key Update bzw. Renegotiation alle S Sekunden | aus |
++
+ ## 6. Was der Selbsttest abdeckt und was nicht
+ 
+ Abgedeckt: TCP-Verbindungsaufbau und -abbau, STARTDT/STOPDT, Folgenummern und Quittierung über viele Rahmen (mehr als k), Verbindungstest nach t3, Zeitüberwachung t1, Ende der Initialisierung, Generalabfrage (Station und Gruppe), Zählerabfrage, Uhrzeitsynchronisation, Befehle mit Bestätigung und Beendigung, Rückmeldung eines Befehls, negative Bestätigungen (abgelehnter Befehl, unbekannte IOA, unbekannte Station).
+ 
+ Ebenfalls abgedeckt: Befehlsmodelle je IOA (direkt, Select/Execute mit Zeitüberwachung der Auswahl), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung des Clients mit Ergebnis je Befehl.
+ 
+-Noch nicht abgedeckt: Pufferung bei unterbrochener Verbindung, TLS, Redundanzgruppen.
++Ebenfalls abgedeckt: TLS mit gegenseitiger Authentifizierung, Sperrliste, Namensprüfung und Schlüsselerneuerung. Negativfälle (fremde CA, abgelaufen, gesperrt, Fingerprint, Handshake-Timeout, Klartext gegen TLS) prüfen die Unit-Tests `Tls.*`.
++
++Noch nicht abgedeckt: Pufferung bei unterbrochener Verbindung, Redundanzgruppen.
+diff --git a/docs/05_Normfragen_und_Festlegungen.md b/docs/05_Normfragen_und_Festlegungen.md
+index 1d43380..d287bf8 100644
+--- a/docs/05_Normfragen_und_Festlegungen.md
++++ b/docs/05_Normfragen_und_Festlegungen.md
+@@ -1,6 +1,6 @@
+ # Normfragen und Festlegungen
+ 
+-Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stellen zu N1–N13 sind mit `TODO(norm)` markiert; E1–E8 sind technische Festlegungen. Belege: `docs/02_Technik_und_Quellen.md`, `docs/03_Quellen_APCI.md`.
++Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stellen zu N1–N13 sind mit `TODO(norm)` markiert; E1–E9 sind technische Festlegungen. Belege: `docs/02_Technik_und_Quellen.md`, `docs/03_Quellen_APCI.md`.
+ 
+ ## Normfragen
+ 
+@@ -17,7 +17,7 @@ Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stell
+ | N9 | ASDU mit 0 Objekten (VSQ = 0) | codec | Dekodieren | Strikt: `IEC104_ERR_MALFORMED`. Tolerant: angenommen, wenn keine Objektoktette folgen. Kodieren mit 0 Objekten ist nie möglich |
+ | N10 | Gemeinsame Adresse 0 und 65535 (Broadcast) | session | Annahme von Generalabfrage und Uhrzeit als Broadcast | 65535 (bei 1-Oktett-CA 255) nur bei 100, 101, 103, 105, beantwortet je Station mit deren Adresse; andere unbekannte Adressen negativ mit Ursache 46 |
+ | N11 | Inhalt von COR1:2023 | alle | Unbekannte Korrekturen | Keine Annahme |
+-| N12 | TLS nach IEC 62351-3 Ed. 2: Cipher-Suites, Renegotiation, Key Update | transport | Defaults der TLS-Konfiguration | TLS 1.3 bevorzugt, für TLS 1.2 nur ECDHE mit AEAD, sichere Renegotiation (RFC 5746) |
++| N12 | TLS nach IEC 62351-3 Ed. 2: Cipher-Suites (Tabelle 1), Resumption und Renegotiation (7.4.4, 7.4.5), Key Update (8.4) | transport | Defaults der TLS-Konfiguration | TLS 1.2 und 1.3; für 1.2 nur ECDHE mit AEAD (GCM, ChaCha20-Poly1305), für 1.3 die Suites ohne CCM; gegenseitige Authentifizierung mit X.509; Renegotiation nur nach RFC 5746, in beide Richtungen erlaubt, abschaltbar; Schlüsselerneuerung nach Zeit, Default aus; Session Resumption an, Lebensdauer 1 h. Alles je Handle einstellbar (`iec104_tls_config`) |
+ | N13 | Zeitbasis UTC oder Ortszeit | session | Bewertung von Zeitmarken | Nicht genormt; Zeitbasis wird Parameter (UTC / fester Offset / Ortszeit mit SU). CP56Time2a im Codec ohne Zeitzone |
+ 
+ ## Technische Festlegungen
+@@ -32,3 +32,4 @@ Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stell
+ | E6 | Die Library testet sich selbst: Zustandsmaschinen im Speicher gekoppelt (ohne Netz) und Selbsttest-Programme über TCP | Prüfung ohne fremde Gegenstelle, Grundlage für manuelle Tests (`docs/04_Selbsttest.md`) |
+ | E7 | Befehlsmodell je IOA: ohne Befehlspunkte entscheidet die Anwendung allein; mit Befehlspunkten prüft die Library IOA, Typ, Select/Execute und Auswahl-Timeout, bevor die Anwendung gefragt wird. Eine Auswahl gilt je Verbindung | Bekannte Anforderungen von Gegenstellen (Select/Execute je Datenpunkt, nur Befehle mit Zeitmarke) werden Parameter statt Anwendungslogik |
+ | E8 | Laufzeitmodell: kein interner Thread; die Anwendung ruft `*_poll()` in ihrem Thread, dort laufen auch alle Callbacks. Ein Handle gehört einem Thread | keine Sperren in der Library, vorhersagbares Verhalten; die Anwendung wählt selbst, ob Poll in einem eigenen Thread läuft |
++| E9 | TLS: Der Handshake fällt unter t0, auf Client und Server. Ein Fehler im Handshake oder in der TLS-Schicht schließt die Verbindung (`IEC104_CLOSE_TLS`) und wird als Sicherheitsereignis gemeldet (`on_security`). Neue TLS-Einstellungen gelten für neue Verbindungen, offene behalten ihre Sitzung | t0 begrenzt den Verbindungsaufbau; ohne Grenze hält eine Gegenstelle, die nur TCP öffnet, Ressourcen des Servers fest. Zertifikate lassen sich so ohne Neustart wechseln |
+diff --git a/docs/06_Anleitung.md b/docs/06_Anleitung.md
+index 167b01b..230d2a0 100644
+--- a/docs/06_Anleitung.md
++++ b/docs/06_Anleitung.md
+@@ -15,15 +15,18 @@ cmake --install build/release --prefix /opt/iec104
+ | --- | --- |
+ | statisch (Default) | – |
+ | geteilt (`libiec104.so`) | `-DBUILD_SHARED_LIBS=ON` oder Preset `shared` |
++| ohne TLS (ohne OpenSSL) | `-DIEC104_TLS=OFF`; `*_set_tls()` liefert dann `IEC104_ERR_UNSUPPORTED` |
++
++Fertig gebaut: `iec104-<version>-linux-x86_64.zip` enthält dieselbe Struktur wie `/opt/iec104` (geteilte Library, Header, CMake-Dateien, Selbsttest). Läuft auf Linux x86-64 mit glibc ab 2.34 und OpenSSL 3, z. B. AlmaLinux 9, Ubuntu ab 22.04, auch unter WSL2.
+ 
+ Eigenes CMake-Projekt:
+ 
+ ```cmake
+-find_package(iec104 0.2 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
++find_package(iec104 0.3 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
+ target_link_libraries(meine_app PRIVATE iec104::iec104)
+ ```
+ 
+-Ohne CMake: `-I/opt/iec104/include -L/opt/iec104/lib -liec104 -lstdc++ -lm`.
++Ohne CMake: `-I/opt/iec104/include -L/opt/iec104/lib -liec104`; statisch zusätzlich `-lssl -lcrypto -lstdc++ -lm`.
+ 
+ ## 2. Hello World
+ 
+@@ -192,7 +195,63 @@ iec104_client_connect(client, cfg.host, cfg.port);
+ 
+ Alle Schlüssel: Kommentar zu `iec104_config_load()` im Header. Zeiten in Sekunden.
+ 
+-## 6. Regeln
++## 6. TLS
++
++IEC 104 selbst ist ungeschützt. Mit TLS nach IEC 62351-3 laufen dieselben APDUs verschlüsselt und beide Seiten weisen sich mit Zertifikat aus. Standardport mit TLS: 19998 (`IEC104_DEFAULT_TLS_PORT`).
++
++```c
++iec104_tls_config tls;
++iec104_tls_config_init(&tls);                       /* Profil N12: TLS 1.2/1.3, gegenseitige Prüfung */
++strcpy(tls.ca_file, "/etc/iec104/ca.pem");          /* wem vertraut wird */
++strcpy(tls.certificate_file, "/etc/iec104/station.pem");
++strcpy(tls.private_key_file, "/etc/iec104/station.key");
++strcpy(tls.crl_file, "/etc/iec104/crl.pem");        /* optional */
++
++iec104_server_set_tls(server, &tls);                /* vor listen; Client: iec104_client_set_tls vor connect */
++iec104_server_listen(server, NULL, IEC104_DEFAULT_TLS_PORT);
++```
++
++Alles Weitere bleibt gleich: Callbacks, Senden, Poll.
++
++| Einstellung | Feld | Default |
++| --- | --- | --- |
++| CA, eigenes Zertifikat, Schlüssel | `ca_file`, `certificate_file`, `private_key_file` | – (CA immer, Zertifikat am Server Pflicht) |
++| verschlüsselter Schlüssel | `key_password` | – |
++| Sperrliste | `crl_file` | keine Prüfung |
++| Name der Gegenstelle | `peer_name` (DNS-Name oder Adresse) | keine Namensprüfung |
++| Zertifikat festnageln | `peer_fingerprint` (SHA-256, hex) | aus |
++| Versionen | `min_version`, `max_version` | 1.2 bis 1.3 |
++| Suites | `cipher_list` (1.2), `cipher_suites` (1.3), OpenSSL-Schreibweise | ECDHE mit AEAD |
++| Schlüsselerneuerung | `renewal_interval_s` | aus |
++| Renegotiation (1.2) | `renegotiation` | erlaubt (nur RFC 5746) |
++| Session Resumption | `session_resumption`, `session_lifetime_s` | an, 3600 s |
++| Gegenstelle prüfen | `verify_peer` | 1; 0 nur für Tests |
++
++| Thema | Verhalten |
++| --- | --- |
++| Fehler in den Einstellungen | `*_set_tls()` meldet ihn sofort (`IEC104_ERR_IO`: Datei, `IEC104_ERR_INVALID_ARGUMENT`: Inhalt), Grund im Log |
++| Handshake | gehört zum Verbindungsaufbau und muss innerhalb von t0 fertig sein (E9) |
++| Abgelehnte Gegenstelle | Verbindung zu, Grund `IEC104_CLOSE_TLS`; `on_security` nennt die Ursache, z. B. `certificate has expired` |
++| Zertifikatswechsel | `*_set_tls()` erneut aufrufen; gilt für neue Verbindungen, offene laufen weiter |
++| Details einer Verbindung | `iec104_server_get_tls_info()` / `iec104_client_get_tls_info()`: Version, Suite, Zertifikat der Gegenstelle |
++
++In der Konfigurationsdatei (relative Pfade gelten ab dem Verzeichnis der Datei):
++
++```ini
++port = 19998
++tls = 1
++tls_ca = pki/ca.pem
++tls_certificate = pki/station.pem
++tls_key = pki/station.key
++tls_crl = pki/crl.pem
++tls_peer_name = leitstelle.example
++```
++
++```c
++if (cfg.use_tls) iec104_client_set_tls(client, &cfg.tls);
++```
++
++## 7. Regeln
+ 
+ | Regel | Grund |
+ | --- | --- |
+@@ -201,3 +260,4 @@ Alle Schlüssel: Kommentar zu `iec104_config_load()` im Header. Zeiten in Sekund
+ | `IEC104_ERR_WOULD_BLOCK` beim Senden: pollen und erneut senden | Fenster k voll |
+ | Zeiger in Callbacks gelten nur während des Aufrufs | Puffer der Library |
+ | Zeitmarken: UTC | `iec104_time` hat keine Zeitzone (N13) |
++| TLS: `peer_name` oder `peer_fingerprint` setzen, wenn die CA auch andere Stationen ausstellt | sonst wird jedes gültige Zertifikat der CA angenommen |
+diff --git a/include/iec104/iec104.h b/include/iec104/iec104.h
+index 7c2e9a3..79224b1 100644
+--- a/include/iec104/iec104.h
++++ b/include/iec104/iec104.h
+@@ -61,7 +61,7 @@ extern "C" {
+ /** @brief Major version of this header. Incompatible API changes increment it. */
+ #define IEC104_VERSION_MAJOR 0
+ /** @brief Minor version of this header. Compatible additions increment it. */
+-#define IEC104_VERSION_MINOR 2
++#define IEC104_VERSION_MINOR 3
+ /** @brief Patch version of this header. Fixes without API change increment it. */
+ #define IEC104_VERSION_PATCH 0
+ 
+@@ -196,13 +196,14 @@ typedef enum iec104_close_reason {
+     IEC104_CLOSE_LOCAL = 1,             /**< Closed by this side (close or destroy). */
+     IEC104_CLOSE_PEER = 2,              /**< The peer closed the TCP connection. */
+     IEC104_CLOSE_CONNECT_FAILED = 3,    /**< TCP connect refused or unreachable. */
+-    IEC104_CLOSE_T0_TIMEOUT = 4,        /**< TCP connect not complete within t0. */
++    IEC104_CLOSE_T0_TIMEOUT = 4,        /**< TCP connect or TLS handshake not complete within t0. */
+     IEC104_CLOSE_T1_TIMEOUT = 5,        /**< Frame not acknowledged/confirmed within t1. */
+     IEC104_CLOSE_SEQUENCE_ERROR = 6,    /**< Received N(S) not as expected. */
+     IEC104_CLOSE_ACK_OUT_OF_WINDOW = 7, /**< Received N(R) acknowledges frames never sent. */
+     IEC104_CLOSE_MALFORMED = 8,         /**< The byte stream is not a valid APDU sequence. */
+     IEC104_CLOSE_UNEXPECTED_FRAME = 9,  /**< Frame not allowed in the current state or role. */
+-    IEC104_CLOSE_SOCKET_ERROR = 10      /**< A socket operation failed. */
++    IEC104_CLOSE_SOCKET_ERROR = 10,     /**< A socket operation failed. */
++    IEC104_CLOSE_TLS = 11               /**< TLS handshake failed or TLS error (see on_security). */
+ } iec104_close_reason;
+ 
+ /** @brief Short English name of a link state. Never NULL. */
+@@ -210,6 +211,91 @@ IEC104_API const char* iec104_link_state_string(iec104_link_state state);
+ /** @brief Short English name of a close reason. Never NULL. */
+ IEC104_API const char* iec104_close_reason_string(iec104_close_reason reason);
+ 
++/* ------------------------------------------------------------------------- */
++/* TLS (IEC 62351-3)                                                         */
++/* ------------------------------------------------------------------------- */
++
++/** @brief Size of the path fields of ::iec104_tls_config, including the terminating NUL. */
++#define IEC104_TLS_PATH_SIZE 512
++
++/** @brief TLS protocol versions. */
++/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
++typedef enum iec104_tls_version {
++    IEC104_TLS_1_2 = 0x0303, /**< TLS 1.2 (RFC 5246). */
++    IEC104_TLS_1_3 = 0x0304  /**< TLS 1.3 (RFC 8446). */
++} iec104_tls_version;
++
++/**
++ * @brief TLS settings of a server or client.
++ *
++ * Strings are NUL-terminated; "" means "not set". Files are PEM. The
++ * defaults (iec104_tls_config_init()) follow the TLS profile of IEC 62351-3
++ * as far as it is known (docs/05_Normfragen_und_Festlegungen.md, N12):
++ * mutual authentication, TLS 1.2 and 1.3, for TLS 1.2 only ECDHE suites
++ * with AEAD.
++ */
++typedef struct iec104_tls_config {
++    char ca_file[IEC104_TLS_PATH_SIZE];          /**< Trusted CA certificates; required. */
++    char certificate_file[IEC104_TLS_PATH_SIZE]; /**< Own certificate, then intermediates. */
++    char private_key_file[IEC104_TLS_PATH_SIZE]; /**< Private key of the own certificate. */
++    char key_password[128];                      /**< Password of an encrypted key, "" = none. */
++    char crl_file[IEC104_TLS_PATH_SIZE];         /**< Revocation lists, "" = no CRL check. */
++    /** Expected DNS name or IP address in the peer certificate, "" = no name check. */
++    char peer_name[256];
++    /** Expected SHA-256 fingerprint of the peer certificate (hex, colons optional), "" = any. */
++    char peer_fingerprint[128];
++    char cipher_list[512];   /**< TLS 1.2 suites (OpenSSL syntax), "" = default. */
++    char cipher_suites[256]; /**< TLS 1.3 suites (OpenSSL syntax), "" = default. */
++    uint16_t min_version;    /**< ::iec104_tls_version; default 1.2. */
++    uint16_t max_version;    /**< ::iec104_tls_version; default 1.3. */
++    /**
++     * 1 (default): the peer must present a valid certificate (server: client
++     * certificate required). 0 only for tests; IEC 62351-3 requires mutual
++     * authentication.
++     */
++    int verify_peer;
++    /** 1 (default): TLS 1.2 renegotiation allowed in both directions (always RFC 5746). */
++    int renegotiation;
++    /** Key renewal by this side every n seconds: key update (1.3), renegotiation (1.2); 0 = off. */
++    uint32_t renewal_interval_s;
++    int session_resumption;      /**< 1 (default): sessions can be resumed. */
++    uint32_t session_lifetime_s; /**< Lifetime of a resumable session; default 3600. */
++} iec104_tls_config;
++
++/** @brief Defaults (see ::iec104_tls_config); all files empty. Does nothing for NULL. */
++IEC104_API void iec104_tls_config_init(iec104_tls_config* config);
++
++/** @brief 1 if the library was built with TLS support, else 0. */
++IEC104_API int iec104_tls_available(void);
++
++/** @brief Security events of TLS connections (see on_security). */
++/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
++typedef enum iec104_security_event {
++    /** Handshake complete; detail: version, suite, peer subject, "resumed". */
++    IEC104_SECURITY_TLS_ESTABLISHED = 0,
++    /** Handshake failed or not complete within t0; detail: reason. */
++    IEC104_SECURITY_HANDSHAKE_FAILED = 1,
++    /** Peer certificate rejected (untrusted, expired, revoked, name, fingerprint); detail: reason.
++     */
++    IEC104_SECURITY_CERTIFICATE_REJECTED = 2,
++    /** TLS error on an open connection, e.g. an alert of the peer; detail: reason. */
++    IEC104_SECURITY_TLS_ERROR = 3,
++    /** This side started a key renewal; detail: "key update" or "renegotiation". */
++    IEC104_SECURITY_KEY_RENEWAL = 4
++} iec104_security_event;
++
++/** @brief Short English name of a security event. Never NULL. */
++IEC104_API const char* iec104_security_event_string(iec104_security_event event);
++
++/** @brief Details of an open TLS connection. */
++typedef struct iec104_tls_info {
++    char version[16];          /**< e.g. "TLSv1.3". */
++    char cipher[64];           /**< e.g. "TLS_AES_128_GCM_SHA256". */
++    char peer_subject[256];    /**< Subject of the peer certificate (RFC 2253), "" if none. */
++    char peer_fingerprint[96]; /**< SHA-256 of the peer certificate, "AB:CD:...". */
++    int resumed;               /**< 1 if an earlier session was resumed. */
++} iec104_tls_info;
++
+ /* ------------------------------------------------------------------------- */
+ /* Values: time, information objects, ASDU information                       */
+ /* ------------------------------------------------------------------------- */
+@@ -401,6 +487,15 @@ typedef struct iec104_callbacks {
+      */
+     void (*on_command_result)(void* user, uint16_t common_address, const iec104_object* command,
+                               iec104_command_result result);
++    /**
++     * @brief A security event of a TLS connection (see ::iec104_security_event).
++     *
++     * Failures are followed by the close of the connection with
++     * IEC104_CLOSE_TLS or IEC104_CLOSE_T0_TIMEOUT.
++     * @param detail Text, valid only during the call. Never NULL.
++     */
++    void (*on_security)(void* user, uint32_t connection, iec104_security_event event,
++                        const char* detail);
+ } iec104_callbacks;
+ 
+ /* ------------------------------------------------------------------------- */
+@@ -624,6 +719,30 @@ IEC104_API void iec104_server_set_log(iec104_server* server, iec104_log_level ma
+ IEC104_API iec104_status iec104_server_get_stats(const iec104_server* server, uint32_t connection,
+                                                  iec104_link_stats* out);
+ 
++/**
++ * @brief Switches TLS on for connections accepted from now on.
++ *
++ * Loads CA, certificate, key and CRL at once. Can be called again at any
++ * time, e.g. to change the certificate: open connections keep their TLS
++ * session, new ones use the new settings. NULL switches TLS off for new
++ * connections. Errors are also logged with their reason.
++ *
++ * @return IEC104_OK; IEC104_ERR_IO if a file cannot be read;
++ *         IEC104_ERR_INVALID_ARGUMENT for inconsistent settings (key does not
++ *         match, no usable suite, no certificate); IEC104_ERR_UNSUPPORTED
++ *         without TLS support. On error the previous settings stay.
++ */
++IEC104_API iec104_status iec104_server_set_tls(iec104_server* server,
++                                               const iec104_tls_config* config);
++
++/**
++ * @brief TLS details of an open connection.
++ * @return IEC104_OK; IEC104_ERR_WRONG_STATE if the connection does not
++ *         exist, is not TLS or the handshake is not complete.
++ */
++IEC104_API iec104_status iec104_server_get_tls_info(const iec104_server* server,
++                                                    uint32_t connection, iec104_tls_info* out);
++
+ /** @brief Closes all connections and the listening socket and frees the handle. NULL is ignored. */
+ IEC104_API void iec104_server_destroy(iec104_server* server);
+ 
+@@ -746,6 +865,19 @@ IEC104_API void iec104_client_set_log(iec104_client* client, iec104_log_level ma
+ IEC104_API iec104_status iec104_client_get_stats(const iec104_client* client,
+                                                  iec104_link_stats* out);
+ 
++/**
++ * @brief Uses TLS for the next connect (see iec104_server_set_tls()).
++ *
++ * A session of the previous connection is offered for resumption unless
++ * the settings changed in between.
++ */
++IEC104_API iec104_status iec104_client_set_tls(iec104_client* client,
++                                               const iec104_tls_config* config);
++
++/** @brief TLS details of the open connection (see iec104_server_get_tls_info()). */
++IEC104_API iec104_status iec104_client_get_tls_info(const iec104_client* client,
++                                                    iec104_tls_info* out);
++
+ /* ------------------------------------------------------------------------- */
+ /* Configuration file                                                        */
+ /* ------------------------------------------------------------------------- */
+@@ -757,6 +889,8 @@ typedef struct iec104_config {
+     iec104_client_options client; /**< Client time limits. */
+     char host[256];               /**< Address: server = bind address, client = peer. */
+     uint16_t port;                /**< TCP port. */
++    int use_tls;                  /**< 1: apply @p tls with *_set_tls(). */
++    iec104_tls_config tls;        /**< TLS settings. */
+ } iec104_config;
+ 
+ /** @brief Defaults of all parts (standard values, host "", port 2404). Does nothing for NULL. */
+@@ -777,6 +911,15 @@ IEC104_API void iec104_config_init(iec104_config* config);
+  * | send_end_of_init, command_termination, cause_of_init | server |
+  * | max_command_delay | server (s) |
+  * | confirmation_timeout, termination_timeout, expect_termination | client (s) |
++ * | tls | use_tls |
++ * | tls_ca, tls_certificate, tls_key, tls_crl | tls (files) |
++ * | tls_key_password, tls_peer_name, tls_peer_fingerprint | tls |
++ * | tls_min_version, tls_max_version | tls ("1.2", "1.3") |
++ * | tls_ciphers, tls_ciphersuites | tls (cipher_list, cipher_suites) |
++ * | tls_verify_peer, tls_renegotiation, tls_session_resumption | tls |
++ * | tls_renewal_interval, tls_session_lifetime | tls (s) |
++ *
++ * Relative file names are relative to the directory of the configuration file.
+  *
+  * @param error_line Receives the line number of the first error (0 if none); may be NULL.
+  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, an unknown key or
+diff --git a/src/api/client.cpp b/src/api/client.cpp
+index 4e0ab10..09bbfd8 100644
+--- a/src/api/client.cpp
++++ b/src/api/client.cpp
+@@ -39,6 +39,7 @@ struct iec104_client : api::CallbackSink {
+     apci::ApciConfig config;
+     codec::AsduProfile profile;
+     std::uint8_t originator;
++    std::shared_ptr<transport::TlsContext> tls; // NULL = plain TCP; keeps the session cache
+     // A vector of at most one entry, so that the shared poll loop can be used.
+     std::vector<std::unique_ptr<transport::Link>> links;
+ 
+@@ -251,13 +252,14 @@ iec104_status iec104_client_connect(iec104_client* client, const char* host, uin
+     }
+     auto link = std::make_unique<transport::Link>();
+     const iec104_status init = link->init_connecting(kClientLinkId, client->config, std::move(s),
+-                                                     transport::monotonic_ms());
++                                                     transport::monotonic_ms(), client->tls);
+     if (init != IEC104_OK) {
+         return init;
+     }
+     link->set_trace(client);
+     client->logger().write(IEC104_LOG_INFO, kClientLinkId,
+-                           "connecting to " + std::string(host) + ":" + std::to_string(port));
++                           "connecting to " + std::string(host) + ":" + std::to_string(port) +
++                               (client->tls ? " (TLS)" : ""));
+     client->links.push_back(std::move(link));
+     client->had_connection = true;
+     client->counters = iec104_link_stats{};
+@@ -415,6 +417,22 @@ iec104_status iec104_client_get_stats(const iec104_client* client, iec104_link_s
+     return IEC104_OK;
+ }
+ 
++iec104_status iec104_client_set_tls(iec104_client* client, const iec104_tls_config* config) {
++    if (client == nullptr) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    return api::make_tls_context(transport::TlsRole::Client, config, client->logger(), client->tls);
++}
++
++iec104_status iec104_client_get_tls_info(const iec104_client* client, iec104_tls_info* out) {
++    if (client == nullptr || out == nullptr) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    return !client->links.empty() && api::copy_tls_info(*client->links.front(), *out)
++               ? IEC104_OK
++               : IEC104_ERR_WRONG_STATE;
++}
++
+ void iec104_client_destroy(iec104_client* client) {
+     delete client; // NOLINT(cppcoreguidelines-owning-memory): ends the ownership of the C caller
+ }
+diff --git a/src/api/config.cpp b/src/api/config.cpp
+index ecd903e..9009281 100644
+--- a/src/api/config.cpp
++++ b/src/api/config.cpp
+@@ -85,15 +85,111 @@ template <typename T> iec104_status parse_small(const std::string& text, unsigne
+     return st;
+ }
+ 
++/** @brief Copies @p value into a fixed-size text field of the C structure. */
++template <std::size_t N>
++iec104_status parse_text(const std::string& value,
++                         char (&out)[N]) { // NOLINT(*-avoid-c-arrays): field of a C struct
++    if (value.size() >= N) {
++        return IEC104_ERR_OUT_OF_RANGE;
++    }
++    std::memcpy(static_cast<char*>(out), value.c_str(), value.size() + 1U);
++    return IEC104_OK;
++}
++
++/** @brief A file name; relative names are taken relative to @p base (directory of the file). */
++template <std::size_t N>
++iec104_status parse_path(const std::string& value, const std::string& base,
++                         char (&out)[N]) { // NOLINT(*-avoid-c-arrays): field of a C struct
++    if (value.empty() || value[0] == '/' || base.empty()) {
++        return parse_text(value, out);
++    }
++    return parse_text(base + "/" + value, out);
++}
++
++/** @brief "1.2" or "1.3". */
++iec104_status parse_tls_version(const std::string& text, std::uint16_t& out) {
++    if (text == "1.2") {
++        out = IEC104_TLS_1_2;
++        return IEC104_OK;
++    }
++    if (text == "1.3") {
++        out = IEC104_TLS_1_3;
++        return IEC104_OK;
++    }
++    return IEC104_ERR_INVALID_ARGUMENT;
++}
++
++/** @brief Whole seconds. */
++iec104_status parse_whole_seconds(const std::string& text, std::uint32_t& out) {
++    return parse_small(text, 7UL * 24UL * 3600UL, out); // at most one week
++}
++
++/** @brief Applies one TLS key ("tls_..."); IEC104_ERR_INVALID_ARGUMENT for an unknown key. */
++iec104_status apply_tls(const std::string& key, const std::string& value, const std::string& base,
++                        iec104_tls_config& t) {
++    if (key == "tls_ca") {
++        return parse_path(value, base, t.ca_file);
++    }
++    if (key == "tls_certificate") {
++        return parse_path(value, base, t.certificate_file);
++    }
++    if (key == "tls_key") {
++        return parse_path(value, base, t.private_key_file);
++    }
++    if (key == "tls_crl") {
++        return parse_path(value, base, t.crl_file);
++    }
++    if (key == "tls_key_password") {
++        return parse_text(value, t.key_password);
++    }
++    if (key == "tls_peer_name") {
++        return parse_text(value, t.peer_name);
++    }
++    if (key == "tls_peer_fingerprint") {
++        return parse_text(value, t.peer_fingerprint);
++    }
++    if (key == "tls_ciphers") {
++        return parse_text(value, t.cipher_list);
++    }
++    if (key == "tls_ciphersuites") {
++        return parse_text(value, t.cipher_suites);
++    }
++    if (key == "tls_min_version") {
++        return parse_tls_version(value, t.min_version);
++    }
++    if (key == "tls_max_version") {
++        return parse_tls_version(value, t.max_version);
++    }
++    if (key == "tls_verify_peer") {
++        return parse_flag(value, t.verify_peer);
++    }
++    if (key == "tls_renegotiation") {
++        return parse_flag(value, t.renegotiation);
++    }
++    if (key == "tls_session_resumption") {
++        return parse_flag(value, t.session_resumption);
++    }
++    if (key == "tls_renewal_interval") {
++        return parse_whole_seconds(value, t.renewal_interval_s);
++    }
++    if (key == "tls_session_lifetime") {
++        return parse_whole_seconds(value, t.session_lifetime_s);
++    }
++    return IEC104_ERR_INVALID_ARGUMENT;
++}
++
+ /** @brief Applies one key; IEC104_ERR_INVALID_ARGUMENT for an unknown key. */
+-iec104_status apply(const std::string& key, const std::string& value, iec104_config& c) {
++iec104_status apply(const std::string& key, const std::string& value, const std::string& base,
++                    iec104_config& c) {
+     iec104_link_config& l = c.link;
++    if (key == "tls") {
++        return parse_flag(value, c.use_tls);
++    }
++    if (key.compare(0, 4, "tls_") == 0) {
++        return apply_tls(key, value, base, c.tls);
++    }
+     if (key == "host") {
+-        if (value.size() >= sizeof c.host) {
+-            return IEC104_ERR_OUT_OF_RANGE;
+-        }
+-        std::memcpy(static_cast<char*>(c.host), value.c_str(), value.size() + 1U);
+-        return IEC104_OK;
++        return parse_text(value, c.host);
+     }
+     if (key == "port") {
+         return parse_small(value, 65535, c.port);
+@@ -170,6 +266,7 @@ void iec104_config_init(iec104_config* config) {
+     iec104_link_config_init(&config->link);
+     iec104_server_options_init(&config->server);
+     iec104_client_options_init(&config->client);
++    iec104_tls_config_init(&config->tls);
+     config->port = IEC104_DEFAULT_PORT;
+ }
+ 
+@@ -186,6 +283,9 @@ iec104_status iec104_config_load(const char* path, iec104_config* config, int* e
+     }
+     // Work on a copy, so that a broken file leaves the caller's config unchanged.
+     iec104_config c = *config;
++    const std::string file(path);
++    const std::size_t slash = file.rfind('/');
++    const std::string base = slash == std::string::npos ? std::string() : file.substr(0, slash);
+     std::string line;
+     int number = 0;
+     while (std::getline(in, line)) {
+@@ -198,7 +298,7 @@ iec104_status iec104_config_load(const char* path, iec104_config* config, int* e
+         const std::size_t eq = text.find('=');
+         iec104_status st = IEC104_ERR_INVALID_ARGUMENT;
+         if (eq != std::string::npos) {
+-            st = apply(trim(text.substr(0, eq)), trim(text.substr(eq + 1U)), c);
++            st = apply(trim(text.substr(0, eq)), trim(text.substr(eq + 1U)), base, c);
+         }
+         if (st != IEC104_OK) {
+             if (error_line != nullptr) {
+diff --git a/src/api/iec104.cpp b/src/api/iec104.cpp
+index 60a2857..e50faac 100644
+--- a/src/api/iec104.cpp
++++ b/src/api/iec104.cpp
+@@ -14,6 +14,8 @@
+  */
+ #include "iec104/iec104.h"
+ 
++#include "transport/tls.hpp"
++
+ /*
+  * The build system passes the project version (CMakeLists.txt, project()) as
+  * IEC104_VERSION_STRING. The fallback only exists so that the file still
+@@ -148,7 +150,7 @@ const char* iec104_close_reason_string(iec104_close_reason reason) {
+     case IEC104_CLOSE_CONNECT_FAILED:
+         return "connect failed";
+     case IEC104_CLOSE_T0_TIMEOUT:
+-        return "t0 timeout (connect)";
++        return "t0 timeout (connect or TLS handshake)";
+     case IEC104_CLOSE_T1_TIMEOUT:
+         return "t1 timeout (no acknowledgement)";
+     case IEC104_CLOSE_SEQUENCE_ERROR:
+@@ -161,8 +163,46 @@ const char* iec104_close_reason_string(iec104_close_reason reason) {
+         return "unexpected frame";
+     case IEC104_CLOSE_SOCKET_ERROR:
+         return "socket error";
++    case IEC104_CLOSE_TLS:
++        return "TLS failure";
+     }
+     return "unknown reason";
+ }
+ 
++const char* iec104_security_event_string(iec104_security_event event) {
++    switch (event) {
++    case IEC104_SECURITY_TLS_ESTABLISHED:
++        return "TLS established";
++    case IEC104_SECURITY_HANDSHAKE_FAILED:
++        return "TLS handshake failed";
++    case IEC104_SECURITY_CERTIFICATE_REJECTED:
++        return "peer certificate rejected";
++    case IEC104_SECURITY_TLS_ERROR:
++        return "TLS error";
++    case IEC104_SECURITY_KEY_RENEWAL:
++        return "key renewal";
++    }
++    return "unknown event";
++}
++
++void iec104_tls_config_init(iec104_tls_config* config) {
++    if (config == nullptr) {
++        return;
++    }
++    // Defaults of the profile: docs/05_Normfragen_und_Festlegungen.md, N12.
++    const iec104::transport::TlsSettings defaults{};
++    *config = iec104_tls_config{};
++    config->min_version = defaults.min_version;
++    config->max_version = defaults.max_version;
++    config->verify_peer = defaults.verify_peer ? 1 : 0;
++    config->renegotiation = defaults.renegotiation ? 1 : 0;
++    config->renewal_interval_s = defaults.renewal_interval_ms / 1000U;
++    config->session_resumption = defaults.session_resumption ? 1 : 0;
++    config->session_lifetime_s = defaults.session_lifetime_s;
++}
++
++int iec104_tls_available(void) {
++    return iec104::transport::tls_available() ? 1 : 0;
++}
++
+ } // extern "C"
+diff --git a/src/api/link_common.cpp b/src/api/link_common.cpp
+index 9381c0f..fe1d085 100644
+--- a/src/api/link_common.cpp
++++ b/src/api/link_common.cpp
+@@ -17,7 +17,11 @@
+ #include <algorithm>
+ #include <array>
+ #include <cerrno>
++#include <climits>
++#include <cstdint>
++#include <cstring>
+ #include <poll.h>
++#include <utility>
+ 
+ namespace iec104::api {
+ 
+@@ -65,6 +69,8 @@ iec104_close_reason to_c(transport::LinkCloseReason reason, apci::CloseReason pr
+         return IEC104_CLOSE_T0_TIMEOUT;
+     case transport::LinkCloseReason::SocketError:
+         return IEC104_CLOSE_SOCKET_ERROR;
++    case transport::LinkCloseReason::TlsError:
++        return IEC104_CLOSE_TLS;
+     case transport::LinkCloseReason::Protocol:
+         break;
+     }
+@@ -108,6 +114,112 @@ void CallbackSink::on_frame(std::uint32_t id, bool outgoing, const std::uint8_t*
+     }
+ }
+ 
++void CallbackSink::on_tls(std::uint32_t id, transport::TlsEvent event, const std::string& text) {
++    iec104_security_event e = IEC104_SECURITY_TLS_ERROR;
++    iec104_log_level level = IEC104_LOG_ERROR;
++    switch (event) {
++    case transport::TlsEvent::Established:
++        e = IEC104_SECURITY_TLS_ESTABLISHED;
++        level = IEC104_LOG_INFO;
++        break;
++    case transport::TlsEvent::HandshakeFailed:
++        e = IEC104_SECURITY_HANDSHAKE_FAILED;
++        break;
++    case transport::TlsEvent::CertificateRejected:
++        e = IEC104_SECURITY_CERTIFICATE_REJECTED;
++        break;
++    case transport::TlsEvent::Error:
++        e = IEC104_SECURITY_TLS_ERROR;
++        break;
++    case transport::TlsEvent::Renewal:
++        e = IEC104_SECURITY_KEY_RENEWAL;
++        level = IEC104_LOG_DEBUG;
++        break;
++    }
++    logger_.write(level, id, std::string(iec104_security_event_string(e)) + ": " + text);
++    if (callbacks_.on_security != nullptr) {
++        callbacks_.on_security(callbacks_.user, id, e, text.c_str());
++    }
++}
++
++namespace {
++
++// Copies a C string field of bounded size (the field may lack the NUL).
++template <std::size_t N>
++std::string field(const char (&text)[N]) { // NOLINT(*-avoid-c-arrays): field of a C struct
++    const auto* begin = static_cast<const char*>(text);
++    const auto* end = static_cast<const char*>(std::memchr(begin, '\0', N));
++    return {begin, end != nullptr ? static_cast<std::size_t>(end - begin) : N};
++}
++
++template <std::size_t N>
++void put(char (&out)[N], // NOLINT(*-avoid-c-arrays): field of a C struct
++         const std::string& text) noexcept {
++    const std::size_t n = std::min(text.size(), N - 1U);
++    std::memcpy(static_cast<char*>(out), text.data(), n);
++    out[n] = '\0';
++}
++
++transport::TlsSettings to_settings(const iec104_tls_config& c) {
++    transport::TlsSettings t;
++    t.ca_file = field(c.ca_file);
++    t.certificate_file = field(c.certificate_file);
++    t.private_key_file = field(c.private_key_file);
++    t.key_password = field(c.key_password);
++    t.crl_file = field(c.crl_file);
++    t.peer_name = field(c.peer_name);
++    t.peer_fingerprint = field(c.peer_fingerprint);
++    t.cipher_list = field(c.cipher_list);
++    t.cipher_suites = field(c.cipher_suites);
++    t.min_version = c.min_version;
++    t.max_version = c.max_version;
++    t.verify_peer = c.verify_peer != 0;
++    t.renegotiation = c.renegotiation != 0;
++    t.renewal_interval_ms =
++        c.renewal_interval_s > UINT32_MAX / 1000U ? UINT32_MAX : c.renewal_interval_s * 1000U;
++    t.session_resumption = c.session_resumption != 0;
++    t.session_lifetime_s = c.session_lifetime_s;
++    return t;
++}
++
++} // namespace
++
++iec104_status make_tls_context(transport::TlsRole role, const iec104_tls_config* config,
++                               const Logger& logger, std::shared_ptr<transport::TlsContext>& out) {
++    if (config == nullptr) {
++        out.reset();
++        logger.write(IEC104_LOG_INFO, 0, "TLS off for new connections");
++        return IEC104_OK;
++    }
++    std::shared_ptr<transport::TlsContext> ctx;
++    std::string error;
++    const iec104_status st = transport::create_tls_context(role, to_settings(*config), ctx, error);
++    if (st != IEC104_OK) {
++        logger.write(IEC104_LOG_ERROR, 0, "TLS settings: " + error);
++        return st;
++    }
++    if (config->verify_peer == 0) {
++        logger.write(IEC104_LOG_WARNING, 0, "TLS: peer is not verified (verify_peer = 0)");
++    }
++    out = std::move(ctx);
++    logger.write(IEC104_LOG_INFO, 0, "TLS on for new connections");
++    return IEC104_OK;
++}
++
++bool copy_tls_info(const transport::Link& link, iec104_tls_info& out) noexcept {
++    transport::TlsInfo info;
++    if (!link.tls_info(info)) {
++        return false;
++    }
++    out = iec104_tls_info{};
++    put(out.version, info.version);
++    put(out.cipher, info.cipher);
++    put(out.peer_subject, info.peer_subject);
++    put(out.peer_fingerprint, info.peer_fingerprint);
++    out.resumed = info.resumed ? 1 : 0;
++    return true;
++}
++
+ void log_config_warnings(const apci::ApciConfig& config, const Logger& logger) {
+     apci::ConfigWarnings w{};
+     if (apci::validate(config, w) != IEC104_OK) {
+diff --git a/src/api/link_common.hpp b/src/api/link_common.hpp
+index 4464f5a..8cbb882 100644
+--- a/src/api/link_common.hpp
++++ b/src/api/link_common.hpp
+@@ -22,6 +22,7 @@
+ #include "codec/asdu.hpp"
+ #include "iec104/iec104.h"
+ #include "transport/link.hpp"
++#include "transport/tls.hpp"
+ 
+ #include <memory>
+ #include <vector>
+@@ -51,6 +52,7 @@ class CallbackSink : public transport::LinkSink {
+                    apci::CloseReason protocol_reason) override;
+     void on_frame(std::uint32_t id, bool outgoing, const std::uint8_t* apdu,
+                   std::size_t length) override;
++    void on_tls(std::uint32_t id, transport::TlsEvent event, const std::string& text) override;
+ 
+     /** @brief The log output of this handle. */
+     [[nodiscard]] Logger& logger() noexcept { return logger_; }
+@@ -74,6 +76,18 @@ class CallbackSink : public transport::LinkSink {
+     Logger logger_;
+ };
+ 
++/**
++ * @brief Builds the TLS context of a server or client from the C settings.
++ *
++ * @param config NULL = no TLS (out is reset).
++ * @return Status of transport::create_tls_context(); failures are logged as errors.
++ */
++iec104_status make_tls_context(transport::TlsRole role, const iec104_tls_config* config,
++                               const Logger& logger, std::shared_ptr<transport::TlsContext>& out);
++
++/** @brief TLS details of @p link into the C structure; false if the link is not open TLS. */
++bool copy_tls_info(const transport::Link& link, iec104_tls_info& out) noexcept;
++
+ /** @brief Logs the violated recommendations of @p config (t2 < t1, w <= 2/3 k) as warnings. */
+ void log_config_warnings(const apci::ApciConfig& config, const Logger& logger);
+ 
+diff --git a/src/api/server.cpp b/src/api/server.cpp
+index 25255b9..291cda8 100644
+--- a/src/api/server.cpp
++++ b/src/api/server.cpp
+@@ -59,6 +59,7 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
+     codec::AsduProfile profile;
+     std::uint8_t originator;
+     transport::Socket listener;
++    std::shared_ptr<transport::TlsContext> tls; // NULL = plain TCP; for new connections
+     std::vector<std::unique_ptr<transport::Link>> links;
+     std::map<std::uint32_t, session::ServerSession> sessions;
+     session::ProcessImage image;
+@@ -84,8 +85,8 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
+                 return;
+             }
+             auto link = std::make_unique<transport::Link>();
+-            if (link->init_accepted(next_id, config, std::move(s), transport::monotonic_ms()) ==
+-                IEC104_OK) {
++            if (link->init_accepted(next_id, config, std::move(s), transport::monotonic_ms(),
++                                    tls) == IEC104_OK) {
+                 link->set_trace(this);
+                 logger().write(IEC104_LOG_INFO, next_id,
+                                "connection accepted from " + link->peer());
+@@ -448,6 +449,26 @@ iec104_status iec104_server_get_stats(const iec104_server* server, uint32_t conn
+     return IEC104_ERR_WRONG_STATE;
+ }
+ 
++iec104_status iec104_server_set_tls(iec104_server* server, const iec104_tls_config* config) {
++    if (server == nullptr) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    return api::make_tls_context(transport::TlsRole::Server, config, server->logger(), server->tls);
++}
++
++iec104_status iec104_server_get_tls_info(const iec104_server* server, uint32_t connection,
++                                         iec104_tls_info* out) {
++    if (server == nullptr || out == nullptr) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    for (const auto& link : server->links) {
++        if (link->id() == connection) {
++            return api::copy_tls_info(*link, *out) ? IEC104_OK : IEC104_ERR_WRONG_STATE;
++        }
++    }
++    return IEC104_ERR_WRONG_STATE;
++}
++
+ void iec104_server_destroy(iec104_server* server) {
+     // Ends the ownership of the C caller; sockets close in their destructors.
+     delete server; // NOLINT(cppcoreguidelines-owning-memory)
+diff --git a/src/transport/link.cpp b/src/transport/link.cpp
+index 6134b29..846384d 100644
+--- a/src/transport/link.cpp
++++ b/src/transport/link.cpp
+@@ -12,6 +12,7 @@
+  */
+ #include "transport/link.hpp"
+ 
++#include <algorithm>
+ #include <cstring>
+ #include <poll.h>
+ #include <utility>
+@@ -19,43 +20,73 @@
+ namespace iec104::transport {
+ 
+ iec104_status Link::init_accepted(std::uint32_t id, const apci::ApciConfig& config, Socket socket,
+-                                  apci::TimeMs now) noexcept {
++                                  apci::TimeMs now, std::shared_ptr<TlsContext> tls) noexcept {
+     const iec104_status st = conn_.init(config);
+     if (st != IEC104_OK) {
+         return st;
+     }
+     id_ = id;
+     socket_ = std::move(socket);
+-    connecting_ = false;
+-    return conn_.open(now);
++    tls_context_ = std::move(tls);
++    // t0 also limits the TLS handshake of an accepted connection (docs/05, E9).
++    setup_deadline_ = now + config.t0_ms;
++    return start_tls_or_open(now);
+ }
+ 
+ iec104_status Link::init_connecting(std::uint32_t id, const apci::ApciConfig& config, Socket socket,
+-                                    apci::TimeMs now) noexcept {
++                                    apci::TimeMs now, std::shared_ptr<TlsContext> tls) noexcept {
+     const iec104_status st = conn_.init(config);
+     if (st != IEC104_OK) {
+         return st;
+     }
+     id_ = id;
+     socket_ = std::move(socket);
+-    connecting_ = true;
+-    // t0: time-out of connection establishment (docs/05, interoperability list).
+-    connect_deadline_ = now + config.t0_ms;
++    tls_context_ = std::move(tls);
++    phase_ = Phase::Connecting;
++    // t0: time-out of connection establishment (docs/05, interoperability
++    // list), including the TLS handshake (E9).
++    setup_deadline_ = now + config.t0_ms;
+     return IEC104_OK;
+ }
+ 
++iec104_status Link::start_tls_or_open(apci::TimeMs now) noexcept {
++    if (tls_context_ == nullptr) {
++        phase_ = Phase::Open;
++        return conn_.open(now);
++    }
++    phase_ = Phase::Handshaking;
++    return tls_context_->create_session(socket_, tls_);
++}
++
+ short Link::poll_events() const noexcept {
+-    if (connecting_) {
++    switch (phase_) {
++    case Phase::Connecting:
+         return POLLOUT; // writable = connect finished (successfully or not)
++    case Phase::Handshaking:
++        return tls_->poll_events();
++    case Phase::Open:
++        break;
+     }
+-    return static_cast<short>(POLLIN | (pending_fill_ > 0U ? POLLOUT : 0));
++    const bool tls_wants_write = tls_ != nullptr && (tls_->poll_events() & POLLOUT) != 0;
++    return static_cast<short>(POLLIN | (pending_fill_ > 0U || tls_wants_write ? POLLOUT : 0));
+ }
+ 
+ apci::TimeMs Link::next_deadline() const noexcept {
+     if (closed()) {
+         return 0; // service() at once to report the close
+     }
+-    return connecting_ ? connect_deadline_ : conn_.next_deadline();
++    if (phase_ != Phase::Open) {
++        return setup_deadline_;
++    }
++    return std::min(conn_.next_deadline(), next_renewal_);
++}
++
++bool Link::tls_info(TlsInfo& out) const {
++    if (tls_ == nullptr || phase_ != Phase::Open || closed()) {
++        return false;
++    }
++    out = tls_->info();
++    return true;
+ }
+ 
+ void Link::service(short revents, apci::TimeMs now, LinkSink& sink) noexcept {
+@@ -66,27 +97,29 @@ void Link::service(short revents, apci::TimeMs now, LinkSink& sink) noexcept {
+         finish(close_reason_, sink); // recorded earlier, e.g. by a failed write in send_asdu()
+         return;
+     }
+-    if (connecting_) {
+-        if ((revents & (POLLOUT | POLLERR | POLLHUP)) != 0) {
+-            if (finish_connect(socket_) != IEC104_OK) {
+-                finish(LinkCloseReason::ConnectFailed, sink);
+-                return;
+-            }
+-            connecting_ = false;
+-            (void)conn_.open(now);
+-        } else if (now >= connect_deadline_) {
+-            finish(LinkCloseReason::T0Timeout, sink);
+-            return;
+-        } else {
+-            return;
++    if (phase_ == Phase::Connecting && !continue_connect(revents, now, sink)) {
++        return; // still connecting, or closed
++    }
++    bool just_opened = false;
++    if (phase_ == Phase::Handshaking) {
++        if (!continue_handshake(now, sink)) {
++            return; // still running, or closed
+         }
++        just_opened = true;
+     }
+-    if ((revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
++    // TLS: data that arrived with the end of the handshake is already
++    // buffered inside the TLS session, and a renegotiation may need a
++    // writable socket to go on reading.
++    const bool readable = (revents & (POLLIN | POLLHUP | POLLERR)) != 0;
++    if (readable || (tls_ != nullptr && (just_opened || (revents & POLLOUT) != 0))) {
+         read_input(now, sink);
+         if (reported_closed_) {
+             return;
+         }
+     }
++    if (tls_ != nullptr && now >= next_renewal_) {
++        renew_keys(now, sink);
++    }
+     conn_.tick(now);
+     dispatch_events(sink);
+     flush_output();
+@@ -100,20 +133,107 @@ void Link::service(short revents, apci::TimeMs now, LinkSink& sink) noexcept {
+     }
+ }
+ 
++bool Link::continue_connect(short revents, apci::TimeMs now, LinkSink& sink) noexcept {
++    if ((revents & (POLLOUT | POLLERR | POLLHUP)) == 0) {
++        if (now >= setup_deadline_) {
++            finish(LinkCloseReason::T0Timeout, sink);
++        }
++        return false;
++    }
++    if (finish_connect(socket_) != IEC104_OK) {
++        finish(LinkCloseReason::ConnectFailed, sink);
++        return false;
++    }
++    if (start_tls_or_open(now) != IEC104_OK) {
++        sink.on_tls(id_, TlsEvent::HandshakeFailed, "cannot create TLS session");
++        finish(LinkCloseReason::TlsError, sink);
++        return false;
++    }
++    return true;
++}
++
++bool Link::continue_handshake(apci::TimeMs now, LinkSink& sink) noexcept {
++    const iec104_status st = tls_->handshake();
++    if (st == IEC104_ERR_WOULD_BLOCK) {
++        if (now >= setup_deadline_) {
++            sink.on_tls(id_, TlsEvent::HandshakeFailed, "handshake not complete within t0");
++            finish(LinkCloseReason::T0Timeout, sink);
++        }
++        return false;
++    }
++    if (st != IEC104_OK) {
++        sink.on_tls(id_,
++                    tls_->failure() == TlsFailure::Certificate ? TlsEvent::CertificateRejected
++                                                               : TlsEvent::HandshakeFailed,
++                    tls_->error());
++        finish(LinkCloseReason::TlsError, sink);
++        return false;
++    }
++    phase_ = Phase::Open;
++    const TlsInfo info = tls_->info();
++    std::string text = info.version + ", " + info.cipher;
++    if (!info.peer_subject.empty()) {
++        text += ", peer " + info.peer_subject;
++    }
++    if (info.resumed) {
++        text += ", resumed";
++    }
++    sink.on_tls(id_, TlsEvent::Established, text);
++    const std::uint32_t interval = tls_context_->renewal_interval_ms();
++    next_renewal_ = interval > 0U ? now + interval : apci::kNoDeadline;
++    (void)conn_.open(now);
++    return true;
++}
++
++void Link::renew_keys(apci::TimeMs now, LinkSink& sink) noexcept {
++    next_renewal_ = now + tls_context_->renewal_interval_ms();
++    const iec104_status st = tls_->renew();
++    if (st == IEC104_OK) {
++        sink.on_tls(id_, TlsEvent::Renewal,
++                    tls_->info().version == "TLSv1.3" ? "key update" : "renegotiation");
++    } else if (st == IEC104_ERR_IO) {
++        sink.on_tls(id_, TlsEvent::Error, tls_->error());
++        close_reason_ = LinkCloseReason::TlsError;
++    } else if (st == IEC104_ERR_UNSUPPORTED) {
++        next_renewal_ = apci::kNoDeadline; // renegotiation switched off: do not try again
++    }
++}
++
++iec104_status Link::io_read(std::uint8_t* buf, std::size_t size, std::size_t& n) noexcept {
++    return tls_ != nullptr ? tls_->read(buf, size, n) : read_some(socket_, buf, size, n);
++}
++
++iec104_status Link::io_write(const std::uint8_t* data, std::size_t size, std::size_t& n) noexcept {
++    if (tls_ == nullptr) {
++        return write_some(socket_, data, size, n);
++    }
++    const iec104_status st = tls_->write(data, size, n);
++    return st == IEC104_ERR_WOULD_BLOCK ? IEC104_OK : st; // nothing written yet, as with TCP
++}
++
++LinkCloseReason Link::io_failure(iec104_status st) const noexcept {
++    if (st == IEC104_ERR_CLOSED) {
++        return LinkCloseReason::PeerClosed;
++    }
++    return tls_ != nullptr ? LinkCloseReason::TlsError : LinkCloseReason::SocketError;
++}
++
+ void Link::read_input(apci::TimeMs now, LinkSink& sink) noexcept {
+     std::array<std::uint8_t, 4096> buf{};
+     for (;;) {
+         std::size_t n = 0;
+-        const iec104_status st = read_some(socket_, buf.data(), buf.size(), n);
++        const iec104_status st = io_read(buf.data(), buf.size(), n);
+         if (st == IEC104_ERR_WOULD_BLOCK) {
+             return;
+         }
+         if (st != IEC104_OK) {
+             // Deliver what the state machine produced before the peer left.
+             dispatch_events(sink);
+-            finish(st == IEC104_ERR_CLOSED ? LinkCloseReason::PeerClosed
+-                                           : LinkCloseReason::SocketError,
+-                   sink);
++            const LinkCloseReason reason = io_failure(st);
++            if (reason == LinkCloseReason::TlsError) {
++                sink.on_tls(id_, TlsEvent::Error, tls_->error());
++            }
++            finish(reason, sink);
+             return;
+         }
+         // receive() stops when its event queue is full; empty it and go on.
+@@ -151,10 +271,9 @@ void Link::flush_output() noexcept {
+     pending_fill_ +=
+         conn_.take_output(pending_.data() + pending_fill_, pending_.size() - pending_fill_);
+     std::size_t written = 0;
+-    const iec104_status st = write_some(socket_, pending_.data(), pending_fill_, written);
++    const iec104_status st = io_write(pending_.data(), pending_fill_, written);
+     if (st != IEC104_OK) {
+-        close_reason_ =
+-            st == IEC104_ERR_CLOSED ? LinkCloseReason::PeerClosed : LinkCloseReason::SocketError;
++        close_reason_ = io_failure(st);
+         return;
+     }
+     std::memmove(pending_.data(), pending_.data() + written, pending_fill_ - written);
+@@ -163,7 +282,7 @@ void Link::flush_output() noexcept {
+ 
+ iec104_status Link::send_asdu(const std::uint8_t* asdu, std::size_t length,
+                               apci::TimeMs now) noexcept {
+-    if (closed() || connecting_) {
++    if (closed() || phase_ != Phase::Open) {
+         return IEC104_ERR_WRONG_STATE;
+     }
+     const iec104_status st = conn_.send_asdu(asdu, length, now);
+@@ -180,6 +299,11 @@ void Link::finish(LinkCloseReason reason, LinkSink& sink) noexcept {
+     reported_closed_ = true;
+     close_reason_ = reason;
+     conn_.close(); // no further output from the state machine
++    // Orderly TLS end (close_notify) unless the connection is already broken.
++    if (tls_ != nullptr && phase_ == Phase::Open && reason != LinkCloseReason::PeerClosed &&
++        reason != LinkCloseReason::SocketError && reason != LinkCloseReason::TlsError) {
++        tls_->shutdown();
++    }
+     socket_.reset();
+     sink.on_closed(id_, reason, protocol_reason_);
+ }
+diff --git a/src/transport/link.hpp b/src/transport/link.hpp
+index 7f7b9d9..1d19457 100644
+--- a/src/transport/link.hpp
++++ b/src/transport/link.hpp
+@@ -15,8 +15,17 @@
+  * It reads from the socket into the state machine, writes the state
+  * machine's output to the socket, drives the timers with the monotonic
+  * clock, and hands the events to a sink (the C API layer). It also covers
+- * the connection set-up of the client with time-out t0, which the sans-I/O
+- * state machine does not know about.
++ * the connection set-up, which the sans-I/O state machine does not know
++ * about:
++ *
++ * | Phase       | Ends when                        | Time limit |
++ * |-------------|----------------------------------|------------|
++ * | Connecting  | TCP connect complete (client)    | t0         |
++ * | Handshaking | TLS handshake complete (if TLS)  | t0 (E9)    |
++ * | Open        | close                            | t1..t3     |
++ *
++ * With TLS (tls.hpp) every octet goes through the TLS session instead of
++ * the socket; the state machine sees the same plain APDUs either way.
+  *
+  * Layer: transport (I/O).
+  */
+@@ -24,10 +33,12 @@
+ 
+ #include "apci/connection.hpp"
+ #include "transport/tcp.hpp"
++#include "transport/tls.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
++#include <memory>
+ #include <string>
+ 
+ namespace iec104::transport {
+@@ -38,8 +49,18 @@ enum class LinkCloseReason : std::uint8_t {
+     Protocol,      ///< The state machine closed; see apci::CloseReason.
+     PeerClosed,    ///< The peer closed the TCP connection.
+     ConnectFailed, ///< The TCP connect failed (refused, unreachable).
+-    T0Timeout,     ///< The TCP connect did not complete within t0.
++    T0Timeout,     ///< TCP connect or TLS handshake not complete within t0.
+     SocketError,   ///< A read or write failed.
++    TlsError,      ///< TLS handshake failed or TLS error on the open connection.
++};
++
++/** @brief Security events of a TLS link (reported with a text). */
++enum class TlsEvent : std::uint8_t {
++    Established,         ///< Handshake complete; text: version, suite, peer, resumed.
++    HandshakeFailed,     ///< Handshake failed or did not complete within t0.
++    CertificateRejected, ///< The peer certificate was rejected; text: reason.
++    Error,               ///< TLS error on the open connection; text: reason.
++    Renewal,             ///< This side started a key update or renegotiation.
+ };
+ 
+ /** @brief Receiver of what happens on a link (implemented by the API layer). */
+@@ -61,6 +82,8 @@ class LinkSink {
+     /** @brief A complete APDU was sent or received on link @p id (for a raw data trace). */
+     virtual void on_frame(std::uint32_t /*id*/, bool /*outgoing*/, const std::uint8_t* /*apdu*/,
+                           std::size_t /*length*/) {}
++    /** @brief A security event on TLS link @p id. */
++    virtual void on_tls(std::uint32_t /*id*/, TlsEvent /*event*/, const std::string& /*text*/) {}
+ };
+ 
+ /** @brief A TCP connection plus its state machine (see file comment). */
+@@ -68,19 +91,23 @@ class Link {
+   public:
+     /**
+      * @brief Sets up a link for an accepted socket (server side, already connected).
+-     * @return Status of apci::Connection::init().
++     * @param tls TLS context of the server, NULL for plain TCP.
++     * @return Status of apci::Connection::init() or of the TLS session.
+      */
+     iec104_status init_accepted(std::uint32_t id, const apci::ApciConfig& config, Socket socket,
+-                                apci::TimeMs now) noexcept;
++                                apci::TimeMs now,
++                                std::shared_ptr<TlsContext> tls = nullptr) noexcept;
+ 
+     /**
+      * @brief Sets up a link for a socket with a connect in progress (client side).
++     * @param tls TLS context of the client, NULL for plain TCP.
+      * @return Status of apci::Connection::init().
+      */
+     iec104_status init_connecting(std::uint32_t id, const apci::ApciConfig& config, Socket socket,
+-                                  apci::TimeMs now) noexcept;
++                                  apci::TimeMs now,
++                                  std::shared_ptr<TlsContext> tls = nullptr) noexcept;
+ 
+-    /** @brief Events for poll(): POLLIN always, POLLOUT while connecting or output is pending. */
++    /** @brief Events for poll(): depend on the phase and on what TLS waits for. */
+     [[nodiscard]] short poll_events() const noexcept;
+ 
+     /** @brief Handles the poll() result for this link and runs the timers. */
+@@ -105,7 +132,12 @@ class Link {
+     [[nodiscard]] bool closed() const noexcept { return close_reason_ != LinkCloseReason::None; }
+     /** @brief True once the close has been reported to the sink; the link can be removed. */
+     [[nodiscard]] bool finished() const noexcept { return reported_closed_; }
+-    [[nodiscard]] bool connecting() const noexcept { return connecting_; }
++    /** @brief True until the connection is open (TCP connect and TLS handshake done). */
++    [[nodiscard]] bool connecting() const noexcept { return phase_ != Phase::Open; }
++    /** @brief True if the link runs over TLS. */
++    [[nodiscard]] bool secured() const noexcept { return tls_ != nullptr; }
++    /** @brief TLS details of an open TLS link; false for plain TCP or before the handshake. */
++    bool tls_info(TlsInfo& out) const;
+     [[nodiscard]] apci::State state() const noexcept { return conn_.state(); }
+     [[nodiscard]] bool can_send() const noexcept { return conn_.can_send(); }
+     /** @brief Frame and octet counters of the state machine. */
+@@ -120,6 +152,15 @@ class Link {
+     }
+ 
+   private:
++    enum class Phase : std::uint8_t { Connecting, Handshaking, Open };
++
++    iec104_status start_tls_or_open(apci::TimeMs now) noexcept;
++    bool continue_connect(short revents, apci::TimeMs now, LinkSink& sink) noexcept;
++    bool continue_handshake(apci::TimeMs now, LinkSink& sink) noexcept;
++    void renew_keys(apci::TimeMs now, LinkSink& sink) noexcept;
++    iec104_status io_read(std::uint8_t* buf, std::size_t size, std::size_t& n) noexcept;
++    iec104_status io_write(const std::uint8_t* data, std::size_t size, std::size_t& n) noexcept;
++    [[nodiscard]] LinkCloseReason io_failure(iec104_status st) const noexcept;
+     void read_input(apci::TimeMs now, LinkSink& sink) noexcept;
+     void dispatch_events(LinkSink& sink) noexcept;
+     void flush_output() noexcept;
+@@ -130,8 +171,12 @@ class Link {
+     std::uint32_t id_{0};
+     Socket socket_;
+     apci::Connection conn_;
+-    bool connecting_{false};
+-    apci::TimeMs connect_deadline_{0};
++    Phase phase_{Phase::Connecting};
++    apci::TimeMs setup_deadline_{0}; // end of connect and handshake (t0)
++    // TLS: the context outlives the session (declared first, destroyed last).
++    std::shared_ptr<TlsContext> tls_context_;
++    std::unique_ptr<TlsSession> tls_;
++    apci::TimeMs next_renewal_{apci::kNoDeadline};
+     LinkCloseReason close_reason_{LinkCloseReason::None};
+     apci::CloseReason protocol_reason_{apci::CloseReason::None};
+     bool reported_closed_{false};
+diff --git a/src/transport/tcp.cpp b/src/transport/tcp.cpp
+index f05b717..ced63f6 100644
+--- a/src/transport/tcp.cpp
++++ b/src/transport/tcp.cpp
+@@ -187,7 +187,11 @@ std::uint16_t local_port(const Socket& socket) noexcept {
+ 
+ iec104_status read_some(const Socket& socket, std::uint8_t* buf, std::size_t size,
+                         std::size_t& read) noexcept {
+-    const ssize_t n = ::recv(socket.fd(), buf, size, 0);
++    return read_some(socket.fd(), buf, size, read);
++}
++
++iec104_status read_some(int fd, std::uint8_t* buf, std::size_t size, std::size_t& read) noexcept {
++    const ssize_t n = ::recv(fd, buf, size, 0);
+     if (n > 0) {
+         read = static_cast<std::size_t>(n);
+         return IEC104_OK;
+@@ -203,11 +207,16 @@ iec104_status read_some(const Socket& socket, std::uint8_t* buf, std::size_t siz
+ 
+ iec104_status write_some(const Socket& socket, const std::uint8_t* data, std::size_t size,
+                          std::size_t& written) noexcept {
++    return write_some(socket.fd(), data, size, written);
++}
++
++iec104_status write_some(int fd, const std::uint8_t* data, std::size_t size,
++                         std::size_t& written) noexcept {
+     written = 0;
+     if (size == 0U) {
+         return IEC104_OK;
+     }
+-    const ssize_t n = ::send(socket.fd(), data, size, MSG_NOSIGNAL);
++    const ssize_t n = ::send(fd, data, size, MSG_NOSIGNAL);
+     if (n >= 0) {
+         written = static_cast<std::size_t>(n);
+         return IEC104_OK;
+diff --git a/src/transport/tcp.hpp b/src/transport/tcp.hpp
+index 6d06a4e..ef8b997 100644
+--- a/src/transport/tcp.hpp
++++ b/src/transport/tcp.hpp
+@@ -134,6 +134,13 @@ iec104_status read_some(const Socket& socket, std::uint8_t* buf, std::size_t siz
+ iec104_status write_some(const Socket& socket, const std::uint8_t* data, std::size_t size,
+                          std::size_t& written) noexcept;
+ 
++/** @brief read_some() on a plain descriptor (used by the TLS backend underneath TLS). */
++iec104_status read_some(int fd, std::uint8_t* buf, std::size_t size, std::size_t& read) noexcept;
++
++/** @brief write_some() on a plain descriptor (used by the TLS backend underneath TLS). */
++iec104_status write_some(int fd, const std::uint8_t* data, std::size_t size,
++                         std::size_t& written) noexcept;
++
+ /** @brief Monotonic time in milliseconds (CLOCK_MONOTONIC), the clock of the APCI layer. */
+ std::uint64_t monotonic_ms() noexcept;
+ 
+diff --git a/src/transport/tls.cpp b/src/transport/tls.cpp
+new file mode 100644
+index 0000000..c19f314
+--- /dev/null
++++ b/src/transport/tls.cpp
+@@ -0,0 +1,44 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file tls.cpp
++ * @brief Parts of the TLS interface that do not depend on a backend (see tls.hpp).
++ *
++ * Layer: transport.
++ */
++#include "transport/tls.hpp"
++
++#include <cctype>
++
++namespace iec104::transport {
++
++std::string normalize_fingerprint(const std::string& text) {
++    constexpr std::size_t kOctets = 32; // SHA-256
++    std::string hex;
++    for (const char c : text) {
++        if (c == ':' || c == ' ') {
++            continue;
++        }
++        if (std::isxdigit(static_cast<unsigned char>(c)) == 0) {
++            return {};
++        }
++        hex += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
++    }
++    if (hex.size() != 2U * kOctets) {
++        return {};
++    }
++    std::string out;
++    for (std::size_t i = 0; i < hex.size(); i += 2U) {
++        if (i > 0U) {
++            out += ':';
++        }
++        out += hex.substr(i, 2U);
++    }
++    return out;
++}
++
++} // namespace iec104::transport
+diff --git a/src/transport/tls.hpp b/src/transport/tls.hpp
+new file mode 100644
+index 0000000..b8b86ab
+--- /dev/null
++++ b/src/transport/tls.hpp
+@@ -0,0 +1,182 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file tls.hpp
++ * @brief TLS backend interface: secures the byte stream of a link.
++ *
++ * IEC 60870-5-104 itself has no security; IEC 62351-3 adds a TLS profile
++ * underneath it (docs/02_Technik_und_Quellen.md, section "Sicherheit"). The
++ * library does not implement TLS, it uses an external library behind this
++ * interface:
++ *
++ *   Link  --plain bytes-->  TlsSession  --TLS records-->  socket
++ *
++ * A TlsContext holds what all connections of a server or client share
++ * (certificates, keys, CA, CRL, versions, suites, session cache) and creates
++ * one TlsSession per connection. All calls are non-blocking and report
++ * "try again later" as IEC104_ERR_WOULD_BLOCK together with the socket event
++ * the backend waits for (poll_events()).
++ *
++ * Backends: OpenSSL 3.x (tls_openssl.cpp); without OpenSSL a stub that
++ * reports IEC104_ERR_UNSUPPORTED (tls_none.cpp, CMake option IEC104_TLS=OFF).
++ *
++ * Layer: transport (I/O).
++ */
++#pragma once
++
++#include "iec104/iec104.h"
++#include "transport/tcp.hpp"
++
++#include <cstddef>
++#include <cstdint>
++#include <memory>
++#include <string>
++
++namespace iec104::transport {
++
++/** @brief Side of the TLS handshake: the client (controlling station) starts it. */
++enum class TlsRole : std::uint8_t { Client, Server };
++
++/** @brief TLS protocol versions (wire values). */
++constexpr std::uint16_t kTls12 = 0x0303;
++constexpr std::uint16_t kTls13 = 0x0304;
++
++/** @brief Settings of a TlsContext (see iec104_tls_config for the meaning). */
++struct TlsSettings {
++    std::string ca_file;
++    std::string certificate_file;
++    std::string private_key_file;
++    std::string key_password;
++    std::string crl_file;
++    std::string peer_name;
++    std::string peer_fingerprint; ///< SHA-256, hex; colons and case are ignored.
++    std::string cipher_list;      ///< TLS 1.2 (OpenSSL syntax); "" = default of the profile.
++    std::string cipher_suites;    ///< TLS 1.3 (OpenSSL syntax); "" = default of the profile.
++    std::uint16_t min_version{kTls12};
++    std::uint16_t max_version{kTls13};
++    bool verify_peer{true};
++    bool renegotiation{true};
++    std::uint32_t renewal_interval_ms{0}; ///< 0 = no key renewal by this side.
++    bool session_resumption{true};
++    std::uint32_t session_lifetime_s{3600};
++};
++
++/** @brief What is known about an established TLS connection. */
++struct TlsInfo {
++    std::string version;          ///< e.g. "TLSv1.3".
++    std::string cipher;           ///< e.g. "TLS_AES_256_GCM_SHA384".
++    std::string peer_subject;     ///< Subject of the peer certificate, "" if none.
++    std::string peer_fingerprint; ///< SHA-256 of the peer certificate, "AB:CD:..."; "" if none.
++    bool resumed{false};          ///< The handshake resumed an earlier session.
++};
++
++/** @brief Kind of the last failure of a TlsSession. */
++enum class TlsFailure : std::uint8_t {
++    None,
++    Handshake,   ///< Handshake failed: versions, suites, alert of the peer, not TLS at all.
++    Certificate, ///< The peer certificate was rejected (chain, validity, CRL, name, fingerprint).
++    Protocol,    ///< Error on an established connection (record layer, alert).
++};
++
++/** @brief One TLS connection over a connected, non-blocking socket. */
++class TlsSession {
++  public:
++    TlsSession() = default;
++    TlsSession(const TlsSession&) = delete;
++    TlsSession& operator=(const TlsSession&) = delete;
++    TlsSession(TlsSession&&) = delete;
++    TlsSession& operator=(TlsSession&&) = delete;
++    virtual ~TlsSession() = default;
++
++    /**
++     * @brief Continues the handshake.
++     * @return IEC104_OK when it is complete; IEC104_ERR_WOULD_BLOCK while it
++     *         runs; IEC104_ERR_IO if it failed (see failure(), error()).
++     */
++    virtual iec104_status handshake() noexcept = 0;
++
++    /** @brief As read_some(): OK, WOULD_BLOCK, CLOSED (peer ended TLS or TCP), IO. */
++    virtual iec104_status read(std::uint8_t* buf, std::size_t size, std::size_t& read) noexcept = 0;
++
++    /**
++     * @brief Writes as much as possible.
++     *
++     * After IEC104_ERR_WOULD_BLOCK the next call must pass the same octets
++     * again (more may follow them).
++     * @return OK (written > 0 unless size is 0), WOULD_BLOCK, CLOSED, IO.
++     */
++    virtual iec104_status write(const std::uint8_t* data, std::size_t size,
++                                std::size_t& written) noexcept = 0;
++
++    /** @brief Socket events the last call waits for (POLLIN, POLLOUT). */
++    [[nodiscard]] virtual short poll_events() const noexcept = 0;
++
++    /**
++     * @brief Starts a key renewal: key update (TLS 1.3) or renegotiation (TLS 1.2).
++     * @return IEC104_OK when started; IEC104_ERR_UNSUPPORTED if renegotiation
++     *         is switched off; IEC104_ERR_IO on failure.
++     */
++    virtual iec104_status renew() noexcept = 0;
++
++    /** @brief Sends close_notify once (best effort, never blocks). */
++    virtual void shutdown() noexcept = 0;
++
++    /** @brief Version, suite, peer certificate; valid after the handshake. */
++    [[nodiscard]] virtual TlsInfo info() const = 0;
++
++    /** @brief Kind of the last failure. */
++    [[nodiscard]] virtual TlsFailure failure() const noexcept = 0;
++
++    /** @brief Text of the last failure, e.g. "certificate has expired". */
++    [[nodiscard]] virtual const std::string& error() const noexcept = 0;
++};
++
++/** @brief Settings shared by all TLS connections of one server or client. */
++class TlsContext {
++  public:
++    TlsContext() = default;
++    TlsContext(const TlsContext&) = delete;
++    TlsContext& operator=(const TlsContext&) = delete;
++    TlsContext(TlsContext&&) = delete;
++    TlsContext& operator=(TlsContext&&) = delete;
++    virtual ~TlsContext() = default;
++
++    /**
++     * @brief Creates the TLS session of a new connection.
++     *
++     * The socket stays owned by the caller and must outlive the session.
++     * @return IEC104_OK; IEC104_ERR_INTERNAL if the backend fails.
++     */
++    virtual iec104_status create_session(const Socket& socket,
++                                         std::unique_ptr<TlsSession>& out) noexcept = 0;
++
++    /** @brief Interval of the key renewal by this side, 0 = none. */
++    [[nodiscard]] virtual std::uint32_t renewal_interval_ms() const noexcept = 0;
++};
++
++/**
++ * @brief Creates a context: loads CA, certificate, key and CRL, applies versions and suites.
++ *
++ * @param error Receives a description of the failure (file, reason).
++ * @return IEC104_OK; IEC104_ERR_IO if a file cannot be read or parsed;
++ *         IEC104_ERR_INVALID_ARGUMENT for inconsistent settings (key does not
++ *         match certificate, unknown suites, versions); IEC104_ERR_UNSUPPORTED
++ *         if the library was built without TLS.
++ */
++iec104_status create_tls_context(TlsRole role, const TlsSettings& settings,
++                                 std::shared_ptr<TlsContext>& out, std::string& error);
++
++/** @brief True if the library was built with a TLS backend. */
++bool tls_available() noexcept;
++
++/**
++ * @brief Normalizes a SHA-256 fingerprint to "AB:CD:...".
++ * @return The normalized text, "" if @p text is not 32 octets in hex.
++ */
++std::string normalize_fingerprint(const std::string& text);
++
++} // namespace iec104::transport
+diff --git a/src/transport/tls_none.cpp b/src/transport/tls_none.cpp
+new file mode 100644
+index 0000000..e5afdc8
+--- /dev/null
++++ b/src/transport/tls_none.cpp
+@@ -0,0 +1,30 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file tls_none.cpp
++ * @brief TLS backend of a build without TLS (CMake option IEC104_TLS=OFF).
++ *
++ * Every attempt to set up TLS reports IEC104_ERR_UNSUPPORTED; plain TCP is
++ * not affected.
++ *
++ * Layer: transport.
++ */
++#include "transport/tls.hpp"
++
++namespace iec104::transport {
++
++iec104_status create_tls_context(TlsRole /*role*/, const TlsSettings& /*settings*/,
++                                 std::shared_ptr<TlsContext>& /*out*/, std::string& error) {
++    error = "library built without TLS";
++    return IEC104_ERR_UNSUPPORTED;
++}
++
++bool tls_available() noexcept {
++    return false;
++}
++
++} // namespace iec104::transport
+diff --git a/src/transport/tls_openssl.cpp b/src/transport/tls_openssl.cpp
+new file mode 100644
+index 0000000..31a08d2
+--- /dev/null
++++ b/src/transport/tls_openssl.cpp
+@@ -0,0 +1,653 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file tls_openssl.cpp
++ * @brief TLS backend on OpenSSL 3.x (see tls.hpp).
++ *
++ * Profile (docs/05_Normfragen_und_Festlegungen.md, N12 and E9):
++ *
++ * | Setting               | Default                                              |
++ * |-----------------------|------------------------------------------------------|
++ * | Versions              | TLS 1.2 and 1.3                                      |
++ * | TLS 1.2 suites        | ECDHE with AEAD only (GCM, ChaCha20-Poly1305)        |
++ * | TLS 1.3 suites        | the three suites of RFC 8446 without CCM             |
++ * | Peer authentication   | mutual, X.509 chain to the configured CA             |
++ * | Renegotiation (1.2)   | allowed in both directions, secure only (RFC 5746)   |
++ * | Session resumption    | on, lifetime 1 h                                     |
++ *
++ * TODO(norm): IEC 62351-3 Ed. 2, table of mandatory cipher suites, and
++ * clauses 7.4.4/7.4.5 (resumption, renegotiation) and 8.4 (key update):
++ * defaults above are assumptions (docs/05, N12).
++ *
++ * TLS runs over the library's own socket functions (a custom BIO), so that
++ * a write never raises SIGPIPE and the socket stays owned by the link.
++ *
++ * Layer: transport (I/O).
++ */
++#include "transport/tls.hpp"
++
++#include <array>
++#include <cstring>
++#include <openssl/bio.h>
++#include <openssl/err.h>
++#include <openssl/evp.h>
++#include <openssl/ssl.h>
++#include <openssl/x509.h>
++#include <openssl/x509_vfy.h>
++#include <openssl/x509v3.h>
++#include <poll.h>
++#include <utility>
++
++namespace iec104::transport {
++
++namespace {
++
++constexpr const char* kDefaultCipherList =
++    "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
++    "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
++    "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305";
++constexpr const char* kDefaultCipherSuites =
++    "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256";
++
++// Session id context of the server; needed for resumption with client certificates.
++constexpr std::array<unsigned char, 6> kSessionIdContext{'i', 'e', 'c', '1', '0', '4'};
++
++struct SslCtxFree {
++    void operator()(SSL_CTX* p) const noexcept { SSL_CTX_free(p); }
++};
++struct SslFree {
++    void operator()(SSL* p) const noexcept { SSL_free(p); }
++};
++struct SslSessionFree {
++    void operator()(SSL_SESSION* p) const noexcept { SSL_SESSION_free(p); }
++};
++struct BioFree {
++    void operator()(BIO* p) const noexcept { BIO_free(p); }
++};
++using SslCtxPtr = std::unique_ptr<SSL_CTX, SslCtxFree>;
++using SslPtr = std::unique_ptr<SSL, SslFree>;
++using SslSessionPtr = std::unique_ptr<SSL_SESSION, SslSessionFree>;
++using BioPtr = std::unique_ptr<BIO, BioFree>;
++
++/** @brief First entry of OpenSSL's error queue as text; empties the queue. */
++std::string take_openssl_error() {
++    std::string text;
++    unsigned long e = 0;
++    while ((e = ERR_get_error()) != 0U) {
++        if (text.empty()) {
++            const char* reason = ERR_reason_error_string(e);
++            text = reason != nullptr ? reason : "OpenSSL error " + std::to_string(e);
++        }
++    }
++    return text;
++}
++
++// --- Socket BIO ---------------------------------------------------------------
++
++/** @brief What the BIO works on: the descriptor and the result of the last socket call. */
++struct IoState {
++    int fd{-1};
++    iec104_status last{IEC104_OK};
++};
++
++IoState& io_of(BIO* bio) noexcept {
++    return *static_cast<IoState*>(BIO_get_data(bio));
++}
++
++int bio_write(BIO* bio, const char* data, int length) {
++    BIO_clear_retry_flags(bio);
++    IoState& io = io_of(bio);
++    std::size_t written = 0;
++    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): octets, same object
++    const auto* octets = reinterpret_cast<const std::uint8_t*>(data);
++    io.last = write_some(io.fd, octets, static_cast<std::size_t>(length), written);
++    if (io.last == IEC104_OK && written > 0U) {
++        return static_cast<int>(written);
++    }
++    if (io.last == IEC104_OK) { // socket buffer full
++        BIO_set_retry_write(bio);
++    }
++    return -1;
++}
++
++int bio_read(BIO* bio, char* buf, int size) {
++    BIO_clear_retry_flags(bio);
++    IoState& io = io_of(bio);
++    std::size_t read = 0;
++    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): octets, same object
++    auto* octets = reinterpret_cast<std::uint8_t*>(buf);
++    io.last = read_some(io.fd, octets, static_cast<std::size_t>(size), read);
++    switch (io.last) {
++    case IEC104_OK:
++        return static_cast<int>(read);
++    case IEC104_ERR_WOULD_BLOCK:
++        BIO_set_retry_read(bio);
++        return -1;
++    case IEC104_ERR_CLOSED:
++        return 0; // end of stream
++    default:
++        return -1;
++    }
++}
++
++long bio_ctrl(BIO* /*bio*/, int command, long /*number*/, void* /*pointer*/) {
++    return command == BIO_CTRL_FLUSH ? 1 : 0; // the socket has no buffer of its own
++}
++
++BIO_METHOD* socket_bio_method() noexcept {
++    // Created once, lives as long as the process.
++    static BIO_METHOD* const method = [] {
++        BIO_METHOD* m = BIO_meth_new(BIO_get_new_index() | BIO_TYPE_SOURCE_SINK, "iec104 socket");
++        if (m != nullptr) {
++            BIO_meth_set_write(m, bio_write);
++            BIO_meth_set_read(m, bio_read);
++            BIO_meth_set_ctrl(m, bio_ctrl);
++        }
++        return m;
++    }();
++    return method;
++}
++
++// --- Session -------------------------------------------------------------------
++
++class OpenSslSession final : public TlsSession {
++  public:
++    OpenSslSession(int fd, bool renegotiation, std::string fingerprint) noexcept
++        : renegotiation_(renegotiation), fingerprint_(std::move(fingerprint)) {
++        io_.fd = fd;
++    }
++    OpenSslSession(const OpenSslSession&) = delete;
++    OpenSslSession& operator=(const OpenSslSession&) = delete;
++    OpenSslSession(OpenSslSession&&) = delete;
++    OpenSslSession& operator=(OpenSslSession&&) = delete;
++    ~OpenSslSession() override = default;
++
++    /** @brief Creates the SSL object with the socket BIO; false on failure. */
++    bool init(SSL_CTX* ctx, TlsRole role, const std::string& server_name) noexcept {
++        ssl_.reset(SSL_new(ctx));
++        BioPtr bio(BIO_new(socket_bio_method()));
++        if (!ssl_ || !bio) {
++            return false;
++        }
++        BIO_set_data(bio.get(), &io_);
++        BIO_set_init(bio.get(), 1);
++        BIO* raw = bio.release();
++        SSL_set_bio(ssl_.get(), raw, raw); // the SSL object owns the BIO now
++        if (role == TlsRole::Server) {
++            SSL_set_accept_state(ssl_.get());
++        } else {
++            SSL_set_connect_state(ssl_.get());
++            // Server Name Indication (RFC 6066) only for names, not for addresses.
++            if (!server_name.empty() && !is_ip_address(server_name)) {
++                (void)SSL_set_tlsext_host_name(ssl_.get(), server_name.c_str());
++            }
++        }
++        return true;
++    }
++
++    /** @brief Offers @p session of an earlier connection for resumption (client). */
++    void offer(SSL_SESSION* session) noexcept { (void)SSL_set_session(ssl_.get(), session); }
++
++    iec104_status handshake() noexcept override {
++        ERR_clear_error();
++        const int rc = SSL_do_handshake(ssl_.get());
++        if (rc == 1) {
++            return check_fingerprint();
++        }
++        const int e = SSL_get_error(ssl_.get(), rc);
++        if (would_block(e)) {
++            return IEC104_ERR_WOULD_BLOCK;
++        }
++        fatal_ = true;
++        const long verify = SSL_get_verify_result(ssl_.get());
++        if (verify != X509_V_OK) {
++            failure_ = TlsFailure::Certificate;
++            error_ = X509_verify_cert_error_string(verify);
++            ERR_clear_error();
++        } else {
++            failure_ = TlsFailure::Handshake;
++            error_ = take_openssl_error();
++            if (error_.empty()) {
++                error_ = "connection closed by peer";
++            }
++        }
++        return IEC104_ERR_IO;
++    }
++
++    iec104_status read(std::uint8_t* buf, std::size_t size, std::size_t& read) noexcept override {
++        read = 0;
++        if (fatal_) {
++            return IEC104_ERR_IO;
++        }
++        ERR_clear_error();
++        if (SSL_read_ex(ssl_.get(), buf, size, &read) == 1) {
++            return IEC104_OK;
++        }
++        return io_error(SSL_get_error(ssl_.get(), 0));
++    }
++
++    iec104_status write(const std::uint8_t* data, std::size_t size,
++                        std::size_t& written) noexcept override {
++        written = 0;
++        if (fatal_) {
++            return IEC104_ERR_IO;
++        }
++        if (size == 0U) {
++            return IEC104_OK;
++        }
++        ERR_clear_error();
++        if (SSL_write_ex(ssl_.get(), data, size, &written) == 1) {
++            return IEC104_OK;
++        }
++        return io_error(SSL_get_error(ssl_.get(), 0));
++    }
++
++    [[nodiscard]] short poll_events() const noexcept override { return want_; }
++
++    iec104_status renew() noexcept override {
++        if (fatal_) {
++            return IEC104_ERR_IO;
++        }
++        ERR_clear_error();
++        if (SSL_version(ssl_.get()) >= TLS1_3_VERSION) {
++            // Key update; the peer is asked to update its keys as well (RFC 8446, 4.6.3).
++            if (SSL_key_update(ssl_.get(), SSL_KEY_UPDATE_REQUESTED) != 1) {
++                ERR_clear_error();
++                return IEC104_ERR_WOULD_BLOCK; // an update is still pending: next interval
++            }
++        } else {
++            if (!renegotiation_) {
++                return IEC104_ERR_UNSUPPORTED;
++            }
++            if (SSL_renegotiate(ssl_.get()) != 1) {
++                ERR_clear_error();
++                return IEC104_ERR_WOULD_BLOCK;
++            }
++        }
++        // Sends the key update or the renegotiation request now; the rest of
++        // a renegotiation runs inside the following reads and writes.
++        const int rc = SSL_do_handshake(ssl_.get());
++        if (rc == 1) {
++            return IEC104_OK;
++        }
++        const iec104_status st = io_error(SSL_get_error(ssl_.get(), rc));
++        return st == IEC104_ERR_WOULD_BLOCK ? IEC104_OK : st;
++    }
++
++    void shutdown() noexcept override {
++        // Not after a fatal error (OpenSSL forbids it) and not before the handshake.
++        if (!fatal_ && SSL_is_init_finished(ssl_.get()) == 1) {
++            ERR_clear_error();
++            (void)SSL_shutdown(ssl_.get());
++            ERR_clear_error();
++        }
++    }
++
++    [[nodiscard]] TlsInfo info() const override {
++        TlsInfo i;
++        i.version = SSL_get_version(ssl_.get());
++        const SSL_CIPHER* cipher = SSL_get_current_cipher(ssl_.get());
++        i.cipher = cipher != nullptr ? SSL_CIPHER_get_name(cipher) : "";
++        i.resumed = SSL_session_reused(ssl_.get()) == 1;
++        const X509* peer = SSL_get0_peer_certificate(ssl_.get());
++        if (peer != nullptr) {
++            i.peer_subject = subject_of(peer);
++            i.peer_fingerprint = fingerprint_of(peer);
++        }
++        return i;
++    }
++
++    [[nodiscard]] TlsFailure failure() const noexcept override { return failure_; }
++    [[nodiscard]] const std::string& error() const noexcept override { return error_; }
++
++    /** @brief True for "192.0.2.1", "::1" (checked with OpenSSL's own parser). */
++    static bool is_ip_address(const std::string& name) {
++        ASN1_OCTET_STRING* ip = a2i_IPADDRESS(name.c_str());
++        const bool valid = ip != nullptr;
++        ASN1_OCTET_STRING_free(ip);
++        return valid;
++    }
++
++    /** @brief SHA-256 of the DER form of @p cert as "AB:CD:...". */
++    static std::string fingerprint_of(const X509* cert) {
++        std::array<unsigned char, EVP_MAX_MD_SIZE> md{};
++        unsigned int length = 0;
++        if (X509_digest(cert, EVP_sha256(), md.data(), &length) != 1) {
++            return {};
++        }
++        static constexpr std::array<char, 16> kHex{'0', '1', '2', '3', '4', '5', '6', '7',
++                                                   '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
++        std::string text;
++        for (unsigned int k = 0; k < length; ++k) {
++            if (k > 0U) {
++                text += ':';
++            }
++            text += kHex.at(md.at(k) >> 4U);
++            text += kHex.at(md.at(k) & 0x0FU);
++        }
++        return text;
++    }
++
++  private:
++    static bool is_want(int e) noexcept {
++        return e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE;
++    }
++
++    bool would_block(int e) noexcept {
++        if (!is_want(e)) {
++            return false;
++        }
++        want_ = e == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
++        return true;
++    }
++
++    // Maps the error of a read, write or renewal to a status.
++    iec104_status io_error(int e) noexcept {
++        if (would_block(e)) {
++            return IEC104_ERR_WOULD_BLOCK;
++        }
++        fatal_ = true;
++        const unsigned long first = ERR_peek_error();
++        // End of stream: close_notify (ZERO_RETURN), or TCP closed without it.
++        if (e == SSL_ERROR_ZERO_RETURN ||
++            (e == SSL_ERROR_SSL && ERR_GET_REASON(first) == SSL_R_UNEXPECTED_EOF_WHILE_READING) ||
++            (e == SSL_ERROR_SYSCALL && io_.last == IEC104_ERR_CLOSED)) {
++            ERR_clear_error();
++            return IEC104_ERR_CLOSED;
++        }
++        failure_ = TlsFailure::Protocol;
++        error_ = take_openssl_error();
++        if (error_.empty()) {
++            error_ = e == SSL_ERROR_SYSCALL ? "socket error" : "TLS error";
++        }
++        return IEC104_ERR_IO;
++    }
++
++    // Pinning: the peer certificate must have the configured SHA-256 fingerprint.
++    iec104_status check_fingerprint() noexcept {
++        if (fingerprint_.empty()) {
++            return IEC104_OK;
++        }
++        const X509* peer = SSL_get0_peer_certificate(ssl_.get());
++        if (peer != nullptr && fingerprint_of(peer) == fingerprint_) {
++            return IEC104_OK;
++        }
++        fatal_ = true;
++        failure_ = TlsFailure::Certificate;
++        error_ = "peer certificate does not match the configured fingerprint";
++        return IEC104_ERR_IO;
++    }
++
++    static std::string subject_of(const X509* cert) {
++        const BioPtr mem(BIO_new(BIO_s_mem()));
++        if (!mem) {
++            return {};
++        }
++        (void)X509_NAME_print_ex(mem.get(), X509_get_subject_name(cert), 0, XN_FLAG_RFC2253);
++        char* data = nullptr;
++        const long n = BIO_get_mem_data(mem.get(), &data);
++        return n > 0 ? std::string(data, static_cast<std::size_t>(n)) : std::string();
++    }
++
++    IoState io_;
++    SslPtr ssl_;
++    short want_{POLLIN};
++    bool fatal_{false};
++    bool renegotiation_;
++    std::string fingerprint_;
++    TlsFailure failure_{TlsFailure::None};
++    std::string error_;
++};
++
++// --- Context -------------------------------------------------------------------
++
++class OpenSslContext final : public TlsContext {
++  public:
++    OpenSslContext(TlsRole role, TlsSettings settings) noexcept
++        : role_(role), settings_(std::move(settings)) {}
++    OpenSslContext(const OpenSslContext&) = delete;
++    OpenSslContext& operator=(const OpenSslContext&) = delete;
++    OpenSslContext(OpenSslContext&&) = delete;
++    OpenSslContext& operator=(OpenSslContext&&) = delete;
++    ~OpenSslContext() override = default;
++
++    /** @brief Builds the SSL_CTX from the settings (see create_tls_context()). */
++    iec104_status init(std::string& error) {
++        ctx_.reset(
++            SSL_CTX_new(role_ == TlsRole::Server ? TLS_server_method() : TLS_client_method()));
++        if (!ctx_) {
++            error = "cannot create TLS context: " + take_openssl_error();
++            return IEC104_ERR_INTERNAL;
++        }
++        iec104_status st = set_protocol(error);
++        if (st == IEC104_OK) {
++            st = load_credentials(error);
++        }
++        if (st == IEC104_OK) {
++            st = set_verification(error);
++        }
++        if (st == IEC104_OK) {
++            set_sessions();
++        }
++        ERR_clear_error();
++        return st;
++    }
++
++    iec104_status create_session(const Socket& socket,
++                                 std::unique_ptr<TlsSession>& out) noexcept override {
++        auto session =
++            std::make_unique<OpenSslSession>(socket.fd(), settings_.renegotiation,
++                                             normalize_fingerprint(settings_.peer_fingerprint));
++        if (!session->init(ctx_.get(), role_, settings_.peer_name)) {
++            ERR_clear_error();
++            return IEC104_ERR_INTERNAL;
++        }
++        if (role_ == TlsRole::Client && cached_) {
++            session->offer(cached_.get());
++        }
++        out = std::move(session);
++        return IEC104_OK;
++    }
++
++    [[nodiscard]] std::uint32_t renewal_interval_ms() const noexcept override {
++        return settings_.renewal_interval_ms;
++    }
++
++  private:
++    iec104_status set_protocol(std::string& error) {
++        const auto valid = [](std::uint16_t v) { return v == kTls12 || v == kTls13; };
++        if (!valid(settings_.min_version) || !valid(settings_.max_version) ||
++            settings_.min_version > settings_.max_version) {
++            error = "TLS versions: only 1.2 and 1.3, minimum not above maximum";
++            return IEC104_ERR_INVALID_ARGUMENT;
++        }
++        SSL_CTX* c = ctx_.get();
++        if (SSL_CTX_set_min_proto_version(c, settings_.min_version) != 1 ||
++            SSL_CTX_set_max_proto_version(c, settings_.max_version) != 1) {
++            error = "TLS versions: " + take_openssl_error();
++            return IEC104_ERR_INVALID_ARGUMENT;
++        }
++        const std::string& list =
++            settings_.cipher_list.empty() ? kDefaultCipherList : settings_.cipher_list;
++        if (SSL_CTX_set_cipher_list(c, list.c_str()) != 1) {
++            error = "no usable TLS 1.2 cipher suite in \"" + list + "\"";
++            return IEC104_ERR_INVALID_ARGUMENT;
++        }
++        const std::string& suites =
++            settings_.cipher_suites.empty() ? kDefaultCipherSuites : settings_.cipher_suites;
++        if (SSL_CTX_set_ciphersuites(c, suites.c_str()) != 1) {
++            error = "no usable TLS 1.3 cipher suite in \"" + suites + "\"";
++            return IEC104_ERR_INVALID_ARGUMENT;
++        }
++        // Partial writes: the link keeps unsent octets itself and may move them.
++        SSL_CTX_set_mode(c, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
++        std::uint64_t options = SSL_OP_NO_COMPRESSION;
++        if (role_ == TlsRole::Server) {
++            options |= SSL_OP_CIPHER_SERVER_PREFERENCE;
++        }
++        // Renegotiation is always the secure one (RFC 5746); OpenSSL refuses
++        // the legacy form by default. Off means off in both directions.
++        if (!settings_.renegotiation) {
++            options |= SSL_OP_NO_RENEGOTIATION;
++        } else if (role_ == TlsRole::Server) {
++            options |= SSL_OP_ALLOW_CLIENT_RENEGOTIATION;
++        }
++        SSL_CTX_set_options(c, options);
++        return IEC104_OK;
++    }
++
++    static int password_callback(char* buf, int size, int /*rwflag*/, void* user) {
++        const auto* password = static_cast<const std::string*>(user);
++        if (password == nullptr || password->size() >= static_cast<std::size_t>(size)) {
++            return 0;
++        }
++        // OpenSSL takes the length, not a terminated string.
++        return static_cast<int>(password->copy(buf, password->size()));
++    }
++
++    iec104_status load_credentials(std::string& error) {
++        SSL_CTX* c = ctx_.get();
++        if (settings_.certificate_file.empty() != settings_.private_key_file.empty()) {
++            error = "certificate and private key must be given together";
++            return IEC104_ERR_INVALID_ARGUMENT;
++        }
++        if (settings_.certificate_file.empty()) {
++            if (role_ == TlsRole::Server) {
++                error = "a TLS server needs a certificate and a private key";
++                return IEC104_ERR_INVALID_ARGUMENT;
++            }
++            return IEC104_OK; // client without certificate: only if the server allows it
++        }
++        if (SSL_CTX_use_certificate_chain_file(c, settings_.certificate_file.c_str()) != 1) {
++            error = "cannot load certificate " + settings_.certificate_file + ": " +
++                    take_openssl_error();
++            return IEC104_ERR_IO;
++        }
++        SSL_CTX_set_default_passwd_cb(c, password_callback);
++        SSL_CTX_set_default_passwd_cb_userdata(c, &settings_.key_password);
++        const int loaded =
++            SSL_CTX_use_PrivateKey_file(c, settings_.private_key_file.c_str(), SSL_FILETYPE_PEM);
++        SSL_CTX_set_default_passwd_cb(c, nullptr);
++        SSL_CTX_set_default_passwd_cb_userdata(c, nullptr);
++        if (loaded != 1) {
++            if (ERR_GET_REASON(ERR_peek_last_error()) == X509_R_KEY_VALUES_MISMATCH) {
++                ERR_clear_error();
++                error = "private key does not match the certificate";
++                return IEC104_ERR_INVALID_ARGUMENT;
++            }
++            error = "cannot load private key " + settings_.private_key_file + ": " +
++                    take_openssl_error();
++            return IEC104_ERR_IO;
++        }
++        if (SSL_CTX_check_private_key(c) != 1) {
++            error = "private key does not match the certificate";
++            return IEC104_ERR_INVALID_ARGUMENT;
++        }
++        return IEC104_OK;
++    }
++
++    iec104_status set_verification(std::string& error) {
++        SSL_CTX* c = ctx_.get();
++        if (!settings_.verify_peer) {
++            SSL_CTX_set_verify(c, SSL_VERIFY_NONE, nullptr);
++            return IEC104_OK;
++        }
++        if (settings_.ca_file.empty()) {
++            error = "a CA file is needed to verify the peer";
++            return IEC104_ERR_INVALID_ARGUMENT;
++        }
++        if (SSL_CTX_load_verify_locations(c, settings_.ca_file.c_str(), nullptr) != 1) {
++            error = "cannot load CA file " + settings_.ca_file + ": " + take_openssl_error();
++            return IEC104_ERR_IO;
++        }
++        if (!settings_.crl_file.empty()) {
++            X509_STORE* store = SSL_CTX_get_cert_store(c);
++            X509_LOOKUP* lookup = X509_STORE_add_lookup(store, X509_LOOKUP_file());
++            if (lookup == nullptr ||
++                X509_load_crl_file(lookup, settings_.crl_file.c_str(), X509_FILETYPE_PEM) <= 0) {
++                error = "cannot load CRL file " + settings_.crl_file + ": " + take_openssl_error();
++                return IEC104_ERR_IO;
++            }
++            // Every certificate of the chain is checked against a CRL of its issuer.
++            (void)X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
++        }
++        if (!settings_.peer_name.empty()) {
++            X509_VERIFY_PARAM* param = SSL_CTX_get0_param(c);
++            const bool ok =
++                OpenSslSession::is_ip_address(settings_.peer_name)
++                    ? X509_VERIFY_PARAM_set1_ip_asc(param, settings_.peer_name.c_str()) == 1
++                    : X509_VERIFY_PARAM_set1_host(param, settings_.peer_name.c_str(), 0) == 1;
++            if (!ok) {
++                error = "invalid peer name \"" + settings_.peer_name + "\"";
++                return IEC104_ERR_INVALID_ARGUMENT;
++            }
++        }
++        if (!settings_.peer_fingerprint.empty() &&
++            normalize_fingerprint(settings_.peer_fingerprint).empty()) {
++            error = "peer fingerprint is not a SHA-256 value in hex";
++            return IEC104_ERR_INVALID_ARGUMENT;
++        }
++        // Mutual authentication: the server insists on a client certificate.
++        const int mode = role_ == TlsRole::Server
++                             ? SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT
++                             : SSL_VERIFY_PEER;
++        SSL_CTX_set_verify(c, mode, nullptr);
++        return IEC104_OK;
++    }
++
++    void set_sessions() {
++        SSL_CTX* c = ctx_.get();
++        if (!settings_.session_resumption) {
++            SSL_CTX_set_session_cache_mode(c, SSL_SESS_CACHE_OFF);
++            SSL_CTX_set_options(c, SSL_OP_NO_TICKET);
++            (void)SSL_CTX_set_num_tickets(c, 0);
++            return;
++        }
++        SSL_CTX_set_timeout(c, static_cast<long>(settings_.session_lifetime_s));
++        if (role_ == TlsRole::Server) {
++            (void)SSL_CTX_set_session_id_context(c, kSessionIdContext.data(),
++                                                 kSessionIdContext.size());
++            return;
++        }
++        // Client: keep the last session of this context for the next connect.
++        SSL_CTX_set_session_cache_mode(c, SSL_SESS_CACHE_CLIENT | SSL_SESS_CACHE_NO_INTERNAL_STORE);
++        (void)SSL_CTX_set_app_data(c, this);
++        SSL_CTX_sess_set_new_cb(c, &OpenSslContext::on_new_session);
++    }
++
++    static int on_new_session(SSL* ssl, SSL_SESSION* session) {
++        auto* self = static_cast<OpenSslContext*>(SSL_CTX_get_app_data(SSL_get_SSL_CTX(ssl)));
++        if (self == nullptr) {
++            return 0;
++        }
++        self->cached_.reset(session);
++        return 1; // the context owns the session now
++    }
++
++    TlsRole role_;
++    TlsSettings settings_;
++    SslCtxPtr ctx_;
++    SslSessionPtr cached_;
++};
++
++} // namespace
++
++iec104_status create_tls_context(TlsRole role, const TlsSettings& settings,
++                                 std::shared_ptr<TlsContext>& out, std::string& error) {
++    auto ctx = std::make_shared<OpenSslContext>(role, settings);
++    const iec104_status st = ctx->init(error);
++    if (st == IEC104_OK) {
++        out = std::move(ctx);
++    }
++    return st;
++}
++
++bool tls_available() noexcept {
++    return true;
++}
++
++} // namespace iec104::transport
+diff --git a/tests/test_api.cpp b/tests/test_api.cpp
+index 2b26a23..db4eef6 100644
+--- a/tests/test_api.cpp
++++ b/tests/test_api.cpp
+@@ -14,14 +14,17 @@
+ 
+ #include <cstring>
+ #include <gtest/gtest.h>
++#include <string>
+ 
+-// Rule: the version string reported by the built library matches the project
+-// version. Source: CMakeLists.txt (project VERSION 0.2.0) and the
+-// IEC104_VERSION_* macros in iec104.h.
++// Rule: the version string reported by the built library (CMakeLists.txt,
++// project VERSION) matches the IEC104_VERSION_* macros in iec104.h.
+ TEST(Api, VersionStringMatchesMacros) {
+     const char* v = iec104_version_string();
+     ASSERT_NE(v, nullptr);
+-    EXPECT_STREQ(v, "0.2.0");
++    const std::string expected = std::to_string(IEC104_VERSION_MAJOR) + "." +
++                                 std::to_string(IEC104_VERSION_MINOR) + "." +
++                                 std::to_string(IEC104_VERSION_PATCH);
++    EXPECT_EQ(v, expected);
+ }
+ 
+ // Rule: iec104_status_string() never returns NULL, also for values that are
+diff --git a/tests/test_operation.cpp b/tests/test_operation.cpp
+index 26228ff..c4909c5 100644
+--- a/tests/test_operation.cpp
++++ b/tests/test_operation.cpp
+@@ -209,3 +209,55 @@ TEST(Operation, ConfigWarningsAreLogged) {
+     EXPECT_TRUE(log.contains("warning 0 configuration: t2 is not below t1"));
+     iec104_server_destroy(server);
+ }
++
++// Rule: TLS keys fill iec104_config.tls; relative file names are relative to
++// the directory of the configuration file, absolute ones stay.
++TEST(ConfigFile, TlsKeys) {
++    const std::string path = write_file("tls.conf", R"(tls = yes
++port = 19998
++tls_ca = pki/ca.pem
++tls_certificate = /etc/pki/server.pem
++tls_key = pki/server.key
++tls_key_password = secret
++tls_crl = pki/crl.pem
++tls_peer_name = station1.example
++tls_peer_fingerprint = AB:CD
++tls_min_version = 1.3
++tls_max_version = 1.3
++tls_ciphers = ECDHE-ECDSA-AES128-GCM-SHA256
++tls_ciphersuites = TLS_AES_256_GCM_SHA384
++tls_verify_peer = 1
++tls_renegotiation = off
++tls_session_resumption = no
++tls_renewal_interval = 3600
++tls_session_lifetime = 600
++)");
++    iec104_config c{};
++    iec104_config_init(&c);
++    EXPECT_EQ(c.use_tls, 0);
++    EXPECT_EQ(c.tls.min_version, IEC104_TLS_1_2);
++    int line = -1;
++    ASSERT_EQ(iec104_config_load(path.c_str(), &c, &line), IEC104_OK) << line;
++    const std::string dir = testing::TempDir(); // ends with '/'
++    EXPECT_EQ(c.use_tls, 1);
++    EXPECT_EQ(c.port, 19998U);
++    EXPECT_EQ(std::string(c.tls.ca_file), dir.substr(0, dir.size() - 1U) + "/pki/ca.pem");
++    EXPECT_STREQ(c.tls.certificate_file, "/etc/pki/server.pem");
++    EXPECT_EQ(std::string(c.tls.private_key_file),
++              dir.substr(0, dir.size() - 1U) + "/pki/server.key");
++    EXPECT_STREQ(c.tls.key_password, "secret");
++    EXPECT_STREQ(c.tls.peer_name, "station1.example");
++    EXPECT_STREQ(c.tls.peer_fingerprint, "AB:CD");
++    EXPECT_EQ(c.tls.min_version, IEC104_TLS_1_3);
++    EXPECT_EQ(c.tls.max_version, IEC104_TLS_1_3);
++    EXPECT_STREQ(c.tls.cipher_list, "ECDHE-ECDSA-AES128-GCM-SHA256");
++    EXPECT_STREQ(c.tls.cipher_suites, "TLS_AES_256_GCM_SHA384");
++    EXPECT_EQ(c.tls.renegotiation, 0);
++    EXPECT_EQ(c.tls.session_resumption, 0);
++    EXPECT_EQ(c.tls.renewal_interval_s, 3600U);
++    EXPECT_EQ(c.tls.session_lifetime_s, 600U);
++
++    const std::string bad = write_file("tls_bad.conf", "tls_min_version = 1.1\n");
++    EXPECT_EQ(iec104_config_load(bad.c_str(), &c, &line), IEC104_ERR_INVALID_ARGUMENT);
++    EXPECT_EQ(line, 1);
++}
+diff --git a/tests/test_tls.cpp b/tests/test_tls.cpp
+new file mode 100644
+index 0000000..650901c
+--- /dev/null
++++ b/tests/test_tls.cpp
+@@ -0,0 +1,541 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file test_tls.cpp
++ * @brief TLS between server and client over loopback (public C API only).
++ *
++ * Certificates: test PKI of tools/make_test_certs.sh (made by the build).
++ * Rules: docs/05_Normfragen_und_Festlegungen.md, N12 (profile) and E9
++ * (handshake under t0).
++ */
++#include "iec104/iec104.h"
++
++#include <algorithm>
++#include <chrono>
++#include <cstring>
++#include <functional>
++#include <gtest/gtest.h>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace {
++
++std::string cert(const std::string& name) {
++    return std::string(IEC104_TEST_CERT_DIR) + "/" + name;
++}
++
++template <std::size_t N> void put(char (&field)[N], const std::string& text) {
++    ASSERT_LT(text.size(), N);
++    std::memcpy(static_cast<char*>(field), text.c_str(), text.size() + 1U);
++}
++
++/** @brief TLS settings with the test CA and the certificate @p name (.pem/.key). */
++iec104_tls_config tls_with(const std::string& name) {
++    iec104_tls_config t{};
++    iec104_tls_config_init(&t);
++    put(t.ca_file, cert("ca.pem"));
++    if (!name.empty()) {
++        put(t.certificate_file, cert(name + ".pem"));
++        put(t.private_key_file, cert(name + ".key"));
++    }
++    return t;
++}
++
++/** @brief What the callbacks of one handle saw. */
++struct Seen {
++    std::vector<std::pair<iec104_security_event, std::string>> security;
++    iec104_link_state state{IEC104_LINK_CONNECTING};
++    iec104_close_reason reason{IEC104_CLOSE_NONE};
++    int objects{0};
++
++    [[nodiscard]] bool has(iec104_security_event e, const std::string& part = "") const {
++        return std::any_of(security.begin(), security.end(), [&](const auto& s) {
++            return s.first == e && s.second.find(part) != std::string::npos;
++        });
++    }
++    [[nodiscard]] int count(iec104_security_event e) const {
++        return static_cast<int>(std::count_if(security.begin(), security.end(),
++                                              [&](const auto& s) { return s.first == e; }));
++    }
++    [[nodiscard]] std::string text() const {
++        std::string all;
++        for (const auto& s : security) {
++            all += std::string(iec104_security_event_string(s.first)) + ": " + s.second + "\n";
++        }
++        return all;
++    }
++
++    static void on_security(void* user, uint32_t /*connection*/, iec104_security_event e,
++                            const char* detail) {
++        static_cast<Seen*>(user)->security.emplace_back(e, detail);
++    }
++    static void on_state(void* user, uint32_t /*connection*/, iec104_link_state s,
++                         iec104_close_reason r) {
++        auto* seen = static_cast<Seen*>(user);
++        seen->state = s;
++        seen->reason = r;
++    }
++    static void on_object(void* user, uint32_t /*connection*/, const iec104_asdu_info* /*info*/,
++                          const iec104_object* /*object*/) {
++        ++static_cast<Seen*>(user)->objects;
++    }
++    iec104_callbacks callbacks() {
++        iec104_callbacks c{};
++        c.user = this;
++        c.on_security = on_security;
++        c.on_state = on_state;
++        c.on_object = on_object;
++        return c;
++    }
++};
++
++class Tls : public testing::Test {
++  protected:
++    void SetUp() override {
++        if (iec104_tls_available() == 0) {
++            GTEST_SKIP() << "library built without TLS";
++        }
++    }
++    void TearDown() override {
++        iec104_client_destroy(client_);
++        iec104_server_destroy(server_);
++    }
++
++    /** @brief Server with one measured value, TLS @p tls (NULL = plain), any free port. */
++    void start_server(const iec104_tls_config* tls, uint32_t t0_ms = 0) {
++        iec104_link_config link{};
++        iec104_link_config_init(&link);
++        if (t0_ms != 0U) {
++            link.t0_ms = t0_ms;
++        }
++        const iec104_callbacks cb = srv_.callbacks();
++        ASSERT_EQ(iec104_server_create(&link, &cb, &server_), IEC104_OK);
++        if (tls != nullptr) {
++            ASSERT_EQ(iec104_server_set_tls(server_, tls), IEC104_OK);
++        }
++        iec104_object value{};
++        value.type = 13;
++        value.ioa = 100;
++        value.value = 1.5;
++        ASSERT_EQ(iec104_server_add_point(server_, 1, &value, 1), IEC104_OK);
++        ASSERT_EQ(iec104_server_listen(server_, "127.0.0.1", 0), IEC104_OK);
++    }
++
++    /** @brief Client connecting to the server, TLS @p tls (NULL = plain). */
++    void connect_client(const iec104_tls_config* tls) {
++        if (client_ == nullptr) {
++            const iec104_callbacks cb = cli_.callbacks();
++            ASSERT_EQ(iec104_client_create(nullptr, &cb, &client_), IEC104_OK);
++        }
++        if (tls != nullptr) {
++            ASSERT_EQ(iec104_client_set_tls(client_, tls), IEC104_OK);
++        }
++        cli_.state = IEC104_LINK_CONNECTING;
++        cli_.reason = IEC104_CLOSE_NONE;
++        ASSERT_EQ(iec104_client_connect(client_, "127.0.0.1", iec104_server_port(server_)),
++                  IEC104_OK);
++    }
++
++    /** @brief Polls both sides until @p done or @p ms have passed. */
++    bool run_until(const std::function<bool()>& done, int ms = 5000) {
++        const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
++        while (!done() && std::chrono::steady_clock::now() < end) {
++            (void)iec104_server_poll(server_, 1);
++            if (client_ != nullptr) {
++                (void)iec104_client_poll(client_, 1);
++            }
++        }
++        return done();
++    }
++
++    /** @brief STARTDT (if not started yet) and a general interrogation; true if the value arrived.
++     */
++    bool start_and_interrogate() {
++        if (cli_.state != IEC104_LINK_STARTED) {
++            if (!run_until([&] { return cli_.state == IEC104_LINK_STOPPED; })) {
++                return false;
++            }
++            (void)iec104_client_start(client_);
++            if (!run_until([&] { return cli_.state == IEC104_LINK_STARTED; })) {
++                return false;
++            }
++        }
++        const int before = cli_.objects;
++        (void)iec104_client_interrogation(client_, 1, IEC104_COT_INTERROGATED_STATION);
++        return run_until([&] { return cli_.objects >= before + 3; }); // ACTCON, value, ACTTERM
++    }
++
++    bool client_closed() {
++        return run_until([&] { return cli_.state == IEC104_LINK_CLOSED; });
++    }
++    bool server_closed() {
++        return run_until([&] { return srv_.state == IEC104_LINK_CLOSED; });
++    }
++
++    iec104_server* server_{nullptr};
++    iec104_client* client_{nullptr};
++    Seen srv_;
++    Seen cli_;
++};
++
++} // namespace
++
++// Mutual authentication with TLS 1.3 (default): both sides see the other's
++// certificate, IEC 104 runs unchanged on top, close ends with close_notify.
++TEST_F(Tls, MutualAuthenticationTls13) {
++    const iec104_tls_config s = tls_with("server");
++    const iec104_tls_config c = tls_with("client");
++    start_server(&s);
++    connect_client(&c);
++    ASSERT_TRUE(start_and_interrogate()) << srv_.text() << cli_.text();
++
++    EXPECT_TRUE(srv_.has(IEC104_SECURITY_TLS_ESTABLISHED, "TLSv1.3"));
++    EXPECT_TRUE(srv_.has(IEC104_SECURITY_TLS_ESTABLISHED, "peer CN=client.test"));
++    iec104_tls_info info{};
++    ASSERT_EQ(iec104_client_get_tls_info(client_, &info), IEC104_OK);
++    EXPECT_STREQ(info.version, "TLSv1.3");
++    EXPECT_STREQ(info.peer_subject, "CN=localhost");
++    EXPECT_EQ(std::strlen(info.peer_fingerprint), 95U); // 32 octets "AB:" ...
++    EXPECT_EQ(info.resumed, 0);
++    ASSERT_EQ(iec104_server_get_tls_info(server_, 1, &info), IEC104_OK);
++    EXPECT_STREQ(info.peer_subject, "CN=client.test");
++    EXPECT_EQ(iec104_server_get_tls_info(server_, 2, &info), IEC104_ERR_WRONG_STATE);
++
++    iec104_client_close(client_);
++    ASSERT_TRUE(server_closed());
++    EXPECT_EQ(srv_.reason, IEC104_CLOSE_PEER); // orderly end, no TLS error
++}
++
++// TLS 1.2 with a chosen ECDHE/AEAD suite.
++TEST_F(Tls, Tls12WithChosenSuite) {
++    const iec104_tls_config s = tls_with("server");
++    iec104_tls_config c = tls_with("client");
++    c.max_version = IEC104_TLS_1_2;
++    put(c.cipher_list, "ECDHE-ECDSA-AES256-GCM-SHA384");
++    start_server(&s);
++    connect_client(&c);
++    ASSERT_TRUE(start_and_interrogate()) << srv_.text() << cli_.text();
++    iec104_tls_info info{};
++    ASSERT_EQ(iec104_client_get_tls_info(client_, &info), IEC104_OK);
++    EXPECT_STREQ(info.version, "TLSv1.2");
++    EXPECT_STREQ(info.cipher, "ECDHE-ECDSA-AES256-GCM-SHA384");
++}
++
++// The client trusts only its CA: a server certificate of another CA is rejected.
++TEST_F(Tls, ClientRejectsServerOfForeignCa) {
++    const iec104_tls_config s = tls_with("foreign");
++    const iec104_tls_config c = tls_with("client");
++    start_server(&s);
++    connect_client(&c);
++    ASSERT_TRUE(client_closed());
++    EXPECT_EQ(cli_.reason, IEC104_CLOSE_TLS);
++    EXPECT_TRUE(cli_.has(IEC104_SECURITY_CERTIFICATE_REJECTED, "local issuer")) << cli_.text();
++    EXPECT_FALSE(cli_.has(IEC104_SECURITY_TLS_ESTABLISHED));
++}
++
++// Mutual authentication: the server closes if the client has no certificate,
++// an expired one or one of a foreign CA.
++TEST_F(Tls, ServerRejectsClientCertificates) {
++    const iec104_tls_config s = tls_with("server");
++    start_server(&s);
++    const struct {
++        const char* name;
++        const char* reason;
++    } cases[] = {
++        {"", "certificate"}, // none
++        {"expired", "expired"},
++        {"foreign", "local issuer"},
++    };
++    for (const auto& k : cases) {
++        SCOPED_TRACE(k.name);
++        srv_ = Seen{};
++        const iec104_tls_config c = tls_with(k.name);
++        connect_client(&c);
++        ASSERT_TRUE(server_closed());
++        EXPECT_EQ(srv_.reason, IEC104_CLOSE_TLS);
++        EXPECT_FALSE(srv_.has(IEC104_SECURITY_TLS_ESTABLISHED));
++        EXPECT_NE(srv_.text().find(k.reason), std::string::npos) << srv_.text();
++        ASSERT_TRUE(client_closed()); // the client learns it from the alert or the close
++        EXPECT_NE(cli_.reason, IEC104_CLOSE_NONE);
++    }
++}
++
++// CRL: a revoked client certificate is rejected, a valid one accepted.
++TEST_F(Tls, RevocationList) {
++    iec104_tls_config s = tls_with("server");
++    put(s.crl_file, cert("crl.pem"));
++    start_server(&s);
++    const iec104_tls_config revoked = tls_with("revoked");
++    connect_client(&revoked);
++    ASSERT_TRUE(server_closed());
++    EXPECT_TRUE(srv_.has(IEC104_SECURITY_CERTIFICATE_REJECTED, "revoked")) << srv_.text();
++    ASSERT_TRUE(client_closed());
++
++    srv_ = Seen{};
++    const iec104_tls_config valid = tls_with("client");
++    connect_client(&valid);
++    EXPECT_TRUE(start_and_interrogate()) << srv_.text() << cli_.text();
++}
++
++// Name check: the client expects a DNS name or an address in the server certificate.
++TEST_F(Tls, PeerName) {
++    const iec104_tls_config s = tls_with("server");
++    start_server(&s);
++    for (const char* name : {"localhost", "127.0.0.1"}) {
++        SCOPED_TRACE(name);
++        iec104_tls_config c = tls_with("client");
++        put(c.peer_name, name);
++        connect_client(&c);
++        ASSERT_TRUE(start_and_interrogate()) << cli_.text();
++        iec104_client_close(client_);
++        ASSERT_TRUE(client_closed());
++    }
++    iec104_tls_config c = tls_with("client");
++    put(c.peer_name, "other.test");
++    connect_client(&c);
++    ASSERT_TRUE(client_closed());
++    EXPECT_EQ(cli_.reason, IEC104_CLOSE_TLS);
++    EXPECT_TRUE(cli_.has(IEC104_SECURITY_CERTIFICATE_REJECTED, "mismatch")) << cli_.text();
++}
++
++// Pinning: the peer certificate must have the configured fingerprint (any
++// notation of the hex value).
++TEST_F(Tls, PeerFingerprint) {
++    const iec104_tls_config s = tls_with("server");
++    start_server(&s);
++    iec104_tls_config c = tls_with("client");
++    connect_client(&c);
++    ASSERT_TRUE(start_and_interrogate());
++    iec104_tls_info info{};
++    ASSERT_EQ(iec104_client_get_tls_info(client_, &info), IEC104_OK);
++    iec104_client_close(client_);
++    ASSERT_TRUE(client_closed());
++
++    std::string plain; // lower case, no colons
++    for (const char ch : std::string(info.peer_fingerprint)) {
++        if (ch != ':') {
++            plain += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
++        }
++    }
++    put(c.peer_fingerprint, plain);
++    connect_client(&c);
++    ASSERT_TRUE(start_and_interrogate()) << cli_.text();
++    iec104_client_close(client_);
++    ASSERT_TRUE(client_closed());
++
++    plain[0] = plain[0] == '0' ? '1' : '0';
++    put(c.peer_fingerprint, plain);
++    connect_client(&c);
++    ASSERT_TRUE(client_closed());
++    EXPECT_EQ(cli_.reason, IEC104_CLOSE_TLS);
++    EXPECT_TRUE(cli_.has(IEC104_SECURITY_CERTIFICATE_REJECTED, "fingerprint")) << cli_.text();
++}
++
++// A plain client at a TLS server, and a TLS client at a plain server, both end with an error.
++TEST_F(Tls, PlainAndTlsDoNotMix) {
++    const iec104_tls_config s = tls_with("server");
++    start_server(&s);
++    connect_client(nullptr);
++    ASSERT_TRUE(run_until([&] { return cli_.state == IEC104_LINK_STOPPED; }));
++    (void)iec104_client_start(client_); // STARTDT in clear text instead of a ClientHello
++    ASSERT_TRUE(server_closed());
++    EXPECT_EQ(srv_.reason, IEC104_CLOSE_TLS);
++    EXPECT_TRUE(srv_.has(IEC104_SECURITY_HANDSHAKE_FAILED)) << srv_.text();
++    ASSERT_TRUE(client_closed());
++
++    iec104_server_destroy(server_);
++    server_ = nullptr;
++    iec104_client_destroy(client_);
++    client_ = nullptr;
++    srv_ = Seen{};
++    cli_ = Seen{};
++    start_server(nullptr);
++    const iec104_tls_config c = tls_with("client");
++    connect_client(&c);
++    ASSERT_TRUE(client_closed());
++    EXPECT_TRUE(cli_.has(IEC104_SECURITY_HANDSHAKE_FAILED)) << cli_.text();
++    EXPECT_FALSE(cli_.has(IEC104_SECURITY_TLS_ESTABLISHED));
++}
++
++// E9: t0 limits the handshake. A peer that connects but never starts TLS is
++// closed after t0.
++TEST_F(Tls, HandshakeLimitedByT0) {
++    const iec104_tls_config s = tls_with("server");
++    start_server(&s, 1000);
++    connect_client(nullptr); // plain client without STARTDT: sends nothing
++    const auto begin = std::chrono::steady_clock::now();
++    ASSERT_TRUE(server_closed());
++    const auto took = std::chrono::steady_clock::now() - begin;
++    EXPECT_EQ(srv_.reason, IEC104_CLOSE_T0_TIMEOUT);
++    EXPECT_TRUE(srv_.has(IEC104_SECURITY_HANDSHAKE_FAILED, "t0")) << srv_.text();
++    EXPECT_GE(took, std::chrono::milliseconds(900));
++    EXPECT_LT(took, std::chrono::milliseconds(3000));
++}
++
++// Key renewal by time: key update (TLS 1.3) and renegotiation (TLS 1.2, by
++// either side); data keeps flowing.
++TEST_F(Tls, KeyRenewal) {
++    const struct {
++        uint16_t version;
++        bool server_renews;
++        const char* kind;
++    } cases[] = {
++        {IEC104_TLS_1_3, true, "key update"},
++        {IEC104_TLS_1_2, true, "renegotiation"},
++        {IEC104_TLS_1_2, false, "renegotiation"},
++    };
++    for (const auto& k : cases) {
++        SCOPED_TRACE(std::string(k.kind) + (k.server_renews ? " by server" : " by client"));
++        iec104_tls_config s = tls_with("server");
++        iec104_tls_config c = tls_with("client");
++        c.max_version = k.version;
++        (k.server_renews ? s : c).renewal_interval_s = 1;
++        start_server(&s);
++        connect_client(&c);
++        ASSERT_TRUE(start_and_interrogate());
++        Seen& renewer = k.server_renews ? srv_ : cli_;
++        // Spontaneous values while the keys are renewed twice.
++        iec104_object value{};
++        value.type = 13;
++        value.ioa = 100;
++        const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
++        while (std::chrono::steady_clock::now() < end) {
++            value.value += 1.0;
++            (void)iec104_server_update(server_, 1, &value);
++            run_until([] { return false; }, 50);
++        }
++        EXPECT_GE(renewer.count(IEC104_SECURITY_KEY_RENEWAL), 2) << renewer.text();
++        EXPECT_TRUE(renewer.has(IEC104_SECURITY_KEY_RENEWAL, k.kind));
++        EXPECT_EQ(cli_.state, IEC104_LINK_STARTED) << srv_.text() << cli_.text();
++        EXPECT_TRUE(start_and_interrogate()); // still usable
++        iec104_client_destroy(client_);
++        client_ = nullptr;
++        iec104_server_destroy(server_);
++        server_ = nullptr;
++        srv_ = Seen{};
++        cli_ = Seen{};
++    }
++}
++
++// Session resumption: the second connect of a client resumes the first
++// session; switched off, it does not.
++TEST_F(Tls, SessionResumption) {
++    const iec104_tls_config s = tls_with("server");
++    start_server(&s);
++    for (const int resumption : {1, 0}) {
++        SCOPED_TRACE(resumption);
++        iec104_tls_config c = tls_with("client");
++        c.session_resumption = resumption;
++        iec104_client_destroy(client_);
++        client_ = nullptr;
++        connect_client(&c);
++        ASSERT_TRUE(start_and_interrogate()); // also receives the session ticket
++        iec104_client_close(client_);
++        ASSERT_TRUE(client_closed());
++        connect_client(nullptr); // same settings
++        ASSERT_TRUE(start_and_interrogate());
++        iec104_tls_info info{};
++        ASSERT_EQ(iec104_client_get_tls_info(client_, &info), IEC104_OK);
++        EXPECT_EQ(info.resumed, resumption);
++        iec104_client_close(client_);
++        ASSERT_TRUE(client_closed());
++    }
++}
++
++// Certificate change at run time: open connections keep their session, new
++// ones get the new certificate.
++TEST_F(Tls, CertificateChangeAtRunTime) {
++    const iec104_tls_config s1 = tls_with("server");
++    const iec104_tls_config s2 = tls_with("server2");
++    iec104_tls_config c = tls_with("client");
++    c.session_resumption = 0;
++    start_server(&s1);
++    connect_client(&c);
++    ASSERT_TRUE(start_and_interrogate());
++    iec104_tls_info first{};
++    ASSERT_EQ(iec104_client_get_tls_info(client_, &first), IEC104_OK);
++
++    ASSERT_EQ(iec104_server_set_tls(server_, &s2), IEC104_OK);
++    iec104_client* second = nullptr;
++    Seen seen2;
++    const iec104_callbacks cb = seen2.callbacks();
++    ASSERT_EQ(iec104_client_create(nullptr, &cb, &second), IEC104_OK);
++    ASSERT_EQ(iec104_client_set_tls(second, &c), IEC104_OK);
++    ASSERT_EQ(iec104_client_connect(second, "127.0.0.1", iec104_server_port(server_)), IEC104_OK);
++    const bool up = run_until([&] {
++        (void)iec104_client_poll(second, 1);
++        return seen2.state == IEC104_LINK_STOPPED;
++    });
++    iec104_tls_info other{};
++    const iec104_status st = iec104_client_get_tls_info(second, &other);
++    iec104_client_destroy(second);
++    ASSERT_TRUE(up) << seen2.text();
++    ASSERT_EQ(st, IEC104_OK);
++    EXPECT_STRNE(first.peer_fingerprint, other.peer_fingerprint);
++    EXPECT_TRUE(start_and_interrogate()); // the first connection still works
++}
++
++// Settings are checked when they are set; the previous ones stay on error.
++TEST_F(Tls, SettingsErrors) {
++    start_server(nullptr);
++    iec104_tls_config t = tls_with("server");
++    put(t.ca_file, cert("missing.pem"));
++    EXPECT_EQ(iec104_server_set_tls(server_, &t), IEC104_ERR_IO);
++
++    t = tls_with("");
++    EXPECT_EQ(iec104_server_set_tls(server_, &t), IEC104_ERR_INVALID_ARGUMENT); // no certificate
++
++    t = tls_with("server");
++    put(t.private_key_file, cert("client.key"));
++    EXPECT_EQ(iec104_server_set_tls(server_, &t), IEC104_ERR_INVALID_ARGUMENT); // wrong key
++
++    t = tls_with("server");
++    put(t.cipher_list, "NO-SUCH-SUITE");
++    EXPECT_EQ(iec104_server_set_tls(server_, &t), IEC104_ERR_INVALID_ARGUMENT);
++
++    t = tls_with("server");
++    t.min_version = IEC104_TLS_1_3;
++    t.max_version = IEC104_TLS_1_2;
++    EXPECT_EQ(iec104_server_set_tls(server_, &t), IEC104_ERR_INVALID_ARGUMENT);
++
++    t = tls_with("server");
++    put(t.peer_fingerprint, "12:34");
++    EXPECT_EQ(iec104_server_set_tls(server_, &t), IEC104_ERR_INVALID_ARGUMENT);
++
++    // Encrypted key: right and wrong password.
++    iec104_client* c = nullptr;
++    ASSERT_EQ(iec104_client_create(nullptr, nullptr, &c), IEC104_OK);
++    t = tls_with("client");
++    put(t.private_key_file, cert("client_enc.key"));
++    put(t.key_password, "test-password");
++    EXPECT_EQ(iec104_client_set_tls(c, &t), IEC104_OK);
++    put(t.key_password, "wrong");
++    EXPECT_EQ(iec104_client_set_tls(c, &t), IEC104_ERR_IO);
++    iec104_client_destroy(c);
++
++    // The server still runs without TLS: a plain client gets through.
++    connect_client(nullptr);
++    EXPECT_TRUE(start_and_interrogate());
++}
++
++// Without TLS support every attempt reports UNSUPPORTED (only in such a build).
++TEST(TlsBuild, AvailableOrUnsupported) {
++    iec104_server* s = nullptr;
++    ASSERT_EQ(iec104_server_create(nullptr, nullptr, &s), IEC104_OK);
++    iec104_tls_config t{};
++    iec104_tls_config_init(&t);
++    EXPECT_EQ(t.min_version, IEC104_TLS_1_2);
++    EXPECT_EQ(t.max_version, IEC104_TLS_1_3);
++    EXPECT_EQ(t.verify_peer, 1);
++    EXPECT_EQ(t.session_lifetime_s, 3600U);
++    if (iec104_tls_available() == 0) {
++        EXPECT_EQ(iec104_server_set_tls(s, &t), IEC104_ERR_UNSUPPORTED);
++    }
++    EXPECT_EQ(iec104_server_set_tls(s, nullptr), IEC104_OK); // TLS off is always possible
++    iec104_server_destroy(s);
++}
+diff --git a/tools/make_test_certs.sh b/tools/make_test_certs.sh
+new file mode 100755
+index 0000000..2222559
+--- /dev/null
++++ b/tools/make_test_certs.sh
+@@ -0,0 +1,111 @@
++#!/usr/bin/env bash
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++# make_test_certs.sh – erzeugt eine kleine Test-PKI für die TLS-Tests.
++#
++# Aufruf: tools/make_test_certs.sh <zielverzeichnis>
++#
++# Nur für Tests: Schlüssel ohne Schutz, Namen localhost/127.0.0.1. Der Build
++# ruft das Skript selbst auf (Verzeichnis build/<preset>/tls).
++#
++# | Datei                    | Inhalt                                             |
++# |--------------------------|----------------------------------------------------|
++# | ca.pem                   | Test-CA                                            |
++# | server.pem/.key          | localhost, 127.0.0.1                               |
++# | server2.pem/.key         | wie server, neuer Schlüssel (Zertifikatswechsel)   |
++# | client.pem/.key          | client.test                                        |
++# | client_enc.key           | Schlüssel von client, Passwort "test-password"     |
++# | revoked.pem/.key         | von der CA gesperrt (crl.pem)                      |
++# | expired.pem/.key         | gültig 2020 bis 2021                               |
++# | crl.pem                  | Sperrliste der CA                                  |
++# | foreign_ca.pem           | fremde CA                                          |
++# | foreign.pem/.key         | localhost, von der fremden CA                      |
++
++set -eu
++
++OUT="${1:?Zielverzeichnis fehlt}"
++mkdir -p "$OUT"
++OUT="$(cd "$OUT" && pwd)"
++WORK="$OUT/work"
++rm -rf "$WORK"
++mkdir -p "$WORK/new"
++
++key() { openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$OUT/$1.key" 2>/dev/null; }
++
++make_ca() { # name, common name
++    key "$1"
++    openssl req -x509 -new -key "$OUT/$1.key" -subj "/CN=$2" -days 3650 -sha256 \
++        -addext "basicConstraints=critical,CA:TRUE" \
++        -addext "keyUsage=critical,keyCertSign,cRLSign" -out "$OUT/$1.pem"
++}
++
++# Konfiguration der Test-CA für "openssl ca" (Datenbank für die Sperrliste).
++cat > "$WORK/ca.cnf" <<EOF
++[ ca ]
++default_ca = test_ca
++
++[ test_ca ]
++database         = $WORK/index.txt
++new_certs_dir    = $WORK/new
++serial           = $WORK/serial
++crlnumber        = $WORK/crlnumber
++certificate      = $OUT/ca.pem
++private_key      = $OUT/ca.key
++default_md       = sha256
++default_days     = 3650
++default_crl_days = 3650
++policy           = policy_any
++unique_subject   = no
++copy_extensions  = none
++
++[ policy_any ]
++commonName = supplied
++
++[ leaf ]
++basicConstraints       = CA:FALSE
++keyUsage               = critical,digitalSignature,keyAgreement
++extendedKeyUsage       = serverAuth,clientAuth
++subjectAltName         = \$ENV::SAN
++subjectKeyIdentifier   = hash
++authorityKeyIdentifier = keyid
++EOF
++export SAN="DNS:localhost" # wird von der Konfiguration immer gelesen, auch beim Sperren
++: > "$WORK/index.txt"
++echo 1000 > "$WORK/serial"
++echo 1000 > "$WORK/crlnumber"
++
++leaf() { # name, common name, subjectAltName, [weitere Optionen für openssl ca]
++    local name="$1" cn="$2" san="$3"
++    shift 3
++    key "$name"
++    openssl req -new -key "$OUT/$name.key" -subj "/CN=$cn" -out "$WORK/$name.csr"
++    SAN="$san" openssl ca -batch -notext -config "$WORK/ca.cnf" -extensions leaf \
++        -in "$WORK/$name.csr" -out "$OUT/$name.pem" "$@" 2>/dev/null
++}
++
++make_ca ca "IEC104 Test CA"
++leaf server localhost "DNS:localhost,IP:127.0.0.1"
++leaf server2 localhost "DNS:localhost,IP:127.0.0.1"
++leaf client client.test "DNS:client.test"
++leaf revoked revoked.test "DNS:revoked.test,DNS:localhost,IP:127.0.0.1"
++leaf expired expired.test "DNS:expired.test,DNS:localhost,IP:127.0.0.1" \
++    -startdate 20200101000000Z -enddate 20210101000000Z
++
++openssl pkey -in "$OUT/client.key" -aes256 -passout pass:test-password -out "$OUT/client_enc.key"
++
++openssl ca -batch -config "$WORK/ca.cnf" -revoke "$OUT/revoked.pem" 2>/dev/null
++openssl ca -batch -config "$WORK/ca.cnf" -gencrl -out "$OUT/crl.pem" 2>/dev/null
++
++# Fremde CA mit einem Zertifikat auf dieselben Namen.
++make_ca foreign_ca "Foreign Test CA"
++key foreign
++openssl req -new -key "$OUT/foreign.key" -subj "/CN=localhost" -out "$WORK/foreign.csr"
++printf 'basicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=DNS:localhost,IP:127.0.0.1\n' \
++    > "$WORK/foreign.ext"
++openssl x509 -req -in "$WORK/foreign.csr" -CA "$OUT/foreign_ca.pem" -CAkey "$OUT/foreign_ca.key" \
++    -CAcreateserial -days 3650 -sha256 -extfile "$WORK/foreign.ext" -out "$OUT/foreign.pem" 2>/dev/null
++
++rm -rf "$WORK" "$OUT"/*.srl
++echo "make_test_certs: $OUT"
+diff --git a/tools/selftest/run_selftest.sh b/tools/selftest/run_selftest.sh
+index db59424..23ae136 100755
+--- a/tools/selftest/run_selftest.sh
++++ b/tools/selftest/run_selftest.sh
+@@ -5,7 +5,11 @@
+ # All rights reserved by SOPTIM AG.
+ # run_selftest.sh – Selbsttest-Server und -Client über Loopback gegeneinander.
+ #
+-# Aufruf: run_selftest.sh SERVER_PROGRAMM CLIENT_PROGRAMM [ZUSÄTZLICHE CLIENT-OPTIONEN]
++# Aufruf: run_selftest.sh SERVER_PROGRAMM CLIENT_PROGRAMM [--tls ZERTIFIKATSVERZEICHNIS]
++#                         [ZUSÄTZLICHE CLIENT-OPTIONEN]
++#
++# Mit --tls laufen beide über TLS mit den Testzertifikaten aus
++# tools/make_test_certs.sh; der Server erneuert die Schlüssel alle 2 s.
+ #
+ # Der Server lauscht auf einem freien Port (--port 0) und schreibt ihn in eine
+ # Datei; der Client liest ihn von dort. Kurze Timer (t3 = 1 s) und eine Ruhe
+@@ -17,12 +21,22 @@ set -u
+ SERVER="$1"
+ CLIENT="$2"
+ shift 2
++SERVER_TLS=()
++CLIENT_TLS=()
++if [ "${1:-}" = "--tls" ]; then
++    D="$2"
++    shift 2
++    SERVER_TLS=(--tls-ca "$D/ca.pem" --tls-cert "$D/server.pem" --tls-key "$D/server.key"
++                --tls-crl "$D/crl.pem" --tls-renewal 2)
++    CLIENT_TLS=(--tls-ca "$D/ca.pem" --tls-cert "$D/client.pem" --tls-key "$D/client.key"
++                --tls-peer-name localhost)
++fi
+ 
+ WORK="$(mktemp -d)"
+ trap 'rm -rf "$WORK"; [ -n "${SPID:-}" ] && kill "$SPID" 2>/dev/null' EXIT
+ 
+ "$SERVER" --host 127.0.0.1 --port 0 --port-file "$WORK/port" --once --count 100 \
+-    --interval 1 --t3 1 --duration 60 > "$WORK/server.log" 2>&1 &
++    --interval 1 --t3 1 --duration 60 ${SERVER_TLS[@]+"${SERVER_TLS[@]}"} > "$WORK/server.log" 2>&1 &
+ SPID=$!
+ 
+ for _ in $(seq 1 100); do
+@@ -34,7 +48,7 @@ if [ ! -s "$WORK/port" ]; then
+ fi
+ 
+ "$CLIENT" --host 127.0.0.1 --port "$(cat "$WORK/port")" --expect 100 --count 10 \
+-    --t3 1 --idle 3 --timeout 20 "$@"
++    --t3 1 --idle 3 --timeout 20 ${CLIENT_TLS[@]+"${CLIENT_TLS[@]}"} "$@"
+ CRC=$?
+ 
+ wait "$SPID"
+diff --git a/tools/selftest/selftest_client.cpp b/tools/selftest/selftest_client.cpp
+index 79f70ed..f8b63ee 100644
+--- a/tools/selftest/selftest_client.cpp
++++ b/tools/selftest/selftest_client.cpp
+@@ -82,6 +82,13 @@ std::uint64_t now_ms() {
+            (static_cast<std::uint64_t>(ts.tv_nsec) / 1000000U);
+ }
+ 
++void on_security(void* user, std::uint32_t id, iec104_security_event event, const char* detail) {
++    const auto* self = static_cast<const Client*>(user);
++    if (self->opt.common.verbose || event != IEC104_SECURITY_KEY_RENEWAL) {
++        selftest::print_security(id, event, detail);
++    }
++}
++
+ void on_state(void* user, std::uint32_t /*id*/, iec104_link_state state,
+               iec104_close_reason reason) {
+     auto* c = static_cast<Client*>(user);
+@@ -303,6 +310,7 @@ int main(int argc, char** argv) {
+     iec104_callbacks cb{};
+     cb.user = &c;
+     cb.on_state = on_state;
++    cb.on_security = on_security;
+     cb.on_object = on_object;
+     cb.on_command_result = on_command_result;
+     iec104_status st = iec104_client_create(&c.opt.common.link, &cb, &c.handle);
+@@ -315,6 +323,13 @@ int main(int argc, char** argv) {
+         iec104_client_set_log(c.handle, static_cast<iec104_log_level>(c.opt.common.log_level),
+                               selftest::print_log, nullptr);
+     }
++    if (c.opt.common.use_tls &&
++        (st = iec104_client_set_tls(c.handle, &c.opt.common.tls)) != IEC104_OK) {
++        std::fprintf(stderr, "TLS settings: %s (details with --log error)\n",
++                     iec104_status_string(st));
++        iec104_client_destroy(c.handle);
++        return 2;
++    }
+     const auto ca = static_cast<std::uint16_t>(c.opt.ca);
+     const std::uint64_t step_ms = c.opt.timeout_s * 1000U;
+     std::printf("iec104_selftest_client: %s:%u, station %u%s\n", c.opt.common.host.c_str(),
+@@ -376,6 +391,12 @@ int main(int argc, char** argv) {
+         std::printf("result: FAILED\n");
+         return 1;
+     }
++    if (c.opt.common.use_tls) {
++        iec104_tls_info tls{};
++        (void)iec104_client_get_tls_info(c.handle, &tls);
++        step("TLS", tls.version[0] != '\0',
++             std::string(tls.version) + ", " + tls.cipher + ", peer " + tls.peer_subject);
++    }
+     ok = iec104_client_start(c.handle) == IEC104_OK &&
+          wait_for(c, step_ms, [&] { return c.state == IEC104_LINK_STARTED; });
+     if (step("start data transfer (STARTDT)", ok, ok ? "" : closed_detail())) {
+diff --git a/tools/selftest/selftest_common.hpp b/tools/selftest/selftest_common.hpp
+index 681292d..02caabb 100644
+--- a/tools/selftest/selftest_common.hpp
++++ b/tools/selftest/selftest_common.hpp
+@@ -66,11 +66,14 @@ struct CommonOptions {
+     bool verbose{false};
+     bool stats{false};
+     int log_level{-1}; ///< -1 = no log output, else iec104_log_level
++    bool use_tls{false};
++    iec104_tls_config tls{};
+ 
+     CommonOptions() {
+         iec104_link_config_init(&link);
+         iec104_server_options_init(&server);
+         iec104_client_options_init(&client);
++        iec104_tls_config_init(&tls);
+     }
+ };
+ 
+@@ -89,6 +92,8 @@ inline void load_config_option(int argc, char** argv, CommonOptions& o) {
+         c.server = o.server;
+         c.client = o.client;
+         c.port = o.port;
++        c.use_tls = o.use_tls ? 1 : 0;
++        c.tls = o.tls;
+         std::snprintf(c.host, sizeof c.host, "%s", o.host.c_str());
+         int line = 0;
+         const iec104_status st = iec104_config_load(argv[i + 1], &c, &line);
+@@ -101,6 +106,8 @@ inline void load_config_option(int argc, char** argv, CommonOptions& o) {
+         o.client = c.client;
+         o.port = c.port;
+         o.host = c.host;
++        o.use_tls = c.use_tls != 0;
++        o.tls = c.tls;
+     }
+ }
+ 
+@@ -141,11 +148,18 @@ inline void print_common_help() {
+                 "  --tolerant       accept known deviations of peers (default: strict)\n"
+                 "  --config FILE    read parameters from FILE (key = value, see docs/06);\n"
+                 "                   options on the command line override the file\n"
++                "  --tls            TLS (IEC 62351-3); the standard port is %d\n"
++                "  --tls-ca FILE --tls-cert FILE --tls-key FILE --tls-crl FILE\n"
++                "                   CA, own certificate and key, revocation list (PEM)\n"
++                "  --tls-peer-name NAME   expected name or address in the peer certificate\n"
++                "  --tls-fingerprint HEX  expected SHA-256 fingerprint of the peer certificate\n"
++                "  --tls-version V  highest TLS version: 1.2 or 1.3 (default 1.3)\n"
++                "  --tls-renewal S  key update / renegotiation every S seconds\n"
+                 "  --log LEVEL      library log: error, warning, info, debug, trace\n"
+                 "  --stats          print the counters of each connection at the end\n"
+                 "  --verbose        print every state change and object\n"
+                 "  --help           this text\n",
+-                IEC104_DEFAULT_PORT);
++                IEC104_DEFAULT_PORT, IEC104_DEFAULT_TLS_PORT);
+ }
+ 
+ /** @brief Reads an unsigned number or exits with a message. */
+@@ -159,6 +173,55 @@ inline unsigned long parse_number(const char* option, const char* text, unsigned
+     return v;
+ }
+ 
++/** @brief Copies @p text into a field of iec104_tls_config or exits if it is too long. */
++template <std::size_t N> void set_text(const char* option, const char* text, char (&field)[N]) {
++    const std::string t = text != nullptr ? text : "";
++    if (t.empty() || t.size() >= N) {
++        std::fprintf(stderr, "invalid value for %s\n", option);
++        std::exit(2);
++    }
++    std::snprintf(static_cast<char*>(field), N, "%s", t.c_str());
++}
++
++/** @brief Handles a --tls option; every one of them switches TLS on. */
++template <typename Value> bool parse_tls(const std::string& arg, Value&& value, CommonOptions& o) {
++    o.use_tls = true;
++    iec104_tls_config& t = o.tls;
++    if (arg == "--tls") {
++        return true;
++    }
++    if (arg == "--tls-ca") {
++        set_text("--tls-ca", value(), t.ca_file);
++    } else if (arg == "--tls-cert") {
++        set_text("--tls-cert", value(), t.certificate_file);
++    } else if (arg == "--tls-key") {
++        set_text("--tls-key", value(), t.private_key_file);
++    } else if (arg == "--tls-crl") {
++        set_text("--tls-crl", value(), t.crl_file);
++    } else if (arg == "--tls-peer-name") {
++        set_text("--tls-peer-name", value(), t.peer_name);
++    } else if (arg == "--tls-fingerprint") {
++        set_text("--tls-fingerprint", value(), t.peer_fingerprint);
++    } else if (arg == "--tls-version") {
++        const char* v = value();
++        const std::string version = v != nullptr ? v : "";
++        if (version == "1.2") {
++            t.max_version = IEC104_TLS_1_2;
++        } else if (version == "1.3") {
++            t.max_version = IEC104_TLS_1_3;
++        } else {
++            std::fprintf(stderr, "invalid value for --tls-version: %s\n", version.c_str());
++            std::exit(2);
++        }
++    } else if (arg == "--tls-renewal") {
++        t.renewal_interval_s =
++            static_cast<std::uint32_t>(parse_number("--tls-renewal", value(), 7UL * 24UL * 3600UL));
++    } else {
++        return false;
++    }
++    return true;
++}
++
+ /**
+  * @brief Handles one common option at argv[i].
+  * @return true if it was a common option (i is advanced past its value).
+@@ -206,12 +269,19 @@ inline bool parse_common(int argc, char** argv, int& i, CommonOptions& o) {
+         o.link.tolerant = 1;
+     } else if (arg == "--verbose") {
+         o.verbose = true;
++    } else if (arg.compare(0, 5, "--tls") == 0) {
++        return parse_tls(arg, value, o);
+     } else {
+         return false;
+     }
+     return true;
+ }
+ 
++/** @brief Prints a security event of a TLS connection (with --verbose). */
++inline void print_security(uint32_t connection, iec104_security_event event, const char* detail) {
++    std::printf("  %u: %s: %s\n", connection, iec104_security_event_string(event), detail);
++}
++
+ /** @brief Prints an object in one line (for --verbose). */
+ inline void print_object(const char* prefix, const iec104_asdu_info* info, const iec104_object* o) {
+     std::printf("%stype %u cause %u%s%s ca %u ioa %u value %g\n", prefix, info->type, info->cause,
+diff --git a/tools/selftest/selftest_server.cpp b/tools/selftest/selftest_server.cpp
+index 576211f..b84b525 100644
+--- a/tools/selftest/selftest_server.cpp
++++ b/tools/selftest/selftest_server.cpp
+@@ -72,6 +72,13 @@ iec104_object make(std::uint8_t type, std::uint32_t ioa, double value) {
+     return o;
+ }
+ 
++void on_security(void* user, std::uint32_t id, iec104_security_event event, const char* detail) {
++    const auto* self = static_cast<const Server*>(user);
++    if (self->opt.common.verbose || event != IEC104_SECURITY_KEY_RENEWAL) {
++        selftest::print_security(id, event, detail);
++    }
++}
++
+ void on_state(void* user, std::uint32_t id, iec104_link_state state, iec104_close_reason reason) {
+     auto* s = static_cast<Server*>(user);
+     Peer& p = s->peers[id];
+@@ -235,6 +242,7 @@ int main(int argc, char** argv) {
+     cb.user = &s;
+     cb.on_asdu = on_asdu;
+     cb.on_state = on_state;
++    cb.on_security = on_security;
+     cb.on_object = on_object;
+     cb.on_command = on_command;
+     iec104_status st = iec104_server_create(&s.opt.common.link, &cb, &s.handle);
+@@ -254,6 +262,13 @@ int main(int argc, char** argv) {
+         iec104_server_set_log(s.handle, static_cast<iec104_log_level>(s.opt.common.log_level),
+                               selftest::print_log, nullptr);
+     }
++    if (s.opt.common.use_tls &&
++        (st = iec104_server_set_tls(s.handle, &s.opt.common.tls)) != IEC104_OK) {
++        std::fprintf(stderr, "TLS settings: %s (details with --log error)\n",
++                     iec104_status_string(st));
++        iec104_server_destroy(s.handle);
++        return 2;
++    }
+     st = iec104_server_listen(s.handle, s.opt.common.host.c_str(), s.opt.common.port);
+     if (st != IEC104_OK) {
+         std::fprintf(stderr, "cannot listen on port %u: %s\n", s.opt.common.port,
