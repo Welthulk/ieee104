@@ -13,6 +13,7 @@ Wir bauen eine **exemplarische Library für IEC 60870-5-104**: Client (Controlli
 - **Vollständig getestet.** Unit-Tests mit Referenz-Hexdumps, Zustandsmaschine mit simulierter Zeit, Fuzzing, Interop gegen eine fremde Gegenstelle.
 - **Neutral.** Die Library ist an kein Projekt, keinen Kunden und keine Firma gebunden (siehe Abschnitt 4).
 - **Vorführbar.** Am Ende gibt es zwei kleine Beispielprogramme (Client und Server), die gegeneinander laufen, und eine mit Doxygen erzeugte API-Doku.
+- **Selbsttestfähig** (Nachtrag 25.11.2026, F10 in `docs/04_Analyse.md`): Die Library testet sich selbst, bis der integrierte Test gegen die Gegenstelle des Auftraggebers folgt. Dazu gehören ein Selbsttest ohne Netz (Client- und Server-Stack im selben Prozess, simulierte Zeit) und Selbsttest-Programme für Server und Client über TCP. Alle Ports sind konfigurierbar (Kommandozeile und Konfiguration; Port 0 = vom System gewählt, für parallele ctest-Läufe).
 
 ## 2. Was zu lesen ist (in dieser Reihenfolge)
 

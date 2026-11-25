@@ -89,11 +89,11 @@ Abschnittsnummern stammen aus `03`. Wo sie dort nicht belegt sind, steht „unbe
 | --- | --- | --- |
 | TASK-000 Rest | Vorhandenen Code auf den Kommentarstandard bringen, Testquellen nachtragen | S |
 | TASK-001 | Codec vollständig: Elemente, Typtabelle, ASDUs mit SQ 0/1, Aufteilen, strikt/tolerant, Fuzzer erweitert | L |
-| TASK-002 | APCI-Zustandsmaschine sans-I/O mit injizierter Uhr: STARTDT/STOPDT/TESTFR, k/w, t0–t3, Zählerüberlauf; Timer-Konfiguration mit Plausibilitätsprüfung; Fuzzer für die Zustandsmaschine | L |
+| TASK-002 | APCI-Zustandsmaschine sans-I/O mit injizierter Uhr: STARTDT/STOPDT/TESTFR, k/w, t0–t3, Zählerüberlauf; Timer-Konfiguration mit Plausibilitätsprüfung; Fuzzer für die Zustandsmaschine; Selbsttest ohne Netz: zwei Zustandsmaschinen über einen Speicherkanal gekoppelt | L |
 | TASK-003 | Session-Grundabläufe: Generalabfrage (auch Gruppen), Zählerabfrage, Uhrzeitsynchronisation, End of Initialization, Zeitbasis | M |
 | TASK-004 | Befehle: direkt und Select/Execute je IOA, mit und ohne Zeitmarke, ACTTERM optional, getrennte Timeouts, Max-Delay | M |
-| TASK-005 | Transport TCP und Event-Loop (`poll`/`epoll`, eigener Thread oder `iec104_poll`), C-API mit Handles, Konfiguration, Callbacks, Logging, Statistik, `install(EXPORT)` | L |
-| TASK-006 | Beispielprogramme Client und Server, die gegeneinander laufen, plus Integrationstest in ctest | M |
+| TASK-005 | Transport TCP und Event-Loop (`poll`/`epoll`, eigener Thread oder `iec104_poll`), C-API mit Handles, Konfiguration (Ports für TCP und TLS je Verbindung konfigurierbar, Port 0 = vom System gewählt), Callbacks, Logging, Statistik, `install(EXPORT)` | L |
+| TASK-006 | Selbsttest-Programme Server und Client (zugleich Beispielprogramme), Ports und Adresse per Kommandozeile und Konfigurationsdatei; Selbsttest-Szenarien (STARTDT, GA, Befehle, Uhrzeit, Zähler, Verbindungsabbruch) mit Ergebnisbericht und Exit-Code; Integrationstest in ctest über Loopback | M |
 | TASK-007 | TLS über OpenSSL 3.x hinter `tls_backend`: gegenseitige X.509-Authentifizierung, CRL, Cipher-Liste, Renegotiation/Key Update, Zertifikatswechsel zur Laufzeit, Negativtests | L |
 | TASK-008 | Redundanzgruppen mit Ereignispuffer je Gruppe, Überlaufstrategie, Umschaltung per STOPDT/STARTDT, mehrere Gruppen | L |
 | TASK-009 | Interop-Tests gegen lib60870 als externe Gegenstelle (GA, Befehle, Uhrzeit, Redundanz), Mitschnitte als Referenzdaten | M |
@@ -127,5 +127,6 @@ Die Analyse ist freigegeben. Zu F1–F8 gelten die Vorschläge aus Abschnitt 5.
 | F7 | Nur Linux x86-64 in Version 1 | `CLAUDE.md`; A7 (dllimport) entfällt |
 | F8 | Kein C++-Wrapper in Version 1 | – |
 | F9 | Lizenz (Nachtrag 25.11.2026): Rechte liegen ausschließlich beim Rechteinhaber; was für den Zugriff gebraucht wird (öffentlicher Header), ist offen unter Apache-2.0 | SPDX-Kopfblock in jeder Quelldatei, `LICENSES/Apache-2.0.txt` und `LICENSES/LicenseRef-Proprietary.txt`; Ausnahme von der Neutralitätsregel nur für diese Kopfzeilen (`allow:` in der Begriffsdatei) und `LICENSES/` |
+| F10 | Selbsttest (Nachtrag 25.11.2026): Die Library muss sich selbst testen können, bis der integrierte Test gegen die Gegenstelle des Auftraggebers folgt; Programme für den Selbsttest, Ports konfigurierbar | TASK-000 Abschnitt 1, Aufgabenreihe TASK-002 (ohne Netz), TASK-005 (Ports), TASK-006 (Programme, ctest) |
 
 Umgesetzt aus Abschnitt 1: W1 (Hinweis in `03`), W3, W6, W7, W8 (in `02`), W10 (Catch2 aus dem Setup), W11 (Fuzz-Dauern in `CLAUDE.md`). In `02` zusätzlich die CP24-Typen korrigiert: 2, 4, …, 16 und 17–19 (vorher „2–19 gerade“).
