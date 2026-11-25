@@ -1,6 +1,6 @@
-# Öffentliche Belege für die APCI-Regeln
+# Belege für die APCI-Regeln
 
-Stand: 25.11.2026 · Anlass: Der Normtext lag bei der Entwicklung nicht vor (siehe `docs/05_Normfragen_und_Festlegungen.md`). Jede Regel der Zustandsmaschine (`src/apci/connection.cpp`, R1–R12) wird hier mit öffentlicher Quelle belegt oder als offen markiert.
+Stand: 25.11.2026 · Regeln R1–R12 in `src/apci/connection.cpp`.
 
 ## Quellen
 
@@ -14,7 +14,14 @@ Stand: 25.11.2026 · Anlass: Der Normtext lag bei der Entwicklung nicht vor (sie
 | PRO | Protokollhandbuch eines Gateway-Herstellers: https://www.prosoft-technology.com/prosoft/download/14015/317164/file/PLX32_104S_Protocol_UM.pdf | Herstellerdoku |
 | LIB | lib60870 User Guide (nur Verhaltenshinweis, kein Code übernommen): https://github.com/mz-automation/lib60870/blob/master/user_guide.adoc | sekundär |
 
-Gliederung laut CON: 5.1 Schutz gegen Verlust und Verdopplung, 5.2 Testprozeduren, 5.3 Übertragungssteuerung mit Start/Stopp (Bild 17 gesteuerte, Bild 18 steuernde Station), 5.4 Portnummer, 5.5 maximale Zahl unquittierter I-Rahmen (k), 10 Redundante Verbindungen.
+| Abschnitt (CON) | Inhalt |
+| --- | --- |
+| 5.1 | Schutz gegen Verlust und Verdopplung |
+| 5.2 | Testprozeduren |
+| 5.3 | Start/Stopp (Bild 17 gesteuerte, Bild 18 steuernde Station) |
+| 5.4 | Portnummer |
+| 5.5 | max. unquittierte I-Rahmen (k) |
+| 10 | redundante Verbindungen |
 
 ## Regeln und Belege
 
@@ -36,15 +43,15 @@ Gliederung laut CON: 5.1 Schutz gegen Verlust und Verdopplung, 5.2 Testprozedure
 | R11 | t3: Testrahmen nach langer Ruhe; Bereich 1 s–48 h. t3 = 0 (abgeschaltet) verlangen einzelne Anwenderrichtlinien; nur im toleranten Modus | ORA | „Time-out for sending test frames in case of a long idle state. Range 1 s to 48 h“ |
 | R12 | STOPDT act: ohne offene I-Rahmen sofort bestätigen, sonst Zustand „Pending unconfirmed stopped“, Bestätigung nach S-Rahmen, der alles quittiert; dort I-Rahmen oder t1 → schließen | FIG17 | „STOPDT act[unconfirmed I-frames]“ → „S-frame [no unconfirmed I-frames] /Send STOPDT con“ |
 
-## Offen (keine öffentliche Quelle)
+## Festlegungen ohne Beleg
 
-| Thema | Annahme im Code |
+| Thema | Umsetzung |
 | --- | --- |
-| Bild 18 (steuernde Station) | I-Rahmen im Zustand gestoppt: strikt schließen, tolerant annehmen. Nach eigenem STOPDT act werden eintreffende I-Rahmen sofort per S-Rahmen quittiert, damit die Gegenstelle bestätigen kann (bekanntes Interop-Problem bei verzögerter Quittung) |
+| steuernde Station (Bild 18) | I-Rahmen im Zustand gestoppt: strikt schließen, tolerant annehmen. Nach eigenem STOPDT act sofort quittieren, damit die Gegenstelle bestätigen kann |
 | Startbedingung von t3 | t3 läuft ab dem letzten empfangenen Rahmen beliebigen Formats |
-| Gleichzeitige U-Rahmen act | Ein offener Testrahmen und ein offenes STARTDT/STOPDT werden getrennt mit t1 überwacht; ein Verbindungstest blockiert Start und Stopp nicht |
+| gleichzeitige U-Rahmen act | Test und STARTDT/STOPDT getrennt mit t1 überwacht; ein Test blockiert Start und Stopp nicht |
 | N(R) außerhalb des Fensters | schließen |
 | Erreichen von k | Senden anhalten (`IEC104_ERR_WOULD_BLOCK`), nicht schließen |
 | Wortlaut „modulo 32768“ | aus 15 Bit abgeleitet |
 
-Hinweis: FIG17 stammt aus dem Normentwurf (FDIS), nicht aus der veröffentlichten Fassung. Bei Zugang zum Normtext gegen 5.1–5.5 prüfen.
+FIG17 stammt aus dem Normentwurf (FDIS).

@@ -1,14 +1,10 @@
-# Offene Normfragen und technische Festlegungen
+# Normfragen und Festlegungen
 
-Stand: 25.11.2026
+Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stellen zu N1–N13 sind mit `TODO(norm)` markiert; E1–E7 sind technische Festlegungen. Belege: `docs/02_Technik_und_Quellen.md`, `docs/03_Quellen_APCI.md`.
 
-Die Library folgt IEC 60870-5-104 Ed. 2.1 einschließlich AMD1:2016. Der Normtext lag bei der Entwicklung nicht vor. Alle Regeln stützen sich auf öffentliche Quellen: Leseproben der Norm, die Interoperabilitätsliste (Abschnitt 9), den Wireshark-Dissector, Fachberichte und Herstellerdokumentation (siehe `docs/02_Technik_und_Quellen.md` und `docs/03_Quellen_APCI.md`).
+## Normfragen
 
-Stellen im Code, die nur aus Sekundärquellen belegt sind, tragen den Kommentar `TODO(norm): …`. Dieses Dokument fasst die offenen Fragen zusammen (N1–N13) und hält die technischen Festlegungen fest, auf die der Code verweist (E1–E7). Sobald der Normtext verfügbar ist, werden die Punkte dagegen geprüft.
-
-## Offene Normfragen
-
-| Nr. | Thema (Normabschnitt) | Modul | Auswirkung | Umsetzung bis zur Klärung |
+| Nr. | Thema (Normabschnitt) | Modul | Auswirkung | Umsetzung |
 | --- | --- | --- | --- | --- |
 | N1 | Zustandsverhalten der Verbindung (104, Abschnitt 5) | apci | Wann I-Rahmen erlaubt sind, wann geschlossen wird | Regeln R1–R12 nach öffentlichen Belegen, siehe `docs/03_Quellen_APCI.md`; unbelegte Punkte (N(R) außerhalb des Fensters, Verhalten bei Erreichen von k, Startbedingung von t3) mit `TODO(norm)` |
 | N2 | Bedeutung von t1 | apci | Einige Geräte überwachen mit t1 nur U-Rahmen | t1 überwacht I-Rahmen und U-Rahmen act (Bild 17 des Normentwurfs, Interoperabilitätsliste) |

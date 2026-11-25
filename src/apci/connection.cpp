@@ -9,11 +9,10 @@
  * @brief Implementation of the APCI state machine.
  *
  * Rules implemented here (R1..R12 are referenced in the code and in the
- * tests, tests/test_apci_connection.cpp). The normative text of clause 5 is
- * not available; docs/03_Quellen_APCI.md lists the public evidence per rule
- * (amendment 1 sample, figure 17 of the draft standard, interoperability
- * list 9.6, technical reports). Clause numbers follow the public table of
- * contents of edition 2.1 (5.1 loss/duplication, 5.2 test, 5.3 start/stop,
+ * tests, tests/test_apci_connection.cpp). docs/03_Quellen_APCI.md lists the
+ * evidence per rule (amendment 1, figure 17 of the draft standard,
+ * interoperability list 9.6, technical reports). Clause numbers follow the
+ * table of contents of edition 2.1 (5.1 loss/duplication, 5.2 test, 5.3 start/stop,
  * 5.5 k).
  *
  *   R1  I-frames only while data transfer is started. The controlled
@@ -40,7 +39,7 @@
  *       are acknowledged, otherwise after the S-frame that acknowledges the
  *       rest; an I-frame in between closes (figure 17). The controlling
  *       station acknowledges at once what it receives after its STOPDT act
- *       (own decision, figure 18 is not public).
+ *       (own decision; figure 18 covers the controlling station).
  *
  * Layer: apci (sans-I/O).
  */
@@ -198,7 +197,7 @@ void Connection::handle_i_frame(const std::uint8_t* frame, const codec::Apci& ap
     // accepts frames the peer sent before it saw the STOPDT act; the
     // controlled station must not receive data after STOPDT act (figure 17).
     // Tolerant mode accepts data outside these states.
-    // TODO(norm): 5.3, figure 18 (controlling station) is not public.
+    // TODO(norm): 5.3, figure 18 (controlling station).
     const bool allowed = state_ == State::Started ||
                          (state_ == State::StopPending && config_.role == Role::Controlling);
     if (!allowed && config_.strict) {

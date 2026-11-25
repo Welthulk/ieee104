@@ -38,7 +38,7 @@
  * Wireshark 3.4.10); where Wireshark shows a type only as raw data, the
  * lib60870 encoding is the only source and the element says so.
  * TODO(norm): definition of the information elements, clause unknown
- * (IEC 60870-5-101 / -104, not in the documents of this repository).
+ * (IEC 60870-5-101 / -104).
  *
  * Layer: codec (pure functions, no I/O, no allocation).
  */

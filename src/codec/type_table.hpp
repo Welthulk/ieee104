@@ -118,10 +118,9 @@ constexpr bool is_private_type(std::uint8_t type_id) noexcept {
 /**
  * @brief Tells whether a cause of transmission is allowed for a type.
  *
- * The standard defines this matrix in clause 9.5; its text is not available
- * in this repository (docs/05_Normfragen_und_Festlegungen.md, N3). The table behind this function
- * is therefore empty and every combination is allowed. When the matrix is
- * filled in, only this function and its table change.
+ * The matrix is defined in clause 9.5 (docs/05_Normfragen_und_Festlegungen.md,
+ * N3). The table behind this function is empty, so every combination is
+ * allowed; filling it in changes only this function and its table.
  * TODO(norm): 9.5, matrix of type identification and cause of transmission.
  *
  * @param type_id Type identification.

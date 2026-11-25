@@ -1,6 +1,6 @@
 # IEC 60870-5-104 Library
 
-Library für IEC 60870-5-104 mit Client (steuernde Station) und Server (gesteuerte Station). Der Kern ist in C++17 geschrieben, nach außen gibt es eine stabile C-Schnittstelle (`include/iec104/iec104.h`). Ziel ist eine normgerechte, gut lesbare und vollständig getestete Implementierung; jede Protokollregel im Code nennt ihre Quelle.
+Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`). Jede Protokollregel im Code nennt ihre Quelle.
 
 Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
 

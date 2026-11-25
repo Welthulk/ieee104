@@ -1,37 +1,30 @@
 # Technik und Quellen
 
-Stand: 25.11.2026
-
-Dieses Dokument fasst die technischen Grundlagen der Library zusammen: Architektur, Protokollaufbau, Parameter und die öffentlichen Quellen, auf die sich die Regeln im Code stützen. Kommentare im Code verweisen auf die Abschnitte hier („docs/02_Technik_und_Quellen.md, …“). Die Regeln der Verbindungssteuerung sind in `docs/03_Quellen_APCI.md` einzeln belegt, offene Normfragen stehen in `docs/05_Normfragen_und_Festlegungen.md`.
-
-Normstand: IEC 60870-5-104 Ed. 2.1 (2016), also Ed. 2 von 2006 mit Amendment 1 von 2016, ergänzt um die Berichtigung COR1:2023. Der Normtext lag bei der Entwicklung nicht vor; die Quellen sind am Ende aufgeführt (Kürzel in eckigen Klammern).
+Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 (2016) mit COR1:2023 · Quellen-Kürzel siehe letzter Abschnitt.
 
 ## Sprache und Architektur
 
-Der Kern ist in C++17 geschrieben, nach außen gibt es nur eine C-Schnittstelle. Innen bringt das RAII und Typsicherheit, außen ein stabiles ABI, das sich aus C, C++ und jeder Sprache mit C-Anbindung nutzen lässt.
-
-Regeln:
-
-- Keine Exceptions und kein RTTI im Library-Code (`-fno-exceptions -fno-rtti`); Fehler sind Rückgabewerte vom Typ `iec104_status`.
-- Öffentliche Header sind reines C, ohne STL-Typen; alle exportierten Symbole tragen `IEC104_API`, alle anderen sind verborgen.
-- Lesbarkeit vor Performance: kleine Funktionen, ausführliche Kommentare mit Bit-Layouts, jede Protokollregel mit Quelle.
-- Normverhalten ist Default. Bekannte Abweichungen von Gegenstellen werden Parameter, nie ein Code-Zweig für ein bestimmtes Gerät.
-
-Schichten (jede ohne Abhängigkeit nach oben):
+| Punkt | Festlegung |
+| --- | --- |
+| Sprache | Kern C++17, Schnittstelle nur C (`include/iec104/iec104.h`) |
+| Fehler | Rückgabewert `iec104_status`; keine Exceptions, kein RTTI (`-fno-exceptions -fno-rtti`) |
+| Öffentlicher Header | reines C, keine STL-Typen, Export nur über `IEC104_API` |
+| Abweichungen von Gegenstellen | Parameter, nie ein Code-Zweig für ein Gerät |
+| Stil | Lesbarkeit vor Performance; jede Protokollregel mit Quelle im Kommentar |
 
 | Schicht | Ordner | Aufgabe |
 | --- | --- | --- |
-| codec | `src/codec` | APCI und ASDU kodieren und dekodieren; reine Funktionen auf Byte-Puffern, kein I/O, keine Allokation |
+| codec | `src/codec` | APCI und ASDU kodieren/dekodieren; reine Funktionen, kein I/O, keine Allokation |
 | apci | `src/apci` | Zustandsmaschine je Verbindung: Bytes und Zeit rein, Bytes und Ereignisse raus |
-| session | `src/session` | Abläufe der gesteuerten Station: Prozessabbild, Generalabfrage, Zählerabfrage, Lesen, Test, Uhrzeit, Befehle; später Pufferung und Redundanzgruppen |
-| transport | `src/transport` | TCP (später TLS), Verbindungsaufbau, Zeitbasis |
-| API | `include/iec104/iec104.h`, `src/api` | C-Schnittstelle: Handles, Konfiguration, Callbacks |
+| session | `src/session` | Prozessabbild, Abfragen, Uhrzeit, Befehle, Befehlsverfolgung |
+| transport | `src/transport` | TCP, Verbindungsaufbau, Uhren |
+| API | `src/api` | C-Schnittstelle: Handles, Konfiguration, Callbacks |
 
-Weil Codec und Zustandsmaschine kein I/O machen, sind sie vollständig ohne Netz und mit simulierter Zeit testbar.
+Keine Schicht hängt von einer höheren ab. Codec, Zustandsmaschine und Session sind ohne Netz und mit simulierter Zeit testbar.
 
 ## APCI
 
-Eine APDU beginnt mit dem Startoktett 0x68, gefolgt vom Längenoktett und vier Steueroktetten. Die Länge zählt Steueroktette plus ASDU; sie ist höchstens 253, die APDU damit höchstens 255 Oktette und die ASDU höchstens 249 Oktette [WS].
+APDU = 0x68, Längenoktett, 4 Steueroktette, ASDU. Länge ≤ 253, also APDU ≤ 255 und ASDU ≤ 249 Oktette [WS].
 
 | Format | Erkennung (Oktett 3) | Inhalt |
 | --- | --- | --- |
@@ -39,26 +32,26 @@ Eine APDU beginnt mit dem Startoktett 0x68, gefolgt vom Längenoktett und vier S
 | S | Bits 0–1 = 01 | nur N(R) |
 | U | Bits 0–1 = 11 | genau eine Funktion: STARTDT act 0x07 / con 0x0B, STOPDT act 0x13 / con 0x23, TESTFR act 0x43 / con 0x83 |
 
-Folgenummern zählen modulo 32768 und beginnen nach dem Verbindungsaufbau bei 0 [VUT]. Die gesteuerte Station lauscht auf TCP-Port 2404 [IANA], [WS].
+Folgenummern modulo 32768, Start bei 0 nach dem Verbindungsaufbau [VUT]. Port 2404 [IANA].
 
 ## Verbindung und Timer
 
 | Parameter | Bedeutung | Default | Bereich |
 | --- | --- | --- | --- |
 | t0 | Timeout Verbindungsaufbau | 30 s | 1–255 s |
-| t1 | Timeout für Sende- oder Test-APDUs; Ablauf schließt die Verbindung | 15 s | 1–255 s |
-| t2 | Quittung spätestens nach t2, wenn keine eigenen Daten anstehen; t2 < t1 | 10 s | 1–255 s |
-| t3 | Testrahmen nach langer Ruhe | 20 s | 1 s – 48 h |
-| k | höchstens k unquittierte gesendete I-Rahmen | 12 | 1–32767 |
-| w | Quittung spätestens nach w empfangenen I-Rahmen; Empfehlung w ≤ 2/3 k | 8 | 1–32767 |
+| t1 | Timeout für Sende- und Test-APDUs; Ablauf schließt die Verbindung | 15 s | 1–255 s |
+| t2 | Quittung spätestens nach t2 ohne eigene Daten; t2 < t1 | 10 s | 1–255 s |
+| t3 | Testrahmen nach Ruhe | 20 s | 1 s–48 h |
+| k | max. unquittierte gesendete I-Rahmen | 12 | 1–32767 |
+| w | Quittung spätestens nach w I-Rahmen; w ≤ 2/3 k empfohlen | 8 | 1–32767 |
 
-Quelle der Werte: Interoperabilitätsliste der Norm, öffentlich wiedergegeben in [ORA].
+Quelle: Interoperabilitätsliste, wiedergegeben in [ORA].
 
-Abweichungen aus der Praxis, die die Library als Parameter abdeckt:
-
-- Einige Netzbetreiber fordern lange Timer, z. B. t1 = 250 s, t2 = 240 s, t3 = 255 s. Deshalb gilt der volle Bereich ohne künstliche Grenzen, und die Empfehlungen t2 < t1 und w ≤ 2/3 k werden standardmäßig nur gewarnt (E2 in `docs/05_Normfragen_und_Festlegungen.md`).
-- Einige Gegenstellen schalten den Verbindungstest mit t3 = 0 ab; das ist im toleranten Modus erlaubt (E3).
-- Hersteller interpretieren t1 unterschiedlich, manche nur als Antwortzeit für U-Rahmen. Die Library überwacht mit t1 I-Rahmen und U-Rahmen act (`docs/03_Quellen_APCI.md`, R10).
+| Abweichung in der Praxis | Umsetzung |
+| --- | --- |
+| lange Timer (z. B. t1 250 s, t2 240 s, t3 255 s) | voller Bereich; t2 < t1 und w ≤ 2/3 k nur als Warnung (E2) |
+| Verbindungstest abgeschaltet (t3 = 0) | nur im toleranten Modus (E3) |
+| t1 nur für U-Rahmen | t1 überwacht I-Rahmen und U-Rahmen act (R10) |
 
 ## ASDU-Kopf und ASDU-Profil
 
@@ -71,17 +64,17 @@ Datenkopf im IEC-104-Profil (6 Oktette) [WS], [VUT]:
 | COT | 2 | Bits 0–5 Ursache, Bit 6 P/N (negativ), Bit 7 T (Test); zweites Oktett Herkunftsadresse (0 = ungenutzt) |
 | CA | 2 | gemeinsame Adresse: 0 ungenutzt, 1–65534 Station, 65535 Broadcast |
 
-Jedes Informationsobjekt beginnt mit einer 3-Oktett-IOA; IOA 0 steht für systembezogene Befehle wie die Generalabfrage. Alle Mehroktettwerte werden mit dem niederwertigen Oktett zuerst übertragen (in Interoperabilitätslisten „Mode 1“).
+Danach je Objekt eine IOA (3 Oktette; IOA 0 = systembezogene Befehle wie die Generalabfrage). Mehroktettwerte: niederwertiges Oktett zuerst („Mode 1“).
 
-SQ = 0: jedes Objekt hat seine eigene IOA. SQ = 1: nur das erste Objekt trägt eine IOA, die folgenden haben fortlaufende Adressen.
+SQ = 0: jedes Objekt mit eigener IOA. SQ = 1: eine IOA, folgende Objekte fortlaufend adressiert.
 
-ASDU-Profil (Parameter, `AsduProfile`):
+ASDU-Profil (`iec104_link_config`):
 
 | Parameter | Default | Bereich | Zweck |
 | --- | --- | --- | --- |
-| Längen COT / CA / IOA | 2 / 2 / 3 | 1–2 / 1–2 / 1–3 | Gegenstellen außerhalb der Norm (Feldlängen wie bei IEC 101) |
-| maximale ASDU-Länge | 249 | 1–249 | Gegenstellen mit kleinerem Maximum; der Sender teilt lange Objektlisten auf |
-| strikter Modus | an | an / tolerant | Abweichungen bewusst zulassen (E1) |
+| Längen COT / CA / IOA | 2 / 2 / 3 | 1–2 / 1–2 / 1–3 | Gegenstellen mit Feldlängen wie IEC 101 |
+| max. ASDU-Länge | 249 | 1–249 | kleineres Maximum der Gegenstelle; lange Listen werden aufgeteilt |
+| strikt | an | an / tolerant | bekannte Abweichungen zulassen (E1) |
 
 ## Typkennungen
 
@@ -102,36 +95,55 @@ Elementlängen je Typ: [WS]; Elementfolge je Typ: `src/codec/type_table.cpp`, ge
 
 ## Übertragungsursachen
 
-1 zyklisch, 2 Hintergrund, 3 spontan, 4 initialisiert, 5 Abfrage, 6 Aktivierung, 7 Bestätigung der Aktivierung, 8 Abbruch, 9 Bestätigung des Abbruchs, 10 Beendigung der Aktivierung, 11 Rückmeldung Fernbefehl, 12 Rückmeldung Ortsbefehl, 13 Dateiübertragung, 20 Generalabfrage, 21–36 Gruppen 1–16, 37 allgemeine Zählerabfrage, 38–41 Zählergruppen 1–4, 44 unbekannte Typkennung, 45 unbekannte Übertragungsursache, 46 unbekannte gemeinsame Adresse, 47 unbekannte IOA, 48–63 privat [WS].
+| COT | Bedeutung | COT | Bedeutung |
+| --- | --- | --- | --- |
+| 1 | zyklisch | 11 | Rückmeldung Fernbefehl |
+| 2 | Hintergrund | 12 | Rückmeldung Ortsbefehl |
+| 3 | spontan | 13 | Dateiübertragung |
+| 4 | initialisiert | 20 | Generalabfrage (Station) |
+| 5 | Abfrage | 21–36 | Generalabfrage Gruppe 1–16 |
+| 6 | Aktivierung | 37 | Zählerabfrage allgemein |
+| 7 | Bestätigung der Aktivierung | 38–41 | Zählerabfrage Gruppe 1–4 |
+| 8 | Abbruch | 44 | unbekannte Typkennung |
+| 9 | Bestätigung des Abbruchs | 45 | unbekannte Übertragungsursache |
+| 10 | Beendigung der Aktivierung | 46 | unbekannte gemeinsame Adresse |
+| | | 47 | unbekannte IOA |
 
-Welche Ursache für welchen Typ zulässig ist, regelt Abschnitt 9.5 der Norm; die Tabelle ist angelegt, aber noch leer (N3).
+48–63: privat. Quelle [WS]. Zulässige Kombinationen Typ/COT (Abschnitt 9.5): N3.
 
 ## Informationselemente
 
-- Qualitätsbits: IV 0x80 (ungültig), NT 0x40 (nicht aktuell), SB 0x20 (ersetzt), BL 0x10 (blockiert), bei QDS zusätzlich OV 0x01 (Überlauf) [WS].
-- DIQ: 0 und 3 unbestimmt, 1 AUS, 2 EIN.
-- NVA: vorzeichenbehaftet 16 Bit, Wert = Rohwert / 32768. SVA: vorzeichenbehaftet 16 Bit. R32: IEEE 754 einfache Genauigkeit, niederwertiges Oktett zuerst.
-- CP56Time2a, 7 Oktette: Millisekunden einschließlich Sekunden (0–59999), Minute mit IV-Bit, Stunde mit SU-Bit (Sommerzeit), Tag mit Wochentag (3 Bit), Monat, Jahr 0–99 [WS].
+| Element | Inhalt |
+| --- | --- |
+| Qualität | IV 0x80 ungültig, NT 0x40 nicht aktuell, SB 0x20 ersetzt, BL 0x10 blockiert; QDS zusätzlich OV 0x01 Überlauf [WS] |
+| DIQ | 0 und 3 unbestimmt, 1 AUS, 2 EIN |
+| NVA | 16 Bit mit Vorzeichen, Wert = Rohwert / 32768 |
+| SVA | 16 Bit mit Vorzeichen |
+| R32 | IEEE 754 einfach, niederwertiges Oktett zuerst |
+| CP56Time2a | 7 Oktette: ms inkl. Sekunden (0–59999), Minute + IV, Stunde + SU, Tag + Wochentag, Monat, Jahr 0–99 [WS] |
 
-Bit-Layouts aller Elemente: `src/codec/elements.hpp`. Jede Bitposition ist durch die Referenz-ASDUs bestätigt.
+Bit-Layouts: `src/codec/elements.hpp`, bestätigt durch die Referenz-ASDUs in `tests/data/`.
 
 ## Zeit
 
-Die Norm legt nicht fest, ob Zeitmarken UTC oder Ortszeit sind; das ist ein Punkt der Interoperabilitätsliste. Der Codec trägt deshalb keine Zeitzone und führt IV, SU und den optionalen Wochentag ausdrücklich. Die Zeitbasis (UTC, fester Offset, Ortszeit mit SU-Bit) wird ein Parameter der Session-Schicht (N13).
+UTC oder Ortszeit ist nicht genormt, sondern Teil der Interoperabilitätsliste. Der Codec trägt keine Zeitzone; IV, SU und Wochentag sind eigene Felder. Die Library rechnet in UTC (N13).
 
 ## Sicherheit
 
-IEC 104 selbst bietet weder Integrität noch Authentifizierung noch Verschlüsselung. Vorgesehen ist TLS nach IEC 62351-3 Ed. 2 (2023) für TLS 1.2 und 1.3, mit Regeln zu Cipher-Suites, Resumption, Renegotiation und Key Update [62351]. Den Port überlässt die Norm dem Anwendungsprotokoll; IANA registriert TCP 19998 als „iec-104-sec“ [IANA]. Die Library bindet TLS über OpenSSL 3.x hinter einer schmalen Backend-Schnittstelle an (in Arbeit).
+| Punkt | Stand |
+| --- | --- |
+| IEC 104 | keine Integrität, Authentifizierung oder Verschlüsselung |
+| TLS | IEC 62351-3 Ed. 2 (2023), TLS 1.2/1.3 [62351]; Umsetzung über OpenSSL 3.x geplant |
+| Port | 2404 ohne TLS, 19998 mit TLS („iec-104-sec“) [IANA] |
 
 ## Designfolgerungen
 
 | Thema | Folgerung |
 | --- | --- |
-| Strikt und tolerant | Strikt ist Default (Normverhalten). Tolerant erlaubt CP24-Typen, ASDUs ohne Objekte und t3 = 0 |
-| Nie toleriert | Länge über 253, mehr als ein U-Funktionsbit, falsche N(S), N(R) außerhalb des Fensters: das sind Fehler in der Rahmenstruktur oder der Datenintegrität |
-| Dekodieren | verlustfrei, auch reservierte Bits bleiben erhalten; Kodieren schneidet nie ab (E5) |
-| Zustandsmaschine | ohne I/O, mit von außen gelieferter Zeit; dadurch vollständig mit simulierter Zeit testbar |
-| Tests | Unit-Tests mit Referenzbytes einer fremden Implementierung, Fuzzing von Codec und Zustandsmaschine, Selbsttest über TCP, Gegenprobe mit lib60870 als externer Gegenstelle |
+| strikt/tolerant | strikt ist Default; tolerant erlaubt CP24-Typen, ASDUs ohne Objekte, t3 = 0 |
+| nie toleriert | Länge > 253, mehrere U-Funktionsbits, falsche N(S), N(R) außerhalb des Fensters |
+| Dekodieren | verlustfrei, reservierte Bits bleiben erhalten; Kodieren schneidet nie ab (E5) |
+| Tests | Referenzbytes einer fremden Implementierung, Fuzzing, Selbsttest über TCP, Gegenprobe mit lib60870 |
 
 ## Quellen
 

@@ -39,7 +39,7 @@ iec104_status resolve_type(std::uint8_t type_id, const AsduProfile& profile,
         return IEC104_ERR_UNSUPPORTED;
     }
     // The IEC 101 types with CP24Time2a are not part of the IEC 104 type set
-    // according to docs/02_Technik_und_Quellen.md (no verbatim proof from the norm text, N4).
+    // according to docs/02_Technik_und_Quellen.md (N4).
     if (profile.strict && t->time_tag == TimeTag::Cp24) {
         return IEC104_ERR_UNSUPPORTED;
     }

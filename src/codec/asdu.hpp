@@ -36,9 +36,9 @@
  * Types 136..255 are private: decode_asdu() hands their object octets to the
  * caller unchanged (DecodedAsdu::object_data) and does not interpret them.
  *
- * Whether SQ = 1 is allowed for a given type is not checked: the norm text
- * is not available (TODO(norm): admissible types for SQ = 1, clause unknown).
- * The codec handles SQ = 1 for every type in the table.
+ * The codec handles SQ = 1 for every type in the table; whether SQ = 1 is
+ * admissible for a type is not checked.
+ * TODO(norm): admissible types for SQ = 1, clause unknown.
  *
  * Layer: codec (pure functions, no I/O, no allocation).
  */

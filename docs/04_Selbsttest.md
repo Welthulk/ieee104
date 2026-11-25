@@ -1,6 +1,6 @@
 # Selbsttest und manuelle Tests
 
-Diese Anleitung beschreibt, wie die Library ohne fremde Gegenstelle geprüft wird und wie die beiden Selbsttest-Programme für manuelle Tests gegen andere IEC-104-Geräte eingesetzt werden. Beide Programme nutzen ausschließlich die öffentliche C-Schnittstelle (`include/iec104/iec104.h`) und sind damit zugleich Beispiele für deren Verwendung.
+Zwei Programme prüfen die Library über TCP, gegeneinander oder gegen fremde Geräte. Sie nutzen nur die öffentliche C-API und dienen zugleich als Beispiel.
 
 ## 1. Überblick
 
@@ -123,7 +123,7 @@ Erwartung: Client `result: PASSED`; der Server meldet je Verbindung `connection 
 iec104_selftest_client --host <Gerät> --port 2404 --foreign --ca <gemeinsame Adresse> --idle 60
 ```
 
-Mit `--foreign` prüft der Client nur die Abläufe, nicht die Datenpunkte des Selbsttest-Servers: Verbindungsaufbau, STARTDT, Generalabfrage (Bestätigung und Beendigung, Anzahl der Objekte), Uhrzeitsynchronisation, Zählerabfrage, Ruhephase mit Verbindungstest und STOPDT. Lehnt das Gerät eine Anfrage normgerecht ab (Ursache 44 bis 47), meldet der Client „not supported (cause …)“; das gilt nicht als Fehler. Beispiel gegen einen Server, der keine Zählerabfrage kennt:
+Mit `--foreign` prüft der Client nur die Abläufe: Verbindung, STARTDT, Generalabfrage, Uhrzeit, Zählerabfrage, Ruhephase, STOPDT. Eine normgerechte Ablehnung (Ursache 44–47) meldet er als „not supported (cause …)“, nicht als Fehler:
 
 ```
   general interrogation ................ 14 objects

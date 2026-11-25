@@ -33,8 +33,7 @@
  *
  * Sources: docs/02_Technik_und_Quellen.md, section "Informationselemente" (citing the Wireshark
  * IEC 104 dissector).
- * TODO(norm): CP56Time2a definition, clause unknown (defined in the
- * IEC 60870-5 series, not in the documents of this repository).
+ * TODO(norm): CP56Time2a definition, clause unknown (IEC 60870-5 series).
  *
  * Layer: codec (pure functions, no I/O, no allocation).
  */

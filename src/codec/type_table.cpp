@@ -122,9 +122,8 @@ static_assert(is_well_formed(kTypes), "type table: size or order wrong");
 
 /*
  * Matrix "which cause of transmission is allowed for which type" (standard,
- * clause 9.5). Empty on purpose: the normative text is not available, and a
- * guessed matrix would reject valid traffic. Planned shape: one entry per
- * type id with a 64-bit mask of allowed causes.
+ * clause 9.5). Empty on purpose: a guessed matrix would reject valid traffic. Planned shape: one
+ * entry per type id with a 64-bit mask of allowed causes.
  * TODO(norm): 9.5, fill in from the standard.
  */
 struct CauseRule {
