@@ -1,0 +1,2619 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index e93b28e..0fe1822 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,20 @@
+ # Änderungen
+ 
++## 0.6.0 (25.11.2026)
++
++| Bereich | Änderung |
++| --- | --- |
++| Interop | `iec104_interop_list`: Interoperabilitätsliste nach Abschnitt 9 für Rolle und Konfiguration, Markdown oder CSV; `docs/09_Interoperabilitaetsliste.md` für die Standardwerte, Test hält sie aktuell |
++| Doku | API-Doku mit Doxygen (Ziel `doc`), öffentlicher Header ohne Warnungen (Test `Doc.NoDoxygenWarnings`); Typentabelle bei `iec104_object` repariert |
++| Client | `iec104_client_read()`; Lesebefehl (102) jetzt mit Ursache 5 statt 6 (vorher von jeder Station abgelehnt) |
++| Server | Eine Station ist über ihre Daten- oder Befehlspunkte bekannt: Stationen nur mit Befehlspunkten werden nicht mehr mit Ursache 46 abgelehnt, bekommen das Ende der Initialisierung und antworten auf eine Broadcast-Abfrage. Mit Befehlspunkten und leerem Prozessabbild gilt die Prüfung jetzt ebenfalls (andere Adressen: Ursache 46); nur ein Server ganz ohne Punkte nimmt jede Adresse an |
++| Server | Broadcast-Abfrage ohne bekannte Station wird einmal mit der Broadcast-Adresse bestätigt (vorher keine Antwort) |
++| Server | `iec104_server_set_options` prüft `cause_of_init` (≤ 127) und übernimmt bei Fehler nichts |
++| Werkzeug | `iec104_interop_list`: exakte Zeitwerte, fehlende Optionswerte als Fehler, CSV mit BOM und Parametern in der Rollenspalte |
++| Lieferung | Binärpaket mit `pruefen.sh`, `gui.sh`, `beispiel.sh` für Linux und WSL |
++| Werkzeug | `tools/wsl_ausprobieren.sh`: Repo nach `~/src/iee104` holen, Voraussetzungen prüfen, fertige Library testen, bauen, alle Tests |
++| Julia | `client_read` in `IEC104.jl` |
++
+ ## 0.5.0 (25.11.2026)
+ 
+ | Bereich | Änderung |
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ec13e26..8d80b9a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,7 @@
+ cmake_minimum_required(VERSION 3.21)
+ 
+ project(iec104
+-    VERSION 0.5.0
++    VERSION 0.6.0
+     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
+     LANGUAGES C CXX)
+ 
+@@ -161,6 +161,7 @@ if(IEC104_BUILD_TESTS)
+         tests/test_cp56time2a.cpp
+         tests/test_elements.cpp
+         tests/test_operation.cpp
++        tests/test_interop_list.cpp
+         tests/test_redundancy.cpp
+         tests/test_session.cpp
+         tests/test_tcp_loopback.cpp
+@@ -168,7 +169,7 @@ if(IEC104_BUILD_TESTS)
+         tests/test_type_table.cpp
+         tests/test_values.cpp)
+     # Tests use the internal C++ headers directly (sans-I/O, no network)
+-    target_include_directories(iec104_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
++    target_include_directories(iec104_tests PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/tools)
+     # Reference data (captures of foreign implementations), read at run time
+     target_compile_definitions(iec104_tests PRIVATE
+         IEC104_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
+@@ -200,6 +201,20 @@ if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
+         target_link_libraries(iec104_selftest_${role} PRIVATE iec104::iec104)
+         iec104_set_warnings(iec104_selftest_${role} TRUE)
+     endforeach()
++    # Interoperability list of the library (clause 9), see docs/09_Interoperabilitaetsliste.md.
++    add_executable(iec104_interop_list tools/interop_list/interop_list.cpp)
++    target_link_libraries(iec104_interop_list PRIVATE iec104::iec104)
++    iec104_set_warnings(iec104_interop_list TRUE)
++    set_target_properties(iec104_interop_list PROPERTIES
++        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
++    install(TARGETS iec104_interop_list RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
++    if(IEC104_BUILD_TESTS)
++        add_test(NAME Doc.InteropListUpToDate
++            COMMAND ${CMAKE_COMMAND} -DTOOL=$<TARGET_FILE:iec104_interop_list>
++                    -DDOC=${PROJECT_SOURCE_DIR}/docs/09_Interoperabilitaetsliste.md
++                    -P ${PROJECT_SOURCE_DIR}/cmake/check_interop_list.cmake)
++    endif()
++
+     # Installed programs find the library next to them (bin/../lib), wherever the tree is unpacked.
+     set_target_properties(iec104_selftest_server iec104_selftest_client PROPERTIES
+         INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+@@ -273,6 +288,26 @@ if(IEC104_BUILD_EXAMPLES AND NOT IEC104_BUILD_FUZZERS)
+     endif()
+ endif()
+ 
++# ---------------------------------------------------------------------------
++# API documentation (Doxygen): target "doc", output <build>/doc/html
++# ---------------------------------------------------------------------------
++find_package(Doxygen QUIET)
++if(DOXYGEN_FOUND)
++    configure_file(cmake/Doxyfile.in ${CMAKE_BINARY_DIR}/Doxyfile @ONLY)
++    add_custom_target(doc
++        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/doc
++        COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_BINARY_DIR}/Doxyfile
++        COMMENT "API documentation: ${CMAKE_BINARY_DIR}/doc/html/index.html"
++        VERBATIM)
++    if(IEC104_BUILD_TESTS)
++        add_test(NAME Doc.NoDoxygenWarnings
++            COMMAND ${CMAKE_COMMAND} -DDOXYGEN=${DOXYGEN_EXECUTABLE}
++                    -DDOXYFILE=${CMAKE_BINARY_DIR}/Doxyfile
++                    -DLOG=${CMAKE_BINARY_DIR}/doc/warnings.log
++                    -P ${PROJECT_SOURCE_DIR}/cmake/check_doxygen.cmake)
++    endif()
++endif()
++
+ # ---------------------------------------------------------------------------
+ # Install and package export (find_package(iec104), target iec104::iec104)
+ # ---------------------------------------------------------------------------
+diff --git a/README.md b/README.md
+index 7c67bde..2b6a71c 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
+ 
+-Stand: 25.11.2026, Version 0.5.0, Linux x86-64.
++Stand: 25.11.2026, Version 0.6.0, Linux x86-64.
+ 
+ ## Sofort nutzen, ohne zu bauen
+ 
+@@ -15,8 +15,10 @@ Stand: 25.11.2026, Version 0.5.0, Linux x86-64.
+ 
+ Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab 2.34, OpenSSL 3).
+ 
++Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iee104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
++
+ ```bash
+-cd dist/iec104-0.5.0-linux-x86_64
++cd dist/iec104-0.6.0-linux-x86_64
+ gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
+ julia julia/server.jl 2404 &                                                       # Julia: Station
+ julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
+@@ -30,23 +32,23 @@ julia julia/gui/iec104_gui.jl
+ | Rollen | Server (gesteuerte Station) und Client (Leitstelle), beide im selben Prozess nutzbar |
+ | Protokoll | IEC 60870-5-104 Ed. 2.1: APCI mit STARTDT/STOPDT/TESTFR, Folgenummern, k/w, Timer t0–t3; alle 59 Typkennungen, ASDUs mit SQ = 0/1, CP56Time2a; strikter Normmodus und toleranter Modus für bekannte Abweichungen |
+ | Parameter | Timer, k, w, Feldlängen (COT, CA, IOA), maximale ASDU-Länge, Port, Adresse; alles je Verbindung einstellbar, auch per Konfigurationsdatei |
+-| Server | Prozessabbild; Generalabfrage (Station, Gruppen 1–16), Zählerabfrage, Lesebefehl, Testbefehl, Uhrzeit beantwortet die Library selbst; Ende der Initialisierung; negative Bestätigungen (Ursachen 44–47); Broadcast-Adresse |
++| Server | Prozessabbild; Generalabfrage (Station, Gruppen 1–16), Zählerabfrage, Lesebefehl und Testbefehl beantwortet die Library selbst; Uhrzeit und Reset entscheidet die Anwendung (`on_command`); Ende der Initialisierung; negative Bestätigungen (Ursachen 44–47); Broadcast-Adresse |
+ | Befehle | Einzel-, Doppel-, Stufen-, Sollwert- und Bitmusterbefehle mit und ohne Zeitmarke; Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout); maximale Befehlsverzögerung; Client verfolgt jeden Befehl bis zum Ergebnis |
+ | Redundanz | Redundanzgruppen nach Edition 2: eine aktive Verbindung je Gruppe, Umschaltung per STOPDT/STARTDT, Ereignispuffer je Gruppe bis zur Quittung, erneutes Senden nach Abbruch, Überlaufstrategie, Zuordnung über die Adresse der Leitstelle |
+ | Sicherheit | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3: gegenseitige Authentifizierung, Sperrlisten, Prüfung von Name oder Fingerprint, Key Update und Renegotiation, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse; Abweisung unbekannter Absender |
+ | Betrieb | Log mit Stufen bis zum APDU-Hexdump, Statistik je Verbindung und Gruppe, Konfigurationsdatei, kein interner Thread (Poll im Thread der Anwendung) |
+ | Einbindung | stabile C-Schnittstelle (ein Header), statisch oder geteilt, `find_package(iec104)`, Anbindung für Julia per `ccall`; fertig gebaute Library |
+-| Werkzeuge | Test-GUI im Browser (Leitstelle und Station); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870 |
++| Werkzeuge | Test-GUI im Browser (Leitstelle und Station); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870; Interoperabilitätsliste für die eigene Konfiguration (`iec104_interop_list`, Markdown oder CSV) |
+ 
+ ## Tests
+ 
+ | Art | Umfang |
+ | --- | --- |
+-| Unit-Tests (GoogleTest) | 158 Tests: Codec mit Referenz-Hexdumps, Zustandsmaschine mit simulierter Zeit, Abläufe der Station, Befehle, C-API über Loopback, TLS mit Negativfällen, Redundanz, Konfigurationsdatei |
++| Unit-Tests (GoogleTest) | Codec mit Referenz-Hexdumps, Zustandsmaschine mit simulierter Zeit, Abläufe der Station, Befehle, C-API über Loopback, TLS mit Negativfällen, Redundanz, Konfigurationsdatei |
+ | Referenzdaten | Mitschnitte einer fremden Implementierung, auch über TLS (`tests/data/`); jede APDU wird dekodiert und bitgenau neu kodiert |
+-| Selbsttest | Server und Client über TCP, über TLS und mit Umschaltung einer Redundanzgruppe, als Teil von `ctest` (162 Fälle gesamt) |
++| Selbsttest | Server und Client über TCP, über TLS und mit Umschaltung einer Redundanzgruppe, als Teil von `ctest` |
+ | Sanitizer | alle Tests mit AddressSanitizer und UBSan (Preset `asan`) |
+-| Statische Analyse | clang-tidy ohne Befunde, Übersetzung mit `-Werror` |
++| Statische Analyse | clang-tidy ohne Befunde, Übersetzung mit `-Werror`; API-Doku ohne Doxygen-Warnungen (Test `Doc.NoDoxygenWarnings`) |
+ | Fuzzing | libFuzzer für Codec, Zustandsmaschine und Abläufe der Station |
+ | Interop | gegen lib60870 als fremde Gegenstelle, mit und ohne TLS: `tools/interop/run_lib60870.sh`, Ergebnisse in `docs/08_Interop.md` |
+ 
+@@ -62,6 +64,8 @@ julia julia/gui/iec104_gui.jl
+ | `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Redundanz, TLS, Regeln |
+ | `docs/07_Julia.md` | Library aus Julia verwenden: Schnellstart, Typen, Callbacks, Beispiele |
+ | `docs/08_Interop.md` | Tests gegen eine fremde Implementierung, Befunde, Vorbereitung des Integrationstests mit einer Gegenstelle |
++| `docs/09_Interoperabilitaetsliste.md` | Interoperabilitätsliste nach Abschnitt 9 der Norm (Standardwerte), erzeugt mit `iec104_interop_list` |
++| API-Doku | `cmake --build --preset debug --target doc`, dann `build/debug/doc/html/index.html` (Doxygen) |
+ 
+ ## Verzeichnisse
+ 
+@@ -78,8 +82,9 @@ julia julia/gui/iec104_gui.jl
+ | `examples/` | Hello World: kleinster Server und Client; `examples/julia/` für Julia |
+ | `tools/selftest/` | Selbsttest-Programme und Testskript |
+ | `tools/interop/` | Interop-Tests gegen lib60870 |
++| `tools/interop_list/` | Interoperabilitätsliste (Abschnitt 9) für Rolle und Konfiguration |
+ | `dist/` | fertig gebaute Library je Version |
+-| `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer, Test-PKI für TLS |
++| `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer, Test-PKI für TLS, `wsl_ausprobieren.sh` |
+ 
+ ## Bauen und testen
+ 
+diff --git a/cmake/Doxyfile.in b/cmake/Doxyfile.in
+new file mode 100644
+index 0000000..f8fa2b7
+--- /dev/null
++++ b/cmake/Doxyfile.in
+@@ -0,0 +1,47 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# API documentation: the public header plus README and docs/ as pages.
++# Configured by CMake (target "doc"); output in <build>/doc/html/index.html.
++# Only keys known to Doxygen 1.9.1 (AlmaLinux 9).
++
++PROJECT_NAME           = "IEC 60870-5-104 Library"
++PROJECT_NUMBER         = @PROJECT_VERSION@
++OUTPUT_DIRECTORY       = @CMAKE_BINARY_DIR@/doc
++OUTPUT_LANGUAGE        = English
++INPUT                  = @PROJECT_SOURCE_DIR@/include/iec104/iec104.h \
++                         @PROJECT_SOURCE_DIR@/README.md \
++                         @PROJECT_SOURCE_DIR@/docs
++FILE_PATTERNS          = *.h *.md
++RECURSIVE              = NO
++INPUT_ENCODING         = UTF-8
++USE_MDFILE_AS_MAINPAGE = @PROJECT_SOURCE_DIR@/README.md
++MARKDOWN_SUPPORT       = YES
++AUTOLINK_SUPPORT       = YES
++TOC_INCLUDE_HEADINGS   = 3
++FULL_PATH_NAMES        = YES
++STRIP_FROM_PATH        = @PROJECT_SOURCE_DIR@
++OPTIMIZE_OUTPUT_FOR_C  = YES
++TYPEDEF_HIDES_STRUCT   = NO
++EXTRACT_ALL            = NO
++EXTRACT_STATIC         = NO
++EXTRACT_PRIVATE        = NO
++ENABLE_PREPROCESSING   = YES
++MACRO_EXPANSION        = YES
++EXPAND_ONLY_PREDEF     = YES
++PREDEFINED             = IEC104_API=
++SOURCE_BROWSER         = NO
++VERBATIM_HEADERS       = YES
++GENERATE_HTML          = YES
++GENERATE_LATEX         = NO
++GENERATE_TREEVIEW      = YES
++HAVE_DOT               = NO
++QUIET                  = YES
++WARNINGS               = YES
++WARN_IF_UNDOCUMENTED   = YES
++WARN_IF_DOC_ERROR      = YES
++WARN_NO_PARAMDOC       = NO
++WARN_AS_ERROR          = NO
++WARN_LOGFILE           = @CMAKE_BINARY_DIR@/doc/warnings.log
+diff --git a/cmake/check_doxygen.cmake b/cmake/check_doxygen.cmake
+new file mode 100644
+index 0000000..e4af42d
+--- /dev/null
++++ b/cmake/check_doxygen.cmake
+@@ -0,0 +1,23 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# Test Doc.NoDoxygenWarnings: builds the API documentation and fails if
++# Doxygen reports anything (undocumented members, broken references).
++#
++#   cmake -DDOXYGEN=<doxygen> -DDOXYFILE=<build>/Doxyfile -DLOG=<build>/doc/warnings.log -P check_doxygen.cmake
++
++get_filename_component(dir "${LOG}" DIRECTORY)
++file(MAKE_DIRECTORY "${dir}")
++file(REMOVE "${LOG}")
++execute_process(COMMAND "${DOXYGEN}" "${DOXYFILE}" RESULT_VARIABLE rc)
++if(NOT rc EQUAL 0)
++    message(FATAL_ERROR "doxygen failed (${rc})")
++endif()
++file(READ "${LOG}" warnings)
++string(STRIP "${warnings}" warnings)
++if(NOT warnings STREQUAL "")
++    message(FATAL_ERROR "Doxygen warnings:\n${warnings}")
++endif()
++message(STATUS "API documentation without warnings")
+diff --git a/cmake/check_interop_list.cmake b/cmake/check_interop_list.cmake
+new file mode 100644
+index 0000000..a4207e6
+--- /dev/null
++++ b/cmake/check_interop_list.cmake
+@@ -0,0 +1,20 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# Test Doc.InteropListUpToDate: docs/09_Interoperabilitaetsliste.md must be
++# exactly what iec104_interop_list prints with the defaults.
++#
++#   cmake -DTOOL=<iec104_interop_list> -DDOC=<docs/09_...md> -P check_interop_list.cmake
++
++execute_process(COMMAND "${TOOL}" OUTPUT_VARIABLE generated RESULT_VARIABLE rc)
++if(NOT rc EQUAL 0)
++    message(FATAL_ERROR "iec104_interop_list failed (${rc})")
++endif()
++file(READ "${DOC}" documented)
++if(NOT generated STREQUAL documented)
++    message(FATAL_ERROR "docs/09_Interoperabilitaetsliste.md is out of date; regenerate:\n"
++                        "  ${TOOL} > ${DOC}")
++endif()
++message(STATUS "interoperability list up to date")
+diff --git a/docs/05_Normfragen_und_Festlegungen.md b/docs/05_Normfragen_und_Festlegungen.md
+index 3c7289a..b931793 100644
+--- a/docs/05_Normfragen_und_Festlegungen.md
++++ b/docs/05_Normfragen_und_Festlegungen.md
+@@ -10,7 +10,7 @@ Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stell
+ | N2 | Bedeutung von t1 | apci | Einige Geräte überwachen mit t1 nur U-Rahmen | t1 überwacht I-Rahmen und U-Rahmen act (Bild 17 des Normentwurfs, Interoperabilitätsliste) |
+ | N3 | Zulässige Kombinationen Typkennung/Übertragungsursache (9.5) | codec, session | Prüfung eingehender ASDUs, negative Quittung | Tabelle angelegt, aber leer; jede Kombination ist erlaubt (`is_cause_allowed()`) |
+ | N4 | Typen mit CP24Time2a (2–16 gerade, 17–19) in IEC 104 | codec | Ablehnen oder dekodieren | Strikt: `IEC104_ERR_UNSUPPORTED`. Tolerant: dekodieren und kodieren |
+-| N5 | Typen 104 (Testbefehl ohne Zeitmarke) und 106 in IEC 104 | codec | Unterstützung | Beide in der Typtabelle; ob 104 in IEC 104 durch 107 ersetzt ist, ist nicht belegt |
++| N5 | Typen 104 (Testbefehl ohne Zeitmarke) und 106 in IEC 104 | codec | Unterstützung | Beide in der Typtabelle. Öffentliche Wiedergaben der Interoperabilitätsliste führen beide in IEC 104 als nicht vorgesehen (schwarzes Feld); die Station spiegelt 104 trotzdem und lehnt 106 ab (docs/09) |
+ | N6 | Maximale Befehlsverzögerung (AMD1, Abschnitt 6) | session | Zu spät eintreffende Befehle werden verworfen | Nur für Befehle mit CP56Time2a (58–64, 107), Default aus; Vergleich mit der UTC-Uhr des Servers; eine ungültige Zeitmarke (IV) wird bei eingeschalteter Prüfung ebenfalls verworfen; Zeitmarken in der Zukunft werden nicht geprüft |
+ | N7 | Redundanzgruppen (Abschnitt 10) | session | Umschalten mit unquittierten I-Rahmen | Ereignispuffer gehört der Gruppe; ein Ereignis bleibt darin, bis die Gegenstelle es quittiert (N(R)). Nach Abbruch oder Umschaltung geht Unquittiertes auf der nächsten aktiven Verbindung erneut hinaus: doppelt möglich, kein Verlust. Gepuffert werden alle Ursachen außer zyklisch (1) und Hintergrund (2) |
+ | N8 | Abläufe Generalabfrage, Befehle, Initialisierung (Abschnitt 7) | session | Reihenfolge ACTCON / Daten / ACTTERM, Typ 70 nach Neustart, Typen der Antwort | Übliche Lesart: Aktivierung, Bestätigung, Daten, Beendigung; Antworten auf eine Abfrage ohne Zeitmarke; Typ 70 mit COT 4 nach dem ersten STARTDT einer Verbindung (abschaltbar); Freeze/Reset der Zählerabfrage nur bestätigt |
+diff --git a/docs/06_Anleitung.md b/docs/06_Anleitung.md
+index ac46248..4674a57 100644
+--- a/docs/06_Anleitung.md
++++ b/docs/06_Anleitung.md
+@@ -43,7 +43,7 @@ Für `-liec104` einmal `ln -s libiec104.so.0 lib/libiec104.so` anlegen. `find_pa
+ Eigenes CMake-Projekt:
+ 
+ ```cmake
+-find_package(iec104 0.5 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
++find_package(iec104 0.6 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
+ target_link_libraries(meine_app PRIVATE iec104::iec104)
+ ```
+ 
+@@ -165,6 +165,7 @@ Daten fließen nur in STARTED.
+ | Aufgabe | Aufruf |
+ | --- | --- |
+ | Generalabfrage | `iec104_client_interrogation(client, station, 20)` (Gruppe n: 20 + n) |
++| einzelnen Punkt lesen | `iec104_client_read(client, station, ioa)`; Antwort über `on_object` mit Ursache 5 |
+ | Zählerabfrage | `iec104_client_counter_interrogation(client, station, 5, 0)` |
+ | Uhrzeit setzen | `iec104_client_clock_sync(client, station, &zeit)`; `iec104_time_from_unix_ms()` |
+ | Befehl direkt | `iec104_client_send_command(client, station, &cmd)` |
+diff --git a/docs/07_Julia.md b/docs/07_Julia.md
+index 4916e2d..01d07ee 100644
+--- a/docs/07_Julia.md
++++ b/docs/07_Julia.md
+@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
+ Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
+ 
+ ```bash
+-cd iec104-0.5.0-linux-x86_64
++cd iec104-0.6.0-linux-x86_64
+ julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
+ julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
+ ```
+@@ -26,7 +26,7 @@ type 13  cause 3  station 1  IOA 100  value 31.0    spontan
+ 
+ | Datei | Inhalt |
+ | --- | --- |
+-| `IEC104.jl` | Modul `IEC104`: Typen wie im Header, Funktionen für Server und Client |
++| `IEC104.jl` | Modul `IEC104`: Typen wie im Header, Funktionen für Server und Client (u. a. `client_interrogation`, `client_read`, `client_send_command`, `client_clock_sync`) |
+ | `client.jl` | Leitstelle: verbinden, STARTDT, Generalabfrage, Werte ausgeben |
+ | `server.jl` | Station: ein Messwert, spontane Meldung jede Sekunde, Befehle annehmen |
+ 
+diff --git a/docs/08_Interop.md b/docs/08_Interop.md
+index 2fc455d..7925334 100644
+--- a/docs/08_Interop.md
++++ b/docs/08_Interop.md
+@@ -68,7 +68,7 @@ Alles Folgende steht in der Interoperabilitätsliste der Gegenstelle (Abschnitt
+ 
+ ### 5.2 Ablauf
+ 
+-1. Werte aus 5.1 in eine Konfigurationsdatei übernehmen: Vorlage `tools/interop/gegenstelle.conf`.
++1. Werte aus 5.1 in eine Konfigurationsdatei übernehmen: Vorlage `tools/interop/gegenstelle.conf`. Daraus die eigene Interoperabilitätsliste erzeugen und neben die der Gegenstelle legen: `iec104_interop_list --config gegenstelle.conf --role station --format csv > eigene_liste.csv` (Rolle `master` für die Leitstelle); Abweichungen klären, bevor getestet wird.
+ 2. Verbindung und Abläufe mit den Selbsttest-Programmen prüfen, bevor die Anwendung beteiligt ist:
+ 
+    | Gegenstelle ist | Aufruf |
+diff --git a/docs/09_Interoperabilitaetsliste.md b/docs/09_Interoperabilitaetsliste.md
+new file mode 100644
+index 0000000..1409790
+--- /dev/null
++++ b/docs/09_Interoperabilitaetsliste.md
+@@ -0,0 +1,299 @@
++# Interoperabilitätsliste (IEC 60870-5-104, Abschnitt 9)
++
++IEC 60870-5-104 Library 0.6.0 · Rolle: Station und Leitstelle · Parameter: Standardwerte
++
++Erzeugt mit `iec104_interop_list`. Gliederung und Bezeichnungen nach öffentlichen Wiedergaben der Checkliste (docs/02_Technik_und_Quellen.md, [ORA]); die Angaben stammen aus dem Code der Library. Eigene Parameter: `iec104_interop_list --config datei.conf`, zum Abgleich mit der Liste einer Gegenstelle `--format csv`.
++
++| Zeichen | Bedeutung |
++| --- | --- |
++| X | unterstützt, von der Library selbst oder über ihre Schnittstelle |
++| X roh | nur als rohe ASDU (`on_asdu`, `*_send_asdu`) |
++| teilw. | teilweise; die Bemerkung sagt, was die Anwendung tun muss |
++| – | in IEC 104 nicht vorgesehen (schwarzes Feld der Checkliste) |
++| (leer) | nicht unterstützt |
++
++## 9.1 System or device
++
++| Punkt | Bezeichnung | Station | Leitstelle | Bemerkung |
++| --- | --- | --- | --- | --- |
++| Controlling station definition | Master, Client |  | X | iec104_client_* |
++| Controlled station definition | Slave, Server | X |  | iec104_server_* |
++
++## 9.2 Network configuration, 9.3 Physical layer, 9.4 Link layer
++
++Entfallen in IEC 104 (schwarze Felder): Übertragung über TCP/IP.
++
++## 9.5 Application layer
++
++| Punkt | Wert | Station | Leitstelle | Bemerkung |
++| --- | --- | --- | --- | --- |
++| Transmission mode for application data | Mode 1 (least significant octet first) | X | X |  |
++| Common address of ASDU | 2 Oktette | X | X | Norm: zwei Oktette |
++| Information object address | 3 Oktette, unstrukturiert | X | X | Norm: drei Oktette |
++| Cause of transmission | 2 Oktette mit Herkunftsadresse 0 | X | X | Norm: zwei Oktette |
++| Length of APDU | max. 253 Oktette (ASDU 249) | X | X | Norm: 253; empfangen werden immer bis 253 (max_asdu_length) |
++
++### 9.5 Process information in monitor direction
++
++| Typ | Bezeichnung | Station | Leitstelle | Bemerkung |
++| --- | --- | --- | --- | --- |
++| <1> M_SP_NA_1 | Single-point information | X | X |  |
++| <2> M_SP_TA_1 | Single-point information with time tag | – | – | CP24Time2a; nur im toleranten Modus, roh |
++| <3> M_DP_NA_1 | Double-point information | X | X |  |
++| <4> M_DP_TA_1 | Double-point information with time tag | – | – | CP24Time2a; nur im toleranten Modus, roh |
++| <5> M_ST_NA_1 | Step position information | X | X |  |
++| <6> M_ST_TA_1 | Step position information with time tag | – | – | CP24Time2a; nur im toleranten Modus, roh |
++| <7> M_BO_NA_1 | Bitstring of 32 bit | X | X |  |
++| <8> M_BO_TA_1 | Bitstring of 32 bit with time tag | – | – | CP24Time2a; nur im toleranten Modus, roh |
++| <9> M_ME_NA_1 | Measured value, normalized value | X | X |  |
++| <10> M_ME_TA_1 | Measured value, normalized value with time tag | – | – | CP24Time2a; nur im toleranten Modus, roh |
++| <11> M_ME_NB_1 | Measured value, scaled value | X | X |  |
++| <12> M_ME_TB_1 | Measured value, scaled value with time tag | – | – | CP24Time2a; nur im toleranten Modus, roh |
++| <13> M_ME_NC_1 | Measured value, short floating point value | X | X |  |
++| <14> M_ME_TC_1 | Measured value, short floating point value with time tag | – | – | CP24Time2a; nur im toleranten Modus, roh |
++| <15> M_IT_NA_1 | Integrated totals | X | X |  |
++| <16> M_IT_TA_1 | Integrated totals with time tag | – | – | CP24Time2a; nur im toleranten Modus, roh |
++| <17> M_EP_TA_1 | Event of protection equipment with time tag | – | – | CP24Time2a; nur im toleranten Modus, roh |
++| <18> M_EP_TB_1 | Packed start events of protection equipment with time tag | – | – | CP24Time2a; nur im toleranten Modus, roh |
++| <19> M_EP_TC_1 | Packed output circuit information of protection equipment with time tag | – | – | CP24Time2a; nur im toleranten Modus, roh |
++| <20> M_PS_NA_1 | Packed single-point information with status change detection | X roh | X roh | nicht im Prozessabbild, keine Generalabfrage |
++| <21> M_ME_ND_1 | Measured value, normalized value without quality descriptor | X | X |  |
++| <30> M_SP_TB_1 | Single-point information with time tag CP56Time2a | X | X | Generalabfrage antwortet mit Typ ohne Zeitmarke |
++| <31> M_DP_TB_1 | Double-point information with time tag CP56Time2a | X | X | Generalabfrage antwortet mit Typ ohne Zeitmarke |
++| <32> M_ST_TB_1 | Step position information with time tag CP56Time2a | X | X | Generalabfrage antwortet mit Typ ohne Zeitmarke |
++| <33> M_BO_TB_1 | Bitstring of 32 bit with time tag CP56Time2a | X | X | Generalabfrage antwortet mit Typ ohne Zeitmarke |
++| <34> M_ME_TD_1 | Measured value, normalized value with time tag CP56Time2a | X | X | Generalabfrage antwortet mit Typ ohne Zeitmarke |
++| <35> M_ME_TE_1 | Measured value, scaled value with time tag CP56Time2a | X | X | Generalabfrage antwortet mit Typ ohne Zeitmarke |
++| <36> M_ME_TF_1 | Measured value, short floating point value with time tag CP56Time2a | X | X | Generalabfrage antwortet mit Typ ohne Zeitmarke |
++| <37> M_IT_TB_1 | Integrated totals with time tag CP56Time2a | X | X | Zählerabfrage antwortet mit Typ 15 |
++| <38> M_EP_TD_1 | Event of protection equipment with time tag CP56Time2a | X roh | X roh |  |
++| <39> M_EP_TE_1 | Packed start events of protection equipment with time tag CP56Time2a | X roh | X roh |  |
++| <40> M_EP_TF_1 | Packed output circuit information of protection equipment with time tag CP56Time2a | X roh | X roh |  |
++
++### 9.5 Process information in control direction
++
++| Typ | Bezeichnung | Station | Leitstelle | Bemerkung |
++| --- | --- | --- | --- | --- |
++| <45> C_SC_NA_1 | Single command | X | X |  |
++| <46> C_DC_NA_1 | Double command | X | X |  |
++| <47> C_RC_NA_1 | Regulating step command | X | X |  |
++| <48> C_SE_NA_1 | Set point command, normalized value | X | X |  |
++| <49> C_SE_NB_1 | Set point command, scaled value | X | X |  |
++| <50> C_SE_NC_1 | Set point command, short floating point value | X | X |  |
++| <51> C_BO_NA_1 | Bitstring of 32 bit | X | X | ohne Select/Execute |
++| <58> C_SC_TA_1 | Single command with time tag CP56Time2a | X | X | maximale Befehlsverzögerung prüfbar |
++| <59> C_DC_TA_1 | Double command with time tag CP56Time2a | X | X | maximale Befehlsverzögerung prüfbar |
++| <60> C_RC_TA_1 | Regulating step command with time tag CP56Time2a | X | X | maximale Befehlsverzögerung prüfbar |
++| <61> C_SE_TA_1 | Set point command, normalized value with time tag CP56Time2a | X | X | maximale Befehlsverzögerung prüfbar |
++| <62> C_SE_TB_1 | Set point command, scaled value with time tag CP56Time2a | X | X | maximale Befehlsverzögerung prüfbar |
++| <63> C_SE_TC_1 | Set point command, short floating point value with time tag CP56Time2a | X | X | maximale Befehlsverzögerung prüfbar |
++| <64> C_BO_TA_1 | Bitstring of 32 bit with time tag CP56Time2a | X | X | ohne Select/Execute |
++
++### 9.5 System information in monitor direction
++
++| Typ | Bezeichnung | Station | Leitstelle | Bemerkung |
++| --- | --- | --- | --- | --- |
++| <70> M_EI_NA_1 | End of initialization | X | X | nach dem ersten STARTDT jeder Verbindung, je Station mit Daten- oder Befehlspunkten (send_end_of_init, cause_of_init) |
++
++### 9.5 System information in control direction
++
++| Typ | Bezeichnung | Station | Leitstelle | Bemerkung |
++| --- | --- | --- | --- | --- |
++| <100> C_IC_NA_1 | Interrogation command | X | X | Station und Gruppen 1–16; Abbruch (8) wird negativ bestätigt |
++| <101> C_CI_NA_1 | Counter interrogation command | X | X | Freeze/Reset nur bestätigt |
++| <102> C_RD_NA_1 | Read command | X | X | Antwort aus dem Prozessabbild mit dem Typ ohne Zeitmarke, Ursache 5 |
++| <103> C_CS_NA_1 | Clock synchronization command | X | X | Uhr stellt die Anwendung (on_command) |
++| <104> C_TS_NA_1 | Test command | – | – | Station spiegelt ihn trotzdem; Leitstelle nur roh |
++| <105> C_RP_NA_1 | Reset process command | X | X | Ausführung durch die Anwendung (on_command) |
++| <106> C_CD_NA_1 | Delay acquisition command | – | – | Station antwortet negativ |
++| <107> C_TS_TA_1 | Test command with time tag CP56Time2a | X | X | maximale Befehlsverzögerung prüfbar; Station spiegelt (Ursache 7) |
++
++### 9.5 Parameter in control direction
++
++| Typ | Bezeichnung | Station | Leitstelle | Bemerkung |
++| --- | --- | --- | --- | --- |
++| <110> P_ME_NA_1 | Parameter of measured value, normalized value |  | X roh | Station antwortet negativ (Ursache 7, P/N = 1) |
++| <111> P_ME_NB_1 | Parameter of measured value, scaled value |  | X roh | Station antwortet negativ (Ursache 7, P/N = 1) |
++| <112> P_ME_NC_1 | Parameter of measured value, short floating point value |  | X roh | Station antwortet negativ (Ursache 7, P/N = 1) |
++| <113> P_AC_NA_1 | Parameter activation |  | X roh | Station antwortet negativ (Ursache 7, P/N = 1) |
++
++### 9.5 File transfer
++
++| Typ | Bezeichnung | Station | Leitstelle | Bemerkung |
++| --- | --- | --- | --- | --- |
++| <120> F_FR_NA_1 | File ready |  |  | Station antwortet mit Ursache 44 |
++| <121> F_SR_NA_1 | Section ready |  |  | Station antwortet mit Ursache 44 |
++| <122> F_SC_NA_1 | Call directory, select file, call file, call section |  |  | Station antwortet mit Ursache 44 |
++| <123> F_LS_NA_1 | Last section, last segment |  |  | Station antwortet mit Ursache 44 |
++| <124> F_AF_NA_1 | Ack file, ack section |  |  | Station antwortet mit Ursache 44 |
++| <125> F_SG_NA_1 | Segment |  |  | Station antwortet mit Ursache 44 |
++| <126> F_DR_TA_1 | Directory |  |  | Station antwortet mit Ursache 44 |
++| <127> F_SC_NB_1 | QueryLog – Request archive file |  |  | Station antwortet mit Ursache 44 |
++
++### 9.5 Type identification and cause of transmission assignments (Station)
++
++Ursachen, die die Station sendet oder auswertet.
++
++| Typ | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 20–36 | 37–41 | 44 | 45 | 46 | 47 |
++| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
++| <1> M_SP_NA_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <3> M_DP_NA_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <5> M_ST_NA_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <7> M_BO_NA_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <9> M_ME_NA_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <11> M_ME_NB_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <13> M_ME_NC_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <15> M_IT_NA_1 |  |  | X |  | X |  |  |  |  |  |  |  |  |  | X |  |  |  |  |
++| <21> M_ME_ND_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <30> M_SP_TB_1 |  |  | X |  |  |  |  |  |  |  | X | X |  |  |  |  |  |  |  |
++| <31> M_DP_TB_1 |  |  | X |  |  |  |  |  |  |  | X | X |  |  |  |  |  |  |  |
++| <32> M_ST_TB_1 |  |  | X |  |  |  |  |  |  |  | X | X |  |  |  |  |  |  |  |
++| <33> M_BO_TB_1 |  |  | X |  |  |  |  |  |  |  | X | X |  |  |  |  |  |  |  |
++| <34> M_ME_TD_1 |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++| <35> M_ME_TE_1 |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++| <36> M_ME_TF_1 |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++| <37> M_IT_TB_1 |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++| <45> C_SC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <46> C_DC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <47> C_RC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <48> C_SE_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <49> C_SE_NB_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <50> C_SE_NC_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <51> C_BO_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <58> C_SC_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <59> C_DC_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <60> C_RC_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <61> C_SE_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <62> C_SE_TB_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <63> C_SE_TC_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <64> C_BO_TA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <70> M_EI_NA_1 |  |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++| <100> C_IC_NA_1 |  |  |  |  |  | X | X | X | X | X |  |  |  |  |  |  | X | X | X |
++| <101> C_CI_NA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  |  | X | X | X |
++| <102> C_RD_NA_1 |  |  |  |  | X |  |  |  |  |  |  |  |  |  |  |  | X | X | X |
++| <103> C_CS_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  |  | X | X |  |
++| <104> C_TS_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  |  | X | X |  |
++| <105> C_RP_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  |  | X | X |  |
++| <106> C_CD_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  |  | X | X |  |
++| <107> C_TS_TA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  |  | X | X |  |
++
++### 9.5 Type identification and cause of transmission assignments (Leitstelle)
++
++Ursachen, die die Leitstelle sendet oder auswertet.
++
++| Typ | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 20–36 | 37–41 | 44 | 45 | 46 | 47 |
++| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
++| <1> M_SP_NA_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <3> M_DP_NA_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <5> M_ST_NA_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <7> M_BO_NA_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <9> M_ME_NA_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <11> M_ME_NB_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <13> M_ME_NC_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <15> M_IT_NA_1 |  |  | X |  | X |  |  |  |  |  |  |  |  |  | X |  |  |  |  |
++| <21> M_ME_ND_1 | X | X | X |  | X |  |  |  |  |  | X | X |  | X |  |  |  |  |  |
++| <30> M_SP_TB_1 |  |  | X |  |  |  |  |  |  |  | X | X |  |  |  |  |  |  |  |
++| <31> M_DP_TB_1 |  |  | X |  |  |  |  |  |  |  | X | X |  |  |  |  |  |  |  |
++| <32> M_ST_TB_1 |  |  | X |  |  |  |  |  |  |  | X | X |  |  |  |  |  |  |  |
++| <33> M_BO_TB_1 |  |  | X |  |  |  |  |  |  |  | X | X |  |  |  |  |  |  |  |
++| <34> M_ME_TD_1 |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++| <35> M_ME_TE_1 |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++| <36> M_ME_TF_1 |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++| <37> M_IT_TB_1 |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++| <45> C_SC_NA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <46> C_DC_NA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <47> C_RC_NA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <48> C_SE_NA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <49> C_SE_NB_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <50> C_SE_NC_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <51> C_BO_NA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <58> C_SC_TA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <59> C_DC_TA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <60> C_RC_TA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <61> C_SE_TA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <62> C_SE_TB_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <63> C_SE_TC_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <64> C_BO_TA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <70> M_EI_NA_1 |  |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++| <100> C_IC_NA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <101> C_CI_NA_1 |  |  |  |  |  | X | X |  |  | X |  |  |  |  |  | X | X | X | X |
++| <102> C_RD_NA_1 |  |  |  |  | X |  |  |  |  |  |  |  |  |  |  | X | X | X | X |
++| <103> C_CS_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  | X | X | X |  |
++| <105> C_RP_NA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  | X | X | X |  |
++| <107> C_TS_TA_1 |  |  |  |  |  | X | X |  |  |  |  |  |  |  |  | X | X | X |  |
++
++## 9.6 Basic application functions
++
++| Funktion | Punkt | Station | Leitstelle | Bemerkung |
++| --- | --- | --- | --- | --- |
++| Station initialization | Remote initialization | teilw. | X | Station: C_RP_NA_1 an die Anwendung (on_command); Typ 70 danach sendet die Anwendung (iec104_server_send, Ursache 4); automatisch nur beim ersten STARTDT je Verbindung |
++| Cyclic data transmission | Cyclic data transmission | X | X | Station: Anwendung sendet mit Ursache 1 (iec104_server_send), nicht gepuffert |
++| Read procedure | Read procedure | X | X | Antwort aus dem Prozessabbild; Leitstelle: iec104_client_read() |
++| Spontaneous transmission | Spontaneous transmission | X | X | iec104_server_update(); gepuffert je Redundanzgruppe bis zur Quittung |
++| Double transmission | Single-point information M_SP_NA_1, M_SP_TA_1, M_SP_TB_1 and M_PS_NA_1 | X | X | Station: Anwendung sendet beide Typen |
++| Double transmission | Double-point information M_DP_NA_1, M_DP_TA_1 and M_DP_TB_1 | X | X | Station: Anwendung sendet beide Typen |
++| Double transmission | Step position information M_ST_NA_1, M_ST_TA_1 and M_ST_TB_1 | X | X | Station: Anwendung sendet beide Typen |
++| Double transmission | Bitstring of 32 bit M_BO_NA_1, M_BO_TA_1 and M_BO_TB_1 | X | X | Station: Anwendung sendet beide Typen |
++| Double transmission | Measured value, normalized value M_ME_NA_1, M_ME_TA_1, M_ME_ND_1 and M_ME_TD_1 | X | X | Station: Anwendung sendet beide Typen |
++| Double transmission | Measured value, scaled value M_ME_NB_1, M_ME_TB_1 and M_ME_TE_1 | X | X | Station: Anwendung sendet beide Typen |
++| Double transmission | Measured value, short floating point number M_ME_NC_1, M_ME_TC_1 and M_ME_TF_1 | X | X | Station: Anwendung sendet beide Typen |
++| Station interrogation | global | X | X | Station antwortet selbst aus dem Prozessabbild |
++| Station interrogation | group 1 … group 16 | X | X | Gruppenmaske je Punkt (iec104_server_add_point) |
++| Clock synchronization | Clock synchronization | X | X | Station: Uhr stellt die Anwendung (on_command) |
++| Clock synchronization | Day of week used | X | X | iec104_time.day_of_week, 0 = nicht verwendet |
++| Clock synchronization | RES1, GEN (time tag substituted/ not substituted) used | teilw. | teilw. | nur in rohen ASDUs und gespiegelten Bestätigungen erhalten; über iec104_time immer 0 |
++| Clock synchronization | SU-bit (summertime) used | X | X | iec104_time.summer_time |
++| Command transmission | Direct command transmission | X | X | Station: IOA-Prüfung (Ursache 47) nur mit Befehlspunkten |
++| Command transmission | Direct set point command transmission | X | X |  |
++| Command transmission | Select and execute command | X | X | Station: Befehlspunkt mit Auswahl-Timeout; Abbruch (8) nur mit Befehlspunkten wirksam, sonst positive Bestätigung ohne Anwendung |
++| Command transmission | Select and execute set point command | X | X | Station: Befehlspunkt mit Auswahl-Timeout |
++| Command transmission | C_SE ACTTERM used | X | X | abschaltbar (command_termination, expect_termination) |
++| Command transmission | No additional definition | X | X | Qualifier (QU) wird durchgereicht |
++| Command transmission | Short-pulse duration | teilw. | X | Station: Dauer bestimmt die Anwendung |
++| Command transmission | Long-pulse duration | teilw. | X | Station: Dauer bestimmt die Anwendung |
++| Command transmission | Persistent output | teilw. | X | Station: Ausgabe bestimmt die Anwendung |
++| Command transmission | Supervision of maximum delay in command direction | X |  | Station: max_command_delay_ms; Leitstelle: Zeitmarke setzt die Anwendung (iec104_object.time) |
++| Transmission of integrated totals | Mode A: Local freeze with spontaneous transmission | teilw. | X | Station: Anwendung friert ein und sendet spontan |
++| Transmission of integrated totals | Mode B: Local freeze with counter interrogation | teilw. | X | Station: Anwendung friert ein und legt den Wert mit iec104_server_add_point() ab (iec104_server_update() sendet spontan); Zählerabfrage antwortet aus dem Prozessabbild |
++| Transmission of integrated totals | Mode C: Freeze and transmit by counter-interrogation commands | teilw. | X | Station bestätigt FRZ; Einfrieren durch die Anwendung (on_asdu) |
++| Transmission of integrated totals | Mode D: Freeze by counter-interrogation command, frozen values reported spontaneously | teilw. | X | Station bestätigt FRZ; Einfrieren und Senden durch die Anwendung |
++| Transmission of integrated totals | Counter read | X | X |  |
++| Transmission of integrated totals | Counter freeze without reset | teilw. | X | Station: siehe Mode C |
++| Transmission of integrated totals | Counter freeze with reset | teilw. | X | Station: siehe Mode C |
++| Transmission of integrated totals | Counter reset | teilw. | X | Station: siehe Mode C |
++| Transmission of integrated totals | General request counter | X | X |  |
++| Transmission of integrated totals | Request counter group 1 … group 4 | X | X | Bits 0..3 der Gruppenmaske |
++| Parameter loading | Threshold value |  |  | Station antwortet negativ |
++| Parameter loading | Smoothing factor |  |  | Station antwortet negativ |
++| Parameter loading | Low limit for transmission of measured values |  |  | Station antwortet negativ |
++| Parameter loading | High limit for transmission of measured values |  |  | Station antwortet negativ |
++| Parameter activation | Act/deact of persistent cyclic or periodic transmission of the addressed object |  |  | Station antwortet negativ |
++| Test procedure | Test procedure | X | X | C_TS_TA_1 (107), TESTFR auf der Verbindungsebene |
++| File transfer | File transfer in monitor direction: Transparent file |  |  |  |
++| File transfer | File transfer in monitor direction: Transmission of disturbance data of protection equipment |  |  |  |
++| File transfer | File transfer in monitor direction: Transmission of sequences of events |  |  |  |
++| File transfer | File transfer in monitor direction: Transmission of sequences of recorded analogue values |  |  |  |
++| File transfer | File transfer in control direction: Transparent file |  |  |  |
++| Background scan | Background scan | X | X | Station: Anwendung sendet mit Ursache 2, nicht gepuffert |
++| Acquisition of transmission delay | Acquisition of transmission delay | – | – | C_CD_NA_1 (106) |
++
++## 9.6 Time-outs, k, w, port, redundancy, RFC 2200
++
++| Parameter | Normwert | gewählt | Bemerkung |
++| --- | --- | --- | --- |
++| t0 | 30 s | 30 s | Verbindungsaufbau; mit TLS einschließlich Handshake |
++| t1 | 15 s | 15 s | Quittung gesendeter I- und U-Rahmen (act) |
++| t2 | 10 s | 10 s | spätestens eigene Quittung; t2 < t1 |
++| t3 | 20 s | 20 s | Testrahmen nach Ruhe; Bereich 1 s … 48 h, 0 nur tolerant |
++| k | 12 | 12 | Bereich 1 … 32767 |
++| w | 8 | 8 | Bereich 1 … 32767; w ≤ 2/3 k empfohlen |
++| Portnumber | 2404 | 2404 | frei wählbar |
++| Redundant connections (Anzahl Gruppen) | – | keine (jede Verbindung eigene Gruppe) | Verbindungen je Gruppe unbegrenzt; eine aktiv; Puffer 1000 Ereignisse |
++| RFC 2200 suite | Ethernet 802.3 | TCP/IP des Betriebssystems | IPv4 und IPv6 |
++| Maximum allowable delay of commands | – | aus | nur Station; Befehle 58–64 und 107 |
++
++## Ergänzung: Sicherheit (IEC 62351-3)
++
++| Parameter | Normwert | gewählt | Bemerkung |
++| --- | --- | --- | --- |
++| TLS | – | aus | OpenSSL 3; TLS 1.2 und 1.3 |
+diff --git a/examples/julia/IEC104.jl b/examples/julia/IEC104.jl
+index c09e828..d0c6c7f 100644
+--- a/examples/julia/IEC104.jl
++++ b/examples/julia/IEC104.jl
+@@ -20,7 +20,7 @@ export server_create, server_listen, server_port, server_add_point, server_updat
+ export client_create, client_connect, client_start, client_stop, client_poll,
+        client_interrogation, client_destroy, client_close, client_state,
+        client_counter_interrogation, client_clock_sync, client_send_command,
+-       client_select_execute, client_set_tls, client_set_log, server_set_log,
++       client_select_execute, client_read, client_set_tls, client_set_log, server_set_log,
+        server_connection_count, time_now, settext!
+ 
+ const LIB = let packaged = normpath(joinpath(@__DIR__, "..", "lib", "libiec104.so.0"))
+@@ -243,6 +243,9 @@ client_clock_sync(c, station::Integer) =
+ client_send_command(c, station::Integer, o::Object) =
+     check(ccall((:iec104_client_send_command, LIB), Cint, (Ptr{Cvoid}, UInt16, Ref{Object}),
+                 c, station, o))
++"Read command (102, cause 5): the station answers with the object via on_object."
++client_read(c, station::Integer, ioa::Integer) =
++    check(ccall((:iec104_client_read, LIB), Cint, (Ptr{Cvoid}, UInt16, UInt32), c, station, ioa))
+ "Select, then execute (select before operate)."
+ client_select_execute(c, station::Integer, o::Object) =
+     check(ccall((:iec104_client_select_execute, LIB), Cint, (Ptr{Cvoid}, UInt16, Ref{Object}),
+diff --git a/fuzz/fuzz_session.cpp b/fuzz/fuzz_session.cpp
+index 79f96e5..34d2f88 100644
+--- a/fuzz/fuzz_session.cpp
++++ b/fuzz/fuzz_session.cpp
+@@ -101,7 +101,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
+     static const session::CommandTable commands = make_commands();
+     const session::StationContext station{&image, &commands, &options,
+                                           session::SessionClock{1000, 1795604465931LL}};
+-    s.on_started(image, options);
++    s.on_started(image, commands, options);
+     (void)s.handle(data, size, station, handler);
+     s.pump(sender);
+ 
+diff --git a/include/iec104/iec104.h b/include/iec104/iec104.h
+index 42db814..9b7216e 100644
+--- a/include/iec104/iec104.h
++++ b/include/iec104/iec104.h
+@@ -61,7 +61,7 @@ extern "C" {
+ /** @brief Major version of this header. Incompatible API changes increment it. */
+ #define IEC104_VERSION_MAJOR 0
+ /** @brief Minor version of this header. Compatible additions increment it. */
+-#define IEC104_VERSION_MINOR 5
++#define IEC104_VERSION_MINOR 6
+ /** @brief Patch version of this header. Fixes without API change increment it. */
+ #define IEC104_VERSION_PATCH 0
+ 
+@@ -157,8 +157,10 @@ IEC104_API const char* iec104_status_string(iec104_status status);
+  *
+  * Ranges: t0..t2 1..255 s, t3 1 s .. 48 h or 0 = off (only with tolerant = 1),
+  * k and w 1..32767. t2 < t1 and w <= 2/3 k are recommended; violations are
+- * accepted (the library reports them nowhere yet). The field lengths of the
+- * ASDU deviate from 2/2/3 only for peers outside the standard.
++ * accepted and logged as warnings (iec104_server_set_log(),
++ * iec104_client_set_log()). The field lengths of the ASDU are 2/2/3 in
++ * IEC 104; other lengths are a deliberate setting for peers outside the
++ * standard and are accepted also in strict mode.
+  */
+ typedef struct iec104_link_config {
+     uint32_t t0_ms; /**< Time-out of connection establishment, default 30000. */
+@@ -347,39 +349,44 @@ IEC104_API int64_t iec104_time_to_unix_ms(const iec104_time* time);
+ #define IEC104_FLAG_PARAMETERS_CHANGED                                                             \
+     0x01U /**< End of initialization (70): after parameter change. */
+ 
++/* The table is kept out of automatic reformatting: re-wrapping destroys it. */
++/* clang-format off */
+ /**
+  * @brief One information object as a value.
+  *
+- * Which fields are used depends on @ref type:
++ * Which fields are used depends on iec104_object::type:
+  *
+- * | type                         | value                      | other fields |
+- * |------------------------------|----------------------------|-------------------------------------|
+- * | 1, 30 single point           | 0 off, 1 on                | quality | | 3, 31 double point |
+- * 0..3 (1 off, 2 on)         | quality                             | | 5, 32 step position |
+- * -64..63                    | quality, flags TRANSIENT            | | 7, 33 bitstring | - | bits,
+- * quality                       | | 9, 34 normalized             | -1.0 .. 1.0 - 2^-15        |
+- * quality                             | | 11, 35 scaled                | -32768..32767 | quality |
+- * | 13, 36 short float           | float                      | quality | | 15, 37 integrated
+- * totals     | counter, 32 bit signed     | qualifier = sequence 0..31,         | | | | flags
+- * CARRY/ADJUSTED, quality IV    | | 21 normalized, no quality    | -1.0 .. 1.0 - 2^-15        | - |
+- * | 45, 58 single command        | 0 off, 1 on                | qualifier = QU 0..31, select | |
+- * 46, 59 double command        | 1 off, 2 on                | qualifier = QU, select              |
+- * | 47, 60 regulating step       | 1 lower, 2 higher          | qualifier = QU, select | | 48, 61
+- * set point normalized  | -1.0 .. 1.0 - 2^-15        | qualifier = QL 0..127, select       | | 49,
+- * 62 set point scaled      | -32768..32767              | qualifier = QL, select              | |
+- * 50, 63 set point float       | float                      | qualifier = QL, select              |
+- * | 51, 64 bitstring command     | -                          | bits | | 70 end of initialization
+- * | -                          | qualifier = cause 0..127, flags     | | 100 interrogation | - |
+- * qualifier = QOI (20 station, 21..36 group 1..16) | | 101 counter interrogation    | - | qualifier
+- * = RQT (1..4 group, 5 all), bits = FRZ 0..3 | | 102 read                     | - | - | | 103 clock
+- * synchronization    | -                          | time                                | | 105
+- * reset process            | -                          | qualifier = QRP                     | |
+- * 107 test with time tag       | test sequence counter      | time                                |
++ * | type                       | value                  | other fields                                      |
++ * |----------------------------|------------------------|---------------------------------------------------|
++ * | 1, 30 single point         | 0 off, 1 on            | quality                                           |
++ * | 3, 31 double point         | 0..3 (1 off, 2 on)     | quality                                           |
++ * | 5, 32 step position        | -64..63                | quality, flags TRANSIENT                          |
++ * | 7, 33 bitstring            | -                      | bits, quality                                     |
++ * | 9, 34 normalized           | -1.0 .. 1.0 - 2^-15    | quality                                           |
++ * | 11, 35 scaled              | -32768..32767          | quality                                           |
++ * | 13, 36 short float         | float                  | quality                                           |
++ * | 15, 37 integrated totals   | counter, 32 bit signed | qualifier = sequence 0..31, flags CARRY/ADJUSTED, quality IV |
++ * | 21 normalized, no quality  | -1.0 .. 1.0 - 2^-15    | -                                                 |
++ * | 45, 58 single command      | 0 off, 1 on            | qualifier = QU 0..31, select                      |
++ * | 46, 59 double command      | 1 off, 2 on            | qualifier = QU, select                            |
++ * | 47, 60 regulating step     | 1 lower, 2 higher      | qualifier = QU, select                            |
++ * | 48, 61 set point normalized| -1.0 .. 1.0 - 2^-15    | qualifier = QL 0..127, select                     |
++ * | 49, 62 set point scaled    | -32768..32767          | qualifier = QL, select                            |
++ * | 50, 63 set point float     | float                  | qualifier = QL, select                            |
++ * | 51, 64 bitstring command   | -                      | bits                                              |
++ * | 70 end of initialization   | -                      | qualifier = cause 0..127, flags                   |
++ * | 100 interrogation          | -                      | qualifier = QOI (20 station, 21..36 group 1..16)  |
++ * | 101 counter interrogation  | -                      | qualifier = RQT (1..4 group, 5 all), bits = FRZ 0..3 |
++ * | 102 read                   | -                      | - (sent with cause 5, see iec104_client_read())   |
++ * | 103 clock synchronization  | -                      | time                                              |
++ * | 105 reset process          | -                      | qualifier = QRP                                   |
++ * | 107 test with time tag     | test sequence counter  | time                                              |
+  *
+- * Types 30..37, 58..64 and 107 carry @ref time as time tag. Other types
+- * (e.g. CP24Time2a types, parameters, protection events) are available as
+- * raw ASDUs (on_asdu, *_send_asdu).
++ * Types 30..37, 58..64 and 107 carry iec104_object::time as time tag. Other
++ * types (e.g. CP24Time2a types, parameters, protection events) are available
++ * as raw ASDUs (on_asdu, *_send_asdu).
+  */
++/* clang-format on */
+ typedef struct iec104_object {
+     uint8_t type;      /**< Type identification, e.g. 13 = M_ME_NC_1. */
+     uint32_t ioa;      /**< Information object address, 0..16777215. */
+@@ -515,7 +522,10 @@ typedef enum iec104_log_level {
+ 
+ /**
+  * @brief Receives one log message (English, one line, without newline).
++ * @param user The pointer given to iec104_server_set_log() / iec104_client_set_log().
++ * @param level Level of the message.
+  * @param connection Connection id, 0 for messages that concern no connection.
++ * @param message The text, valid only during the call.
+  */
+ typedef void (*iec104_log_fn)(void* user, iec104_log_level level, uint32_t connection,
+                               const char* message);
+@@ -567,6 +577,7 @@ IEC104_API iec104_status iec104_server_create(const iec104_link_config* config,
+ /**
+  * @brief Starts listening.
+  *
++ * @param server The server.
+  * @param address Local address to bind to; NULL or "" = all addresses.
+  * @param port    TCP port; IEC104_DEFAULT_PORT is the standard, 0 = any free port.
+  * @return IEC104_OK; IEC104_ERR_WRONG_STATE if already listening;
+@@ -582,6 +593,7 @@ IEC104_API uint16_t iec104_server_port(const iec104_server* server);
+ /**
+  * @brief Does all pending work: accept, receive, timers, send, callbacks.
+  *
++ * @param server The server.
+  * @param timeout_ms Maximum time to wait for activity; 0 = do not wait.
+  *                   The call returns earlier when a timer is due.
+  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL; IEC104_ERR_IO if poll() fails.
+@@ -591,6 +603,9 @@ IEC104_API iec104_status iec104_server_poll(iec104_server* server, int timeout_m
+ /**
+  * @brief Sends an ASDU on one connection, or on all started connections.
+  *
++ * @param server The server.
++ * @param asdu Complete ASDU (data unit identifier and objects), encoded by the caller.
++ * @param length Octets of @p asdu, 1..249.
+  * @param connection Connection id from a callback, or 0 = all started connections.
+  * @return IEC104_OK (for 0: sent on at least one connection);
+  *         IEC104_ERR_INVALID_ARGUMENT for NULL or a bad length;
+@@ -604,7 +619,6 @@ IEC104_API iec104_status iec104_server_send_asdu(iec104_server* server, uint32_t
+ /** @brief Number of open connections. */
+ IEC104_API size_t iec104_server_connection_count(const iec104_server* server);
+ 
+-/** @brief Behaviour of the server's application layer. */
+ /** @brief What happens when an event arrives at a full event buffer. */
+ /* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
+ typedef enum iec104_overflow {
+@@ -612,6 +626,7 @@ typedef enum iec104_overflow {
+     IEC104_OVERFLOW_REJECT = 1       /**< The new event is rejected: IEC104_ERR_WOULD_BLOCK. */
+ } iec104_overflow;
+ 
++/** @brief Behaviour of the server's application layer (iec104_server_set_options()). */
+ typedef struct iec104_server_options {
+     /** 1 (default) = send end of initialization (type 70, cause 4) on the first STARTDT
+      *  of every connection after the server was created. */
+@@ -637,7 +652,8 @@ IEC104_API void iec104_server_options_init(iec104_server_options* options);
+ /**
+  * @brief Applies options.
+  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL; IEC104_ERR_OUT_OF_RANGE
+- *         for an event buffer size outside 1..IEC104_MAX_EVENT_BUFFER.
++ *         for cause_of_init above 127 or an event buffer size outside
++ *         1..IEC104_MAX_EVENT_BUFFER. On error nothing is changed.
+  */
+ IEC104_API iec104_status iec104_server_set_options(iec104_server* server,
+                                                    const iec104_server_options* options);
+@@ -681,6 +697,8 @@ IEC104_API void iec104_group_config_init(iec104_group_config* config);
+  * at once (logged as warning). Without any group, every connection is a
+  * group of its own (buffer from ::iec104_server_options).
+  *
++ * @param server The server.
++ * @param config Settings of the group.
+  * @param group Receives the id of the group (1, 2, ...); may be NULL.
+  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL or an address
+  *         without NUL; IEC104_ERR_OUT_OF_RANGE for a buffer size outside
+@@ -723,6 +741,7 @@ IEC104_API uint32_t iec104_server_connection_group(const iec104_server* server,
+  * address and IOA. Points with a time tag type (30..37) are stored as their
+  * type without time tag and answered as such in an interrogation.
+  *
++ * @param server The server.
+  * @param common_address Station address, 1..65534 (the common address must be known
+  *                       to the server; unknown addresses are answered with cause 46).
+  * @param point          Initial value; type 1, 3, 5, 7, 9, 11, 13, 15, 21 or 30..37.
+@@ -755,6 +774,17 @@ typedef enum iec104_command_model {
+  *     less than @p select_timeout_ms ago; a deactivation (cause 8) cancels
+  *     the selection.
+  *
++ * Stations: a common address is known if it has data points or command
++ * points. Requests to other addresses are answered with cause 46. Only a
++ * server without any point accepts every address (the application manages
++ * its stations). Known stations get the end of initialization and answer a
++ * broadcast interrogation.
++ *
++ * @param server The server.
++ * @param common_address Station of the command point.
++ * @param ioa Information object address of the command point.
++ * @param model Direct execute or select before operate.
++ * @param select_timeout_ms Validity of a selection (select before operate), ms.
+  * @param type Command type 45..51 or 58..64 the point accepts.
+  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, a type that is not a
+  *         command, or select-execute for a bitstring command (51, 64).
+@@ -769,11 +799,16 @@ IEC104_API iec104_status iec104_server_add_command(iec104_server* server, uint16
+  *
+  * The object may carry the time tag variant of the point's type (e.g. 36
+  * for a point added as 13); it is sent as given, the image keeps the value.
+- * Connections that are not started do not receive it (no buffering yet).
++ * The event goes into the buffer of every redundancy group (see
++ * iec104_server_add_group()) and stays there until the active connection
++ * has acknowledged it, also while no connection of the group is started.
++ * Without any group (no iec104_server_add_group() and no open connection)
++ * the event is not buffered; only the image keeps the value.
+  *
+  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT if the point is unknown or
+  *         the type does not fit; IEC104_ERR_OUT_OF_RANGE for a bad value;
+- *         IEC104_ERR_WOULD_BLOCK if the send queue of a connection is full.
++ *         IEC104_ERR_WOULD_BLOCK if a group buffer is full and set to
++ *         IEC104_OVERFLOW_REJECT.
+  */
+ IEC104_API iec104_status iec104_server_update(iec104_server* server, uint16_t common_address,
+                                               const iec104_object* object);
+@@ -783,11 +818,24 @@ IEC104_API iec104_status iec104_server_update(iec104_server* server, uint16_t co
+  *
+  * Long lists are split into several ASDUs. Objects are not stored in the image.
+  *
+- * @param connection Connection id, or 0 = all started connections.
++ * | connection | cause | goes to |
++ * |---|---|---|
++ * | id | any | that connection, if started |
++ * | 0 | 1 periodic, 2 background | the active connection of every group, not buffered |
++ * | 0 | other | the buffer of every group, like iec104_server_update() |
++ *
++ * @param server The server.
++ * @param common_address Station of the objects.
++ * @param cause Cause of transmission, e.g. IEC104_COT_PERIODIC.
++ * @param objects Objects of one type.
++ * @param count Number of @p objects.
++ * @param connection Connection id, or 0 = all (see table).
+  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, count 0, mixed or
+  *         unsupported types; IEC104_ERR_OUT_OF_RANGE for a bad value;
+- *         IEC104_ERR_WRONG_STATE if no started connection matches;
+- *         IEC104_ERR_WOULD_BLOCK if a send queue is full.
++ *         IEC104_ERR_WRONG_STATE if the connection is not started, or for
++ *         cause 1/2 if no connection is active (also if there is no group at
++ *         all); IEC104_ERR_WOULD_BLOCK if the send queue of the connection is
++ *         full, or a group buffer is full and set to IEC104_OVERFLOW_REJECT.
+  */
+ IEC104_API iec104_status iec104_server_send(iec104_server* server, uint32_t connection,
+                                             uint16_t common_address, uint8_t cause,
+@@ -852,6 +900,7 @@ IEC104_API iec104_status iec104_client_create(const iec104_link_config* config,
+ /**
+  * @brief Starts connecting; completion is reported by the state callback (STOPPED).
+  *
++ * @param client The client.
+  * @param host Name or address of the server.
+  * @param port TCP port, e.g. IEC104_DEFAULT_PORT.
+  * @return IEC104_OK; IEC104_ERR_WRONG_STATE if a connection exists;
+@@ -901,7 +950,8 @@ IEC104_API iec104_status iec104_client_set_options(iec104_client* client,
+  * In addition the library follows the command and reports its final result
+  * once via on_command_result (see iec104_client_options for the time limits).
+  * A command with select = 1 ends with IEC104_COMMAND_SELECTED; the execute
+- * is a second call with select = 0.
++ * is a second call with select = 0. Type 102 (read) is sent with cause 5
++ * and not followed (see iec104_client_read()).
+  *
+  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL or an unsupported
+  *         type; IEC104_ERR_OUT_OF_RANGE for a bad value; IEC104_ERR_WRONG_STATE
+@@ -925,6 +975,21 @@ IEC104_API iec104_status iec104_client_select_execute(iec104_client* client,
+                                                       uint16_t common_address,
+                                                       const iec104_object* command);
+ 
++/**
++ * @brief Read command (type 102, cause 5 "request") for one information object.
++ *
++ * The station answers with the object itself (its type, cause 5) via
++ * on_object, or negatively with cause 47 (unknown IOA) or 46 (unknown
++ * station). A read has no confirmation and is not followed by
++ * on_command_result. iec104_client_send_command() with type 102 does the same.
++ * @param client The client.
++ * @param common_address Station of the object.
++ * @param ioa Information object address to read.
++ * @return As iec104_client_send_command().
++ */
++IEC104_API iec104_status iec104_client_read(iec104_client* client, uint16_t common_address,
++                                            uint32_t ioa);
++
+ /** @brief General (qoi 20) or group (21..36) interrogation; results via on_object. */
+ IEC104_API iec104_status iec104_client_interrogation(iec104_client* client, uint16_t common_address,
+                                                      uint8_t qoi);
+@@ -1020,6 +1085,8 @@ IEC104_API void iec104_config_init(iec104_config* config);
+  *
+  * Relative file names are relative to the directory of the configuration file.
+  *
++ * @param path Configuration file.
++ * @param config Receives the values; keys not in the file keep their value.
+  * @param error_line Receives the line number of the first error (0 if none); may be NULL.
+  * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, an unknown key or
+  *         a malformed line; IEC104_ERR_OUT_OF_RANGE for a value outside its
+diff --git a/packaging/README-binary.md b/packaging/README-binary.md
+index f8d8af6..e4b2125 100644
+--- a/packaging/README-binary.md
++++ b/packaging/README-binary.md
+@@ -8,6 +8,19 @@ Geteilte Library für Linux x86-64 (Release, mit TLS).
+ | `include/iec104/iec104.h` | C-Schnittstelle mit Beschreibung jeder Funktion |
+ | `LICENSES/` | Lizenzen: Header Apache-2.0, Library proprietär |
+ | `julia/` | Anbindung für Julia (`IEC104.jl`) mit Client- und Server-Beispiel, Test-GUI im Browser (`gui/`) |
++| `pruefen.sh` | prüft System, OpenSSL und Julia: `bash pruefen.sh` |
++| `gui.sh` | startet die Test-GUI: `bash gui.sh`, dann `http://localhost:8080` |
++| `beispiel.sh` | Julia-Station und -Leitstelle gegeneinander: `bash beispiel.sh` |
++
++## Schnellstart (Linux oder WSL)
++
++```bash
++bash pruefen.sh        # alles bereit?
++bash gui.sh            # Test-GUI, dann http://localhost:8080 im Browser
++bash beispiel.sh       # Station und Leitstelle in Julia gegeneinander
++```
++
++Unter WSL geht das direkt im Windows-Ordner, z. B. `cd /mnt/c/rd/.../iec104-<version>-linux-x86_64`.
+ 
+ ## Voraussetzungen
+ 
+diff --git a/packaging/beispiel.sh b/packaging/beispiel.sh
+new file mode 100755
+index 0000000..dbb94eb
+--- /dev/null
++++ b/packaging/beispiel.sh
+@@ -0,0 +1,28 @@
++#!/usr/bin/env bash
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++# beispiel.sh – Julia-Station und Julia-Leitstelle einmal gegeneinander.
++#
++# Aufruf: bash beispiel.sh [port]     Default 2404
++# Die Station sendet jede Sekunde einen Messwert, die Leitstelle macht eine
++# Generalabfrage und endet nach drei spontanen Werten.
++
++cd "$(dirname "$0")" || exit 1
++PORT="${1:-2404}"
++command -v julia > /dev/null 2>&1 || { echo "Julia fehlt (bash pruefen.sh)"; exit 1; }
++LOG="$(mktemp)"
++julia --startup-file=no julia/server.jl "$PORT" 120 < /dev/null > "$LOG" 2>&1 &
++SERVER=$!
++trap 'kill "$SERVER" 2>/dev/null; rm -f "$LOG"' EXIT
++for _ in $(seq 1 120); do
++    grep -q listening "$LOG" && break
++    kill -0 "$SERVER" 2>/dev/null || { cat "$LOG"; exit 1; }
++    sleep 0.5
++done
++echo "Station läuft auf Port $PORT, Leitstelle verbindet sich:"
++julia --startup-file=no julia/client.jl 127.0.0.1 "$PORT"
++RC=$?
++[ "$RC" = 0 ] && echo "Ergebnis: ok" || echo "Ergebnis: FEHLER ($RC)"
++exit "$RC"
+diff --git a/packaging/gui.sh b/packaging/gui.sh
+new file mode 100755
+index 0000000..840c584
+--- /dev/null
++++ b/packaging/gui.sh
+@@ -0,0 +1,15 @@
++#!/usr/bin/env bash
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++# gui.sh – startet die Test-GUI (Leitstelle und Station im Browser).
++#
++# Aufruf: bash gui.sh [port]          Default 8080, dann http://localhost:<port> öffnen
++# Beenden mit Strg-C.
++
++cd "$(dirname "$0")" || exit 1
++PORT="${1:-8080}"
++command -v julia > /dev/null 2>&1 || { echo "Julia fehlt (bash pruefen.sh)"; exit 1; }
++echo "Test-GUI startet, im Browser öffnen: http://localhost:$PORT  (Strg-C beendet)"
++exec julia --startup-file=no julia/gui/iec104_gui.jl "$PORT"
+diff --git a/packaging/pruefen.sh b/packaging/pruefen.sh
+new file mode 100755
+index 0000000..d032f03
+--- /dev/null
++++ b/packaging/pruefen.sh
+@@ -0,0 +1,50 @@
++#!/usr/bin/env bash
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++# pruefen.sh – prüft, ob die fertig gebaute Library auf diesem Rechner läuft.
++#
++# Aufruf (im entpackten Paket, auch unter WSL in /mnt/c/...): bash pruefen.sh
++
++cd "$(dirname "$0")" || exit 1
++OK=1
++ok()   { printf '  %-34s ok   %s\n' "$1" "$2"; }
++nein() { printf '  %-34s FEHLT %s\n' "$1" "$2"; OK=0; }
++
++echo "Prüfung: $(pwd)"
++[ "$(uname -m)" = x86_64 ] && ok "Linux x86-64" "$(uname -sr)" || nein "Linux x86-64" "$(uname -sm)"
++
++GLIBC="$(ldd --version 2>/dev/null | head -1 | grep -o '[0-9]\+\.[0-9]\+$')"
++if [ -n "$GLIBC" ] && [ "$(printf '%s\n2.32\n' "$GLIBC" | sort -V | head -1)" = 2.32 ]; then
++    ok "glibc ab 2.32" "$GLIBC"
++else
++    nein "glibc ab 2.32" "${GLIBC:-unbekannt}"
++fi
++
++MISSING="$(ldd lib/libiec104.so.0 2>&1 | grep 'not found')"
++if [ -z "$MISSING" ]; then
++    ok "Abhängigkeiten der Library" "$(ldd lib/libiec104.so.0 | grep -o 'libssl.so.[0-9]*' | head -1)"
++else
++    nein "Abhängigkeiten der Library" "$(echo "$MISSING" | awk '{print $1}' | tr '\n' ' ')"
++    echo "      OpenSSL 3 nachinstallieren: sudo apt install libssl3  (bzw. dnf install openssl-libs)"
++fi
++
++if command -v julia > /dev/null 2>&1; then
++    V="$(julia --version 2>/dev/null | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')"
++    if [ "$(printf '%s\n1.10.0\n' "$V" | sort -V | head -1)" = 1.10.0 ]; then
++        ok "Julia ab 1.10 (für julia/)" "$V"
++        R="$(julia --startup-file=no -e 'include("julia/IEC104.jl"); print(Main.IEC104.version())' 2>&1 | tail -1)"
++        case "$R" in
++            [0-9]*) ok "Library aus Julia ladbar" "$R" ;;
++            *) nein "Library aus Julia ladbar" "$R" ;;
++        esac
++    else
++        nein "Julia ab 1.10 (für julia/)" "$V"
++    fi
++else
++    printf '  %-34s --   %s\n' "Julia (nur für julia/)" "nicht installiert: curl -fsSL https://install.julialang.org | sh"
++fi
++
++[ "$OK" = 1 ] && echo "Ergebnis: alles bereit" || echo "Ergebnis: siehe FEHLT"
++[ "$OK" = 1 ]
+diff --git a/src/api/client.cpp b/src/api/client.cpp
+index 09bbfd8..f7e08fd 100644
+--- a/src/api/client.cpp
++++ b/src/api/client.cpp
+@@ -28,7 +28,8 @@ using namespace iec104;
+ 
+ namespace {
+ constexpr std::uint32_t kClientLinkId = 1;
+-}
++constexpr std::uint8_t kReadType = 102; // C_RD_NA_1
++} // namespace
+ 
+ struct iec104_client : api::CallbackSink {
+     iec104_client(const apci::ApciConfig& c, const iec104_link_config& link,
+@@ -179,6 +180,11 @@ struct iec104_client : api::CallbackSink {
+         if (st != IEC104_OK) {
+             return st;
+         }
++        if (command.type == kReadType) {
++            // A read is a request (cause 5), answered by the point itself, not
++            // by a confirmation: nothing to follow.
++            return send_object(common_address, IEC104_COT_REQUEST, o, kReadType);
++        }
+         const iec104_status sent =
+             send_object(common_address, IEC104_COT_ACTIVATION, o, command.type);
+         if (sent == IEC104_OK) {
+@@ -343,6 +349,16 @@ iec104_status iec104_client_set_options(iec104_client* client,
+     return IEC104_OK;
+ }
+ 
++iec104_status iec104_client_read(iec104_client* client, uint16_t common_address, uint32_t ioa) {
++    if (client == nullptr) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    iec104_object read{};
++    read.type = kReadType;
++    read.ioa = ioa;
++    return client->send_tracked(common_address, read, false);
++}
++
+ iec104_status iec104_client_interrogation(iec104_client* client, uint16_t common_address,
+                                           uint8_t qoi) {
+     if (client == nullptr) {
+diff --git a/src/api/server.cpp b/src/api/server.cpp
+index fddf455..3495323 100644
+--- a/src/api/server.cpp
++++ b/src/api/server.cpp
+@@ -343,7 +343,7 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
+         Peer& peer = it->second;
+         session::RedundancyGroup& group = *peer.group;
+         if (state == apci::State::Started) {
+-            peer.session.on_started(image, options); // end of initialization first
++            peer.session.on_started(image, commands, options); // end of initialization first
+             const std::uint32_t previous = group.start(id);
+             if (previous != 0U) {
+                 withdraw(previous);
+@@ -566,12 +566,15 @@ iec104_status iec104_server_set_options(iec104_server* server,
+     if (server == nullptr || options == nullptr) {
+         return IEC104_ERR_INVALID_ARGUMENT;
+     }
++    // Check everything first: on error nothing is applied. COI is 7 bit
++    // (bit 8 is "parameters changed", not settable here).
++    if (options->cause_of_init > 127U || options->event_buffer_size == 0U ||
++        options->event_buffer_size > IEC104_MAX_EVENT_BUFFER) {
++        return IEC104_ERR_OUT_OF_RANGE;
++    }
+     server->options.send_end_of_init = options->send_end_of_init != 0;
+     server->options.command_termination = options->command_termination != 0;
+     server->options.cause_of_init = options->cause_of_init;
+-    if (options->event_buffer_size == 0U || options->event_buffer_size > IEC104_MAX_EVENT_BUFFER) {
+-        return IEC104_ERR_OUT_OF_RANGE;
+-    }
+     server->options.max_command_delay_ms = options->max_command_delay_ms;
+     server->own_group.capacity = options->event_buffer_size;
+     server->own_group.overflow = options->overflow == IEC104_OVERFLOW_REJECT
+diff --git a/src/codec/type_table.cpp b/src/codec/type_table.cpp
+index 36fdb13..c294ed5 100644
+--- a/src/codec/type_table.cpp
++++ b/src/codec/type_table.cpp
+@@ -135,7 +135,7 @@ constexpr std::array<CauseRule, 0> kCauseMatrix{};
+ } // namespace
+ 
+ const TypeInfo* find_type(std::uint8_t type_id) noexcept {
+-    // A linear search over 66 entries is fast enough and easier to read than
++    // A linear search over 59 entries is fast enough and easier to read than
+     // an index table.
+     for (const TypeInfo& t : kTypes) {
+         if (t.id == type_id) {
+diff --git a/src/session/command_table.cpp b/src/session/command_table.cpp
+index 3545170..c56d8ae 100644
+--- a/src/session/command_table.cpp
++++ b/src/session/command_table.cpp
+@@ -55,6 +55,21 @@ iec104_status CommandTable::set(std::uint16_t common_address, std::uint32_t ioa,
+     return IEC104_OK;
+ }
+ 
++bool CommandTable::has_station(std::uint16_t common_address) const {
++    const auto it = points_.lower_bound({common_address, 0U});
++    return it != points_.end() && it->first.first == common_address;
++}
++
++std::vector<std::uint16_t> CommandTable::stations() const {
++    std::vector<std::uint16_t> result;
++    for (const auto& entry : points_) {
++        if (result.empty() || result.back() != entry.first.first) {
++            result.push_back(entry.first.first);
++        }
++    }
++    return result;
++}
++
+ const CommandPoint* CommandTable::find(std::uint16_t common_address, std::uint32_t ioa) const {
+     const auto it = points_.find({common_address, ioa});
+     return it != points_.end() ? &it->second : nullptr;
+diff --git a/src/session/command_table.hpp b/src/session/command_table.hpp
+index 9454585..19dee99 100644
+--- a/src/session/command_table.hpp
++++ b/src/session/command_table.hpp
+@@ -30,6 +30,7 @@
+ #include <cstdint>
+ #include <map>
+ #include <utility>
++#include <vector>
+ 
+ namespace iec104::session {
+ 
+@@ -63,6 +64,12 @@ class CommandTable {
+     /** @brief True if no command point is defined. */
+     [[nodiscard]] bool empty() const { return points_.empty(); }
+ 
++    /** @brief True if at least one command point belongs to @p common_address. */
++    [[nodiscard]] bool has_station(std::uint16_t common_address) const;
++
++    /** @brief Common addresses with command points, ascending. */
++    [[nodiscard]] std::vector<std::uint16_t> stations() const;
++
+   private:
+     std::map<std::pair<std::uint16_t, std::uint32_t>, CommandPoint> points_;
+ };
+diff --git a/src/session/server_session.cpp b/src/session/server_session.cpp
+index ddc7cd8..3ae989d 100644
+--- a/src/session/server_session.cpp
++++ b/src/session/server_session.cpp
+@@ -19,6 +19,16 @@
+ namespace iec104::session {
+ namespace {
+ 
++/** @brief Stations with data points or command points, ascending, each once. */
++std::vector<std::uint16_t> station_union(const ProcessImage& image, const CommandTable& commands) {
++    std::vector<std::uint16_t> all = image.stations();
++    const std::vector<std::uint16_t> more = commands.stations();
++    all.insert(all.end(), more.begin(), more.end());
++    std::sort(all.begin(), all.end());
++    all.erase(std::unique(all.begin(), all.end()), all.end());
++    return all;
++}
++
+ // Causes of transmission (docs/02_Technik_und_Quellen.md, "Übertragungsursachen").
+ constexpr std::uint8_t kCotSpontaneousInit = 4;
+ constexpr std::uint8_t kCotRequest = 5;
+@@ -117,6 +127,27 @@ bool is_late(std::uint8_t type, const codec::InformationObject& o,
+ // Incoming requests
+ // ---------------------------------------------------------------------------
+ 
++bool ServerSession::known_station(std::uint16_t common_address, std::uint8_t type,
++                                  const StationContext& station) const {
++    // A station is known by its data points or its command points. The
++    // broadcast address is accepted for the system commands interrogation,
++    // counter interrogation, clock sync and reset. Without any points the
++    // application manages its stations itself.
++    // TODO(norm): broadcast address per type, clause unknown
++    // (docs/05_Normfragen_und_Festlegungen.md, N10).
++    const ProcessImage& image = *station.image;
++    const CommandTable& commands = *station.commands;
++    if (image.empty() && commands.empty()) {
++        return true;
++    }
++    const bool system = type == kInterrogation || type == kCounterInterrogation ||
++                        type == kClockSync || type == kResetProcess;
++    if (system && common_address == broadcast_address(profile_)) {
++        return true;
++    }
++    return image.has_station(common_address) || commands.has_station(common_address);
++}
++
+ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
+                            const StationContext& station, CommandHandler& handler) {
+     const ProcessImage& image = *station.image;
+@@ -159,15 +190,7 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
+         return true;
+     }
+ 
+-    // Station check. The broadcast address is accepted for the system
+-    // commands interrogation, counter interrogation, clock sync and reset.
+-    // An empty image means the application manages its stations itself.
+-    // TODO(norm): broadcast address per type, clause unknown
+-    // (docs/05_Normfragen_und_Festlegungen.md, N10).
+-    const bool broadcast = header.common_address == broadcast_address(profile_);
+-    const bool system = type == kInterrogation || type == kCounterInterrogation ||
+-                        type == kClockSync || type == kResetProcess;
+-    if (!image.empty() && !(broadcast && system) && !image.has_station(header.common_address)) {
++    if (!known_station(header.common_address, type, station)) {
+         answer(asdu, length, kCotUnknownStation, true);
+         return true;
+     }
+@@ -178,10 +201,10 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
+     }
+     switch (type) {
+     case kInterrogation:
+-        answer_interrogation(d, o, image, asdu, length);
++        answer_interrogation(d, o, station, asdu, length);
+         break;
+     case kCounterInterrogation:
+-        answer_counters(d, o, image, asdu, length);
++        answer_counters(d, o, station, asdu, length);
+         break;
+     case kRead:
+         answer_read(d, o, image, asdu, length);
+@@ -208,8 +231,9 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
+ 
+ void ServerSession::answer_interrogation(const codec::DecodedAsdu& d,
+                                          const codec::InformationObject& o,
+-                                         const ProcessImage& image, const std::uint8_t* asdu,
++                                         const StationContext& station, const std::uint8_t* asdu,
+                                          std::size_t length) {
++    const ProcessImage& image = *station.image;
+     const codec::AsduHeader& h = d.header;
+     if (h.cause == kCotDeactivation) {
+         // Stopping a running interrogation is not supported: negative DEACTCON.
+@@ -232,21 +256,19 @@ void ServerSession::answer_interrogation(const codec::DecodedAsdu& d,
+     // QOI 20..36 and the cause of the answers 20..36 have the same values:
+     // station interrogation answers with 20, group n with 20 + n.
+     const unsigned group = o.qoi == kCotStation ? 0U : static_cast<unsigned>(o.qoi - kCotStation);
+-    const bool broadcast = h.common_address == broadcast_address(profile_);
+-    const std::vector<std::uint16_t> stations =
+-        broadcast ? image.stations() : std::vector<std::uint16_t>{h.common_address};
+-    for (const std::uint16_t station : stations) {
++    const std::vector<std::uint16_t> stations = addressed_stations(h.common_address, station);
++    for (const std::uint16_t ca : stations) {
+         // Confirmation, data, termination, each with the address of the
+         // station (also when the request used the broadcast address).
+         codec::AsduHeader reply = h;
+-        reply.common_address = station;
++        reply.common_address = ca;
+         reply.cause = kCotActivationCon;
+         push_encoded(reply, o);
+ 
+         codec::AsduHeader data = h;
+-        data.common_address = station;
++        data.common_address = ca;
+         data.cause = o.qoi;
+-        push_job(data, image.select(station, false, group));
++        push_job(data, image.select(ca, false, group));
+ 
+         reply.cause = kCotActivationTerm;
+         push_encoded(reply, o);
+@@ -254,8 +276,9 @@ void ServerSession::answer_interrogation(const codec::DecodedAsdu& d,
+ }
+ 
+ void ServerSession::answer_counters(const codec::DecodedAsdu& d, const codec::InformationObject& o,
+-                                    const ProcessImage& image, const std::uint8_t* asdu,
++                                    const StationContext& station, const std::uint8_t* asdu,
+                                     std::size_t length) {
++    const ProcessImage& image = *station.image;
+     const codec::AsduHeader& h = d.header;
+     if (h.cause != kCotActivation) {
+         answer(asdu, length, kCotUnknownCause, true);
+@@ -270,12 +293,10 @@ void ServerSession::answer_counters(const codec::DecodedAsdu& d, const codec::In
+         return;
+     }
+     const unsigned group = o.qcc.rqt == kAllCounters ? 0U : o.qcc.rqt;
+-    const bool broadcast = h.common_address == broadcast_address(profile_);
+-    const std::vector<std::uint16_t> stations =
+-        broadcast ? image.stations() : std::vector<std::uint16_t>{h.common_address};
+-    for (const std::uint16_t station : stations) {
++    const std::vector<std::uint16_t> stations = addressed_stations(h.common_address, station);
++    for (const std::uint16_t ca : stations) {
+         codec::AsduHeader reply = h;
+-        reply.common_address = station;
++        reply.common_address = ca;
+         reply.cause = kCotActivationCon;
+         push_encoded(reply, o);
+         // FRZ 0 = read: report the counters. Freeze and reset (FRZ 1..3) are
+@@ -283,10 +304,10 @@ void ServerSession::answer_counters(const codec::DecodedAsdu& d, const codec::In
+         // TODO(norm): freeze/reset semantics of the counter interrogation, clause 7.
+         if (o.qcc.frz == 0U) {
+             codec::AsduHeader data = h;
+-            data.common_address = station;
++            data.common_address = ca;
+             data.cause = static_cast<std::uint8_t>(kCotCounters + (group == 0U ? 0U : group));
+             data.negative = false;
+-            push_job(data, image.select(station, true, group));
++            push_job(data, image.select(ca, true, group));
+         }
+         reply.cause = kCotActivationTerm;
+         push_encoded(reply, o);
+@@ -412,14 +433,30 @@ void ServerSession::execute(const codec::DecodedAsdu& d, const codec::Informatio
+ // Outgoing
+ // ---------------------------------------------------------------------------
+ 
+-void ServerSession::on_started(const ProcessImage& image, const SessionOptions& options) {
++std::vector<std::uint16_t> ServerSession::addressed_stations(std::uint16_t common_address,
++                                                             const StationContext& station) const {
++    if (common_address != broadcast_address(profile_)) {
++        return {common_address};
++    }
++    // Broadcast: every known station answers with its own address. Without
++    // any points the application manages its stations: the request is
++    // answered once, with the broadcast address.
++    std::vector<std::uint16_t> all = station_union(*station.image, *station.commands);
++    if (all.empty()) {
++        all.push_back(common_address);
++    }
++    return all;
++}
++
++void ServerSession::on_started(const ProcessImage& image, const CommandTable& commands,
++                               const SessionOptions& options) {
+     if (!options.send_end_of_init || init_sent_) {
+         return;
+     }
+     init_sent_ = true;
+     // One end of initialization per station (type 70, cause 4, IOA 0;
+     // docs/05_Normfragen_und_Festlegungen.md, N8).
+-    for (const std::uint16_t station : image.stations()) {
++    for (const std::uint16_t station : station_union(image, commands)) {
+         codec::AsduHeader h{};
+         h.type_id = kEndOfInit;
+         h.cause = kCotSpontaneousInit;
+diff --git a/src/session/server_session.hpp b/src/session/server_session.hpp
+index d5a9db3..9a19fb3 100644
+--- a/src/session/server_session.hpp
++++ b/src/session/server_session.hpp
+@@ -147,15 +147,21 @@ class ServerSession {
+ 
+     /**
+      * @brief Handles a received ASDU.
+-     * @return true if the session handled it (a request or a rejected ASDU);
+-     *         false if it is data for the application (monitor direction,
+-     *         private type, malformed), which the caller passes on.
++     * @return true if the session handled it (a request, a rejected ASDU, or
++     *         a malformed body, which is dropped: the caller has already
++     *         passed the raw ASDU on); false if it is data for the
++     *         application (monitor direction, private type, unreadable
++     *         header), which the caller passes on as objects.
+      */
+     bool handle(const std::uint8_t* asdu, std::size_t length, const StationContext& station,
+                 CommandHandler& handler);
+ 
+-    /** @brief Data transfer was started: queue end of initialization once per connection. */
+-    void on_started(const ProcessImage& image, const SessionOptions& options);
++    /**
++     * @brief Data transfer was started: queue end of initialization once per
++     *        connection, for every station with data or command points.
++     */
++    void on_started(const ProcessImage& image, const CommandTable& commands,
++                    const SessionOptions& options);
+ 
+     /**
+      * @brief Queues an ASDU for sending (e.g. a spontaneous value).
+@@ -198,17 +204,22 @@ class ServerSession {
+         codec::AsduHeader header{};     // job: header of the data ASDUs
+     };
+ 
++    [[nodiscard]] bool known_station(std::uint16_t common_address, std::uint8_t type,
++                                     const StationContext& station) const;
+     void answer(const std::uint8_t* asdu, std::size_t length, std::uint8_t cause, bool negative);
+     void push_ready(std::vector<std::uint8_t> asdu);
+     void push_encoded(const codec::AsduHeader& header, const codec::InformationObject& object);
+     void push_job(const codec::AsduHeader& header, std::vector<Point> points);
+     std::vector<std::uint8_t> mirror(const std::uint8_t* asdu, std::size_t length,
+                                      std::uint8_t cause, bool negative) const;
++    [[nodiscard]] std::vector<std::uint16_t>
++    addressed_stations(std::uint16_t common_address, const StationContext& station) const;
+     void answer_interrogation(const codec::DecodedAsdu& d, const codec::InformationObject& o,
+-                              const ProcessImage& image, const std::uint8_t* asdu,
++                              const StationContext& station, const std::uint8_t* asdu,
+                               std::size_t length);
+     void answer_counters(const codec::DecodedAsdu& d, const codec::InformationObject& o,
+-                         const ProcessImage& image, const std::uint8_t* asdu, std::size_t length);
++                         const StationContext& station, const std::uint8_t* asdu,
++                         std::size_t length);
+     void answer_read(const codec::DecodedAsdu& d, const codec::InformationObject& o,
+                      const ProcessImage& image, const std::uint8_t* asdu, std::size_t length);
+     void answer_command(const codec::DecodedAsdu& d, const codec::InformationObject& o,
+diff --git a/tests/test_interop_list.cpp b/tests/test_interop_list.cpp
+new file mode 100644
+index 0000000..9d9734c
+--- /dev/null
++++ b/tests/test_interop_list.cpp
+@@ -0,0 +1,66 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file test_interop_list.cpp
++ * @brief The data of the interoperability list matches the library.
++ *
++ * tools/interop_list/interop_data.hpp answers the checklist of clause 9 by
++ * hand. These tests tie its type rows to the codec's type table and to the
++ * value API, so that a change of the library shows up here.
++ */
++#include "api/values.hpp"
++#include "codec/type_table.hpp"
++#include "interop_list/interop_data.hpp"
++
++#include <gtest/gtest.h>
++#include <string>
++
++using interop::Group;
++using interop::Mark;
++
++// Rule: every type of the codec has exactly one row with the same mnemonic;
++// rows outside the codec are file transfer only; ids ascend.
++TEST(InteropList, MatchesTypeTable) {
++    std::size_t count = 0;
++    const iec104::codec::TypeInfo* all = iec104::codec::all_types(count);
++    for (std::size_t i = 0; i < count; ++i) {
++        SCOPED_TRACE(all[i].name);
++        int rows = 0;
++        for (const interop::TypeRow& r : interop::kTypes) {
++            if (r.id == all[i].id) {
++                ++rows;
++                EXPECT_EQ(std::string(r.name), all[i].name);
++            }
++        }
++        EXPECT_EQ(rows, 1);
++    }
++    int previous = 0;
++    for (const interop::TypeRow& r : interop::kTypes) {
++        SCOPED_TRACE(r.name);
++        EXPECT_GT(r.id, previous);
++        previous = r.id;
++        if (iec104::codec::find_type(r.id) == nullptr) {
++            EXPECT_EQ(r.group, Group::File);
++            EXPECT_EQ(r.station, Mark::No);
++        }
++    }
++}
++
++// Rule: "X" means the value API (iec104_object) handles the type, "X roh"
++// means it does not; types marked "–" are not in IEC 104 (CP24, 104, 106).
++TEST(InteropList, MarksMatchValueApi) {
++    for (const interop::TypeRow& r : interop::kTypes) {
++        SCOPED_TRACE(r.name);
++        const bool value_api = iec104::api::value_type_supported(r.id);
++        if (r.master == Mark::Yes) {
++            EXPECT_TRUE(value_api);
++        }
++        if (r.master == Mark::Raw) {
++            EXPECT_FALSE(value_api);
++        }
++    }
++}
+diff --git a/tests/test_operation.cpp b/tests/test_operation.cpp
+index c6269aa..b941355 100644
+--- a/tests/test_operation.cpp
++++ b/tests/test_operation.cpp
+@@ -294,3 +294,103 @@ overflow = reject
+     const std::string range = write_file("groups_range.conf", "event_buffer_size = 2000000\n");
+     EXPECT_EQ(iec104_config_load(range.c_str(), &c, &line), IEC104_ERR_OUT_OF_RANGE);
+ }
++
++namespace {
++
++struct Received {
++    std::vector<std::pair<iec104_asdu_info, iec104_object>> objects;
++    iec104_link_state state{IEC104_LINK_CONNECTING};
++    static void on_object(void* user, uint32_t, const iec104_asdu_info* info,
++                          const iec104_object* o) {
++        static_cast<Received*>(user)->objects.emplace_back(*info, *o);
++    }
++    static void on_state(void* user, uint32_t, iec104_link_state s, iec104_close_reason) {
++        static_cast<Received*>(user)->state = s;
++    }
++};
++
++} // namespace
++
++// Rule: a read command (type 102) is a request with cause 5; the station
++// answers with the object itself (its type, cause 5) or negatively with
++// cause 47. iec104_client_send_command() with type 102 sends the same.
++TEST(ClientRead, RequestAndAnswer) {
++    iec104_server* s = nullptr;
++    ASSERT_EQ(iec104_server_create(nullptr, nullptr, &s), IEC104_OK);
++    iec104_object p{};
++    p.type = 13;
++    p.ioa = 100;
++    p.value = 2.5;
++    ASSERT_EQ(iec104_server_add_point(s, 1, &p, 1), IEC104_OK);
++    ASSERT_EQ(iec104_server_listen(s, "127.0.0.1", 0), IEC104_OK);
++    Received r;
++    iec104_callbacks cb{};
++    cb.user = &r;
++    cb.on_object = Received::on_object;
++    cb.on_state = Received::on_state;
++    iec104_client* c = nullptr;
++    ASSERT_EQ(iec104_client_create(nullptr, &cb, &c), IEC104_OK);
++    ASSERT_EQ(iec104_client_connect(c, "127.0.0.1", iec104_server_port(s)), IEC104_OK);
++    ASSERT_TRUE(run_until(s, c, [&] { return r.state == IEC104_LINK_STOPPED; }));
++    ASSERT_EQ(iec104_client_start(c), IEC104_OK);
++    ASSERT_TRUE(run_until(s, c, [&] { return r.state == IEC104_LINK_STARTED; }));
++    r.objects.clear();
++
++    ASSERT_EQ(iec104_client_read(c, 1, 100), IEC104_OK);
++    ASSERT_TRUE(run_until(s, c, [&] { return !r.objects.empty(); }));
++    EXPECT_EQ(r.objects[0].first.type, 13U);
++    EXPECT_EQ(r.objects[0].first.cause, IEC104_COT_REQUEST);
++    EXPECT_EQ(r.objects[0].first.negative, 0U);
++    EXPECT_DOUBLE_EQ(r.objects[0].second.value, 2.5);
++
++    r.objects.clear();
++    iec104_object read{};
++    read.type = 102;
++    read.ioa = 999;
++    ASSERT_EQ(iec104_client_send_command(c, 1, &read), IEC104_OK);
++    ASSERT_TRUE(run_until(s, c, [&] { return !r.objects.empty(); }));
++    EXPECT_EQ(r.objects[0].first.type, 102U);
++    EXPECT_EQ(r.objects[0].first.cause, IEC104_COT_UNKNOWN_IOA);
++    EXPECT_EQ(r.objects[0].first.negative, 1U);
++
++    iec104_client_destroy(c);
++    iec104_server_destroy(s);
++}
++
++// Rule: server options are checked before anything is applied; the cause of
++// initialization has 7 bits. A rejected call leaves the previous options in
++// force (seen in the end of initialization after STARTDT).
++TEST(ServerOptions, RangeCheckedBeforeApplying) {
++    iec104_server* s = nullptr;
++    ASSERT_EQ(iec104_server_create(nullptr, nullptr, &s), IEC104_OK);
++    iec104_server_options o{};
++    iec104_server_options_init(&o);
++    o.cause_of_init = 128;
++    EXPECT_EQ(iec104_server_set_options(s, &o), IEC104_ERR_OUT_OF_RANGE);
++    o.cause_of_init = 5;
++    EXPECT_EQ(iec104_server_set_options(s, &o), IEC104_OK);
++    o.cause_of_init = 9;     // would change the COI ...
++    o.event_buffer_size = 0; // ... but this value is invalid
++    EXPECT_EQ(iec104_server_set_options(s, &o), IEC104_ERR_OUT_OF_RANGE);
++
++    iec104_object p{};
++    p.type = 13;
++    p.ioa = 100;
++    ASSERT_EQ(iec104_server_add_point(s, 1, &p, 1), IEC104_OK);
++    ASSERT_EQ(iec104_server_listen(s, "127.0.0.1", 0), IEC104_OK);
++    Received r;
++    iec104_callbacks cb{};
++    cb.user = &r;
++    cb.on_object = Received::on_object;
++    cb.on_state = Received::on_state;
++    iec104_client* c = nullptr;
++    ASSERT_EQ(iec104_client_create(nullptr, &cb, &c), IEC104_OK);
++    ASSERT_EQ(iec104_client_connect(c, "127.0.0.1", iec104_server_port(s)), IEC104_OK);
++    ASSERT_TRUE(run_until(s, c, [&] { return r.state == IEC104_LINK_STOPPED; }));
++    ASSERT_EQ(iec104_client_start(c), IEC104_OK);
++    ASSERT_TRUE(run_until(s, c, [&] { return !r.objects.empty(); }));
++    EXPECT_EQ(r.objects[0].first.type, 70U);
++    EXPECT_EQ(r.objects[0].second.qualifier, 5U); // COI of the last accepted call
++    iec104_client_destroy(c);
++    iec104_server_destroy(s);
++}
+diff --git a/tests/test_session.cpp b/tests/test_session.cpp
+index 3889f30..d397b03 100644
+--- a/tests/test_session.cpp
++++ b/tests/test_session.cpp
+@@ -340,8 +340,8 @@ TEST(ServerSession, ClockSyncAndTest) {
+ // Rule: end of initialization (type 70, cause 4) once per connection and station.
+ TEST(ServerSession, EndOfInitialization) {
+     Fixture f;
+-    f.session.on_started(f.image, f.options);
+-    f.session.on_started(f.image, f.options); // second STARTDT: nothing more
++    f.session.on_started(f.image, f.commands, f.options);
++    f.session.on_started(f.image, f.commands, f.options); // second STARTDT: nothing more
+     f.session.pump(f.sender);
+     const auto a = decode_all(f.sender);
+     ASSERT_EQ(a.size(), 1U);
+@@ -350,7 +350,7 @@ TEST(ServerSession, EndOfInitialization) {
+ 
+     Fixture off;
+     off.options.send_end_of_init = false;
+-    off.session.on_started(off.image, off.options);
++    off.session.on_started(off.image, off.commands, off.options);
+     EXPECT_EQ(off.session.queued(), 0U);
+ }
+ 
+@@ -546,3 +546,74 @@ TEST(ServerCommands, TableChecks) {
+     EXPECT_NE(t.find(1, 1), nullptr);
+     EXPECT_EQ(t.find(2, 1), nullptr);
+ }
++
++// Rule (N10): a station is known by its data points or by its command
++// points; a station with command points only accepts commands, an unknown
++// station is answered with cause 46.
++TEST(ServerCommands, StationWithCommandPointsOnly) {
++    CommandFixture f;
++    ASSERT_EQ(f.commands.set(7, 100, CommandPoint{45, CommandModel::Direct, 0}), IEC104_OK);
++    codec::InformationObject sc{};
++    sc.ioa = 100;
++    sc.sco.on = true;
++    auto a = f.step(request(45, 6, 7, sc)); // station 7 has no data points
++    ASSERT_EQ(a.size(), 2U);
++    EXPECT_EQ(a[0].header.cause, 7U);
++    EXPECT_FALSE(a[0].header.negative);
++    EXPECT_EQ(a[1].header.cause, 10U);
++    a = f.step(request(45, 6, 8, sc)); // station 8: neither data nor command points
++    ASSERT_EQ(a.size(), 1U);
++    EXPECT_EQ(a[0].header.cause, 46U);
++    EXPECT_TRUE(a[0].header.negative);
++}
++
++// Rule (N10, E10): stations with command points only are stations too: they
++// get the end of initialization and answer a broadcast interrogation.
++TEST(ServerCommands, CommandOnlyStationInInitAndBroadcast) {
++    CommandFixture f;
++    ASSERT_EQ(f.commands.set(7, 100, CommandPoint{45, CommandModel::Direct, 0}), IEC104_OK);
++    f.session.on_started(f.image, f.commands, f.options);
++    f.session.pump(f.sender);
++    auto a = decode_all(f.sender);
++    ASSERT_EQ(a.size(), 2U);
++    EXPECT_EQ(a[0].header.common_address, 1U);
++    EXPECT_EQ(a[1].header.common_address, 7U);
++    EXPECT_EQ(a[1].header.type_id, 70U);
++
++    a = f.step(request(100, 6, 65535, qoi(20)));
++    std::vector<std::uint16_t> confirmed;
++    for (const Answer& x : a) {
++        if (x.header.type_id == 100U && x.header.cause == 7U) {
++            confirmed.push_back(x.header.common_address);
++        }
++    }
++    EXPECT_EQ(confirmed, (std::vector<std::uint16_t>{1, 7}));
++}
++
++// Rule: with an empty process image but command points, only the stations of
++// the command points are known; other addresses get cause 46.
++TEST(ServerCommands, EmptyImageWithCommandPoints) {
++    Fixture f;
++    f.image = ProcessImage{};
++    ASSERT_EQ(f.commands.set(7, 100, CommandPoint{45, CommandModel::Direct, 0}), IEC104_OK);
++    auto a = f.run(request(100, 6, 7, qoi(20)));
++    ASSERT_EQ(a.size(), 2U); // ACTCON, ACTTERM (no data points)
++    EXPECT_FALSE(a[0].header.negative);
++    f.sender.sent.clear();
++    a = f.run(request(100, 6, 8, qoi(20)));
++    ASSERT_EQ(a.size(), 1U);
++    EXPECT_EQ(a[0].header.cause, 46U);
++}
++
++// Rule: without any points the application manages its stations: every
++// address is accepted, a broadcast interrogation is answered once with the
++// broadcast address.
++TEST(ServerSession, BroadcastWithoutPoints) {
++    Fixture f;
++    f.image = ProcessImage{};
++    const auto a = f.run(request(100, 6, 65535, qoi(20)));
++    ASSERT_EQ(a.size(), 2U);
++    EXPECT_EQ(a[0].header.cause, 7U);
++    EXPECT_EQ(a[0].header.common_address, 65535U);
++    EXPECT_EQ(a[1].header.cause, 10U);
++}
+diff --git a/tools/interop_list/interop_data.hpp b/tools/interop_list/interop_data.hpp
+new file mode 100644
+index 0000000..ed1f1db
+--- /dev/null
++++ b/tools/interop_list/interop_data.hpp
+@@ -0,0 +1,201 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file interop_data.hpp
++ * @brief What the library supports, item by item of the interoperability list.
++ *
++ * The interoperability list (clause 9 of the standard) is the checklist both
++ * sides fill in. This file holds the library's answers; iec104_interop_list
++ * prints them. Structure and item names follow the public reproductions of
++ * the checklist (docs/02_Technik_und_Quellen.md, [ORA]).
++ * The answers are taken from the code; the test InteropList.MatchesTypeTable
++ * checks the type rows against the codec's type table.
++ *
++ * Marks (columns "Station" = controlled station, "Leitstelle" = controlling
++ * station):
++ *
++ * | Mark    | Meaning                                                          |
++ * |---------|------------------------------------------------------------------|
++ * | X       | supported, by the library itself or through the API              |
++ * | X roh   | possible as raw ASDU only (on_asdu, *_send_asdu)                 |
++ * | teilw.  | partly; the remark says what the application has to do           |
++ * | –       | not provided for in IEC 104 (black box in the checklist)         |
++ * | (empty) | not supported                                                    |
++ */
++#pragma once
++
++#include <cstdint>
++
++namespace interop {
++
++enum class Mark : std::uint8_t { No, Yes, Raw, Partial, NotIn104 };
++
++enum class Group : std::uint8_t { Monitor, Control, SystemMonitor, SystemControl, Parameter, File };
++
++/** @brief One type identification. Causes: list such as "3 5 20-36" (sent or received). */
++struct TypeRow {
++    std::uint8_t id;
++    const char* name;        ///< Mnemonic, e.g. "M_SP_NA_1" (must match the codec).
++    const char* description; ///< As in the checklist.
++    Group group;
++    Mark station;
++    Mark master;
++    const char* station_causes;
++    const char* master_causes;
++    const char* remark; ///< German, short.
++};
++
++constexpr const char* kMonitorCauses = "1 2 3 5 11 12 20-36";
++constexpr const char* kCommandStation = "6 7 8 9 10 45 46 47";
++constexpr const char* kCommandMaster = "6 7 10 44 45 46 47";
++
++// clang-format off
++inline constexpr TypeRow kTypes[] = {
++    // Process information in monitor direction.
++    {1, "M_SP_NA_1", "Single-point information", Group::Monitor, Mark::Yes, Mark::Yes, kMonitorCauses, kMonitorCauses, ""},
++    {2, "M_SP_TA_1", "Single-point information with time tag", Group::Monitor, Mark::NotIn104, Mark::NotIn104, "", "", "CP24Time2a; nur im toleranten Modus, roh"},
++    {3, "M_DP_NA_1", "Double-point information", Group::Monitor, Mark::Yes, Mark::Yes, kMonitorCauses, kMonitorCauses, ""},
++    {4, "M_DP_TA_1", "Double-point information with time tag", Group::Monitor, Mark::NotIn104, Mark::NotIn104, "", "", "CP24Time2a; nur im toleranten Modus, roh"},
++    {5, "M_ST_NA_1", "Step position information", Group::Monitor, Mark::Yes, Mark::Yes, kMonitorCauses, kMonitorCauses, ""},
++    {6, "M_ST_TA_1", "Step position information with time tag", Group::Monitor, Mark::NotIn104, Mark::NotIn104, "", "", "CP24Time2a; nur im toleranten Modus, roh"},
++    {7, "M_BO_NA_1", "Bitstring of 32 bit", Group::Monitor, Mark::Yes, Mark::Yes, kMonitorCauses, kMonitorCauses, ""},
++    {8, "M_BO_TA_1", "Bitstring of 32 bit with time tag", Group::Monitor, Mark::NotIn104, Mark::NotIn104, "", "", "CP24Time2a; nur im toleranten Modus, roh"},
++    {9, "M_ME_NA_1", "Measured value, normalized value", Group::Monitor, Mark::Yes, Mark::Yes, kMonitorCauses, kMonitorCauses, ""},
++    {10, "M_ME_TA_1", "Measured value, normalized value with time tag", Group::Monitor, Mark::NotIn104, Mark::NotIn104, "", "", "CP24Time2a; nur im toleranten Modus, roh"},
++    {11, "M_ME_NB_1", "Measured value, scaled value", Group::Monitor, Mark::Yes, Mark::Yes, kMonitorCauses, kMonitorCauses, ""},
++    {12, "M_ME_TB_1", "Measured value, scaled value with time tag", Group::Monitor, Mark::NotIn104, Mark::NotIn104, "", "", "CP24Time2a; nur im toleranten Modus, roh"},
++    {13, "M_ME_NC_1", "Measured value, short floating point value", Group::Monitor, Mark::Yes, Mark::Yes, kMonitorCauses, kMonitorCauses, ""},
++    {14, "M_ME_TC_1", "Measured value, short floating point value with time tag", Group::Monitor, Mark::NotIn104, Mark::NotIn104, "", "", "CP24Time2a; nur im toleranten Modus, roh"},
++    {15, "M_IT_NA_1", "Integrated totals", Group::Monitor, Mark::Yes, Mark::Yes, "3 5 37-41", "3 5 37-41", ""},
++    {16, "M_IT_TA_1", "Integrated totals with time tag", Group::Monitor, Mark::NotIn104, Mark::NotIn104, "", "", "CP24Time2a; nur im toleranten Modus, roh"},
++    {17, "M_EP_TA_1", "Event of protection equipment with time tag", Group::Monitor, Mark::NotIn104, Mark::NotIn104, "", "", "CP24Time2a; nur im toleranten Modus, roh"},
++    {18, "M_EP_TB_1", "Packed start events of protection equipment with time tag", Group::Monitor, Mark::NotIn104, Mark::NotIn104, "", "", "CP24Time2a; nur im toleranten Modus, roh"},
++    {19, "M_EP_TC_1", "Packed output circuit information of protection equipment with time tag", Group::Monitor, Mark::NotIn104, Mark::NotIn104, "", "", "CP24Time2a; nur im toleranten Modus, roh"},
++    {20, "M_PS_NA_1", "Packed single-point information with status change detection", Group::Monitor, Mark::Raw, Mark::Raw, "", "", "nicht im Prozessabbild, keine Generalabfrage"},
++    {21, "M_ME_ND_1", "Measured value, normalized value without quality descriptor", Group::Monitor, Mark::Yes, Mark::Yes, kMonitorCauses, kMonitorCauses, ""},
++    {30, "M_SP_TB_1", "Single-point information with time tag CP56Time2a", Group::Monitor, Mark::Yes, Mark::Yes, "3 11 12", "3 11 12", "Generalabfrage antwortet mit Typ ohne Zeitmarke"},
++    {31, "M_DP_TB_1", "Double-point information with time tag CP56Time2a", Group::Monitor, Mark::Yes, Mark::Yes, "3 11 12", "3 11 12", "Generalabfrage antwortet mit Typ ohne Zeitmarke"},
++    {32, "M_ST_TB_1", "Step position information with time tag CP56Time2a", Group::Monitor, Mark::Yes, Mark::Yes, "3 11 12", "3 11 12", "Generalabfrage antwortet mit Typ ohne Zeitmarke"},
++    {33, "M_BO_TB_1", "Bitstring of 32 bit with time tag CP56Time2a", Group::Monitor, Mark::Yes, Mark::Yes, "3 11 12", "3 11 12", "Generalabfrage antwortet mit Typ ohne Zeitmarke"},
++    {34, "M_ME_TD_1", "Measured value, normalized value with time tag CP56Time2a", Group::Monitor, Mark::Yes, Mark::Yes, "3", "3", "Generalabfrage antwortet mit Typ ohne Zeitmarke"},
++    {35, "M_ME_TE_1", "Measured value, scaled value with time tag CP56Time2a", Group::Monitor, Mark::Yes, Mark::Yes, "3", "3", "Generalabfrage antwortet mit Typ ohne Zeitmarke"},
++    {36, "M_ME_TF_1", "Measured value, short floating point value with time tag CP56Time2a", Group::Monitor, Mark::Yes, Mark::Yes, "3", "3", "Generalabfrage antwortet mit Typ ohne Zeitmarke"},
++    {37, "M_IT_TB_1", "Integrated totals with time tag CP56Time2a", Group::Monitor, Mark::Yes, Mark::Yes, "3", "3", "Zählerabfrage antwortet mit Typ 15"},
++    {38, "M_EP_TD_1", "Event of protection equipment with time tag CP56Time2a", Group::Monitor, Mark::Raw, Mark::Raw, "", "", ""},
++    {39, "M_EP_TE_1", "Packed start events of protection equipment with time tag CP56Time2a", Group::Monitor, Mark::Raw, Mark::Raw, "", "", ""},
++    {40, "M_EP_TF_1", "Packed output circuit information of protection equipment with time tag CP56Time2a", Group::Monitor, Mark::Raw, Mark::Raw, "", "", ""},
++
++    // Process information in control direction.
++    {45, "C_SC_NA_1", "Single command", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, ""},
++    {46, "C_DC_NA_1", "Double command", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, ""},
++    {47, "C_RC_NA_1", "Regulating step command", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, ""},
++    {48, "C_SE_NA_1", "Set point command, normalized value", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, ""},
++    {49, "C_SE_NB_1", "Set point command, scaled value", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, ""},
++    {50, "C_SE_NC_1", "Set point command, short floating point value", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, ""},
++    {51, "C_BO_NA_1", "Bitstring of 32 bit", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, "ohne Select/Execute"},
++    {58, "C_SC_TA_1", "Single command with time tag CP56Time2a", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, "maximale Befehlsverzögerung prüfbar"},
++    {59, "C_DC_TA_1", "Double command with time tag CP56Time2a", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, "maximale Befehlsverzögerung prüfbar"},
++    {60, "C_RC_TA_1", "Regulating step command with time tag CP56Time2a", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, "maximale Befehlsverzögerung prüfbar"},
++    {61, "C_SE_TA_1", "Set point command, normalized value with time tag CP56Time2a", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, "maximale Befehlsverzögerung prüfbar"},
++    {62, "C_SE_TB_1", "Set point command, scaled value with time tag CP56Time2a", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, "maximale Befehlsverzögerung prüfbar"},
++    {63, "C_SE_TC_1", "Set point command, short floating point value with time tag CP56Time2a", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, "maximale Befehlsverzögerung prüfbar"},
++    {64, "C_BO_TA_1", "Bitstring of 32 bit with time tag CP56Time2a", Group::Control, Mark::Yes, Mark::Yes, kCommandStation, kCommandMaster, "ohne Select/Execute"},
++
++    // System information in monitor direction.
++    {70, "M_EI_NA_1", "End of initialization", Group::SystemMonitor, Mark::Yes, Mark::Yes, "4", "4", "nach dem ersten STARTDT jeder Verbindung, je Station mit Daten- oder Befehlspunkten (send_end_of_init, cause_of_init)"},
++
++    // System information in control direction.
++    {100, "C_IC_NA_1", "Interrogation command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 8 9 10 45 46 47", "6 7 10 44 45 46 47", "Station und Gruppen 1–16; Abbruch (8) wird negativ bestätigt"},
++    {101, "C_CI_NA_1", "Counter interrogation command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 10 45 46 47", "6 7 10 44 45 46 47", "Freeze/Reset nur bestätigt"},
++    {102, "C_RD_NA_1", "Read command", Group::SystemControl, Mark::Yes, Mark::Yes, "5 45 46 47", "5 44 45 46 47", "Antwort aus dem Prozessabbild mit dem Typ ohne Zeitmarke, Ursache 5"},
++    {103, "C_CS_NA_1", "Clock synchronization command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 45 46", "6 7 44 45 46", "Uhr stellt die Anwendung (on_command)"},
++    {104, "C_TS_NA_1", "Test command", Group::SystemControl, Mark::NotIn104, Mark::NotIn104, "6 7 45 46", "", "Station spiegelt ihn trotzdem; Leitstelle nur roh"},
++    {105, "C_RP_NA_1", "Reset process command", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 45 46", "6 7 44 45 46", "Ausführung durch die Anwendung (on_command)"},
++    {106, "C_CD_NA_1", "Delay acquisition command", Group::SystemControl, Mark::NotIn104, Mark::NotIn104, "6 7 45 46", "", "Station antwortet negativ"},
++    {107, "C_TS_TA_1", "Test command with time tag CP56Time2a", Group::SystemControl, Mark::Yes, Mark::Yes, "6 7 45 46", "6 7 44 45 46", "maximale Befehlsverzögerung prüfbar; Station spiegelt (Ursache 7)"},
++
++    // Parameter in control direction.
++    {110, "P_ME_NA_1", "Parameter of measured value, normalized value", Group::Parameter, Mark::No, Mark::Raw, "", "", "Station antwortet negativ (Ursache 7, P/N = 1)"},
++    {111, "P_ME_NB_1", "Parameter of measured value, scaled value", Group::Parameter, Mark::No, Mark::Raw, "", "", "Station antwortet negativ (Ursache 7, P/N = 1)"},
++    {112, "P_ME_NC_1", "Parameter of measured value, short floating point value", Group::Parameter, Mark::No, Mark::Raw, "", "", "Station antwortet negativ (Ursache 7, P/N = 1)"},
++    {113, "P_AC_NA_1", "Parameter activation", Group::Parameter, Mark::No, Mark::Raw, "", "", "Station antwortet negativ (Ursache 7, P/N = 1)"},
++
++    // File transfer (not in the codec's type table).
++    {120, "F_FR_NA_1", "File ready", Group::File, Mark::No, Mark::No, "", "", "Station antwortet mit Ursache 44"},
++    {121, "F_SR_NA_1", "Section ready", Group::File, Mark::No, Mark::No, "", "", "Station antwortet mit Ursache 44"},
++    {122, "F_SC_NA_1", "Call directory, select file, call file, call section", Group::File, Mark::No, Mark::No, "", "", "Station antwortet mit Ursache 44"},
++    {123, "F_LS_NA_1", "Last section, last segment", Group::File, Mark::No, Mark::No, "", "", "Station antwortet mit Ursache 44"},
++    {124, "F_AF_NA_1", "Ack file, ack section", Group::File, Mark::No, Mark::No, "", "", "Station antwortet mit Ursache 44"},
++    {125, "F_SG_NA_1", "Segment", Group::File, Mark::No, Mark::No, "", "", "Station antwortet mit Ursache 44"},
++    {126, "F_DR_TA_1", "Directory", Group::File, Mark::No, Mark::No, "", "", "Station antwortet mit Ursache 44"},
++    {127, "F_SC_NB_1", "QueryLog – Request archive file", Group::File, Mark::No, Mark::No, "", "", "Station antwortet mit Ursache 44"},
++};
++
++/** @brief One item of the basic application functions (9.6). */
++struct FunctionRow {
++    const char* group; ///< Heading in the checklist, e.g. "Command transmission".
++    const char* item;
++    Mark station;
++    Mark master;
++    const char* remark;
++};
++
++inline constexpr FunctionRow kFunctions[] = {
++    {"Station initialization", "Remote initialization", Mark::Partial, Mark::Yes, "Station: C_RP_NA_1 an die Anwendung (on_command); Typ 70 danach sendet die Anwendung (iec104_server_send, Ursache 4); automatisch nur beim ersten STARTDT je Verbindung"},
++    {"Cyclic data transmission", "Cyclic data transmission", Mark::Yes, Mark::Yes, "Station: Anwendung sendet mit Ursache 1 (iec104_server_send), nicht gepuffert"},
++    {"Read procedure", "Read procedure", Mark::Yes, Mark::Yes, "Antwort aus dem Prozessabbild; Leitstelle: iec104_client_read()"},
++    {"Spontaneous transmission", "Spontaneous transmission", Mark::Yes, Mark::Yes, "iec104_server_update(); gepuffert je Redundanzgruppe bis zur Quittung"},
++    {"Double transmission", "Single-point information M_SP_NA_1, M_SP_TA_1, M_SP_TB_1 and M_PS_NA_1", Mark::Yes, Mark::Yes, "Station: Anwendung sendet beide Typen"},
++    {"Double transmission", "Double-point information M_DP_NA_1, M_DP_TA_1 and M_DP_TB_1", Mark::Yes, Mark::Yes, "Station: Anwendung sendet beide Typen"},
++    {"Double transmission", "Step position information M_ST_NA_1, M_ST_TA_1 and M_ST_TB_1", Mark::Yes, Mark::Yes, "Station: Anwendung sendet beide Typen"},
++    {"Double transmission", "Bitstring of 32 bit M_BO_NA_1, M_BO_TA_1 and M_BO_TB_1", Mark::Yes, Mark::Yes, "Station: Anwendung sendet beide Typen"},
++    {"Double transmission", "Measured value, normalized value M_ME_NA_1, M_ME_TA_1, M_ME_ND_1 and M_ME_TD_1", Mark::Yes, Mark::Yes, "Station: Anwendung sendet beide Typen"},
++    {"Double transmission", "Measured value, scaled value M_ME_NB_1, M_ME_TB_1 and M_ME_TE_1", Mark::Yes, Mark::Yes, "Station: Anwendung sendet beide Typen"},
++    {"Double transmission", "Measured value, short floating point number M_ME_NC_1, M_ME_TC_1 and M_ME_TF_1", Mark::Yes, Mark::Yes, "Station: Anwendung sendet beide Typen"},
++    {"Station interrogation", "global", Mark::Yes, Mark::Yes, "Station antwortet selbst aus dem Prozessabbild"},
++    {"Station interrogation", "group 1 … group 16", Mark::Yes, Mark::Yes, "Gruppenmaske je Punkt (iec104_server_add_point)"},
++    {"Clock synchronization", "Clock synchronization", Mark::Yes, Mark::Yes, "Station: Uhr stellt die Anwendung (on_command)"},
++    {"Clock synchronization", "Day of week used", Mark::Yes, Mark::Yes, "iec104_time.day_of_week, 0 = nicht verwendet"},
++    {"Clock synchronization", "RES1, GEN (time tag substituted/ not substituted) used", Mark::Partial, Mark::Partial, "nur in rohen ASDUs und gespiegelten Bestätigungen erhalten; über iec104_time immer 0"},
++    {"Clock synchronization", "SU-bit (summertime) used", Mark::Yes, Mark::Yes, "iec104_time.summer_time"},
++    {"Command transmission", "Direct command transmission", Mark::Yes, Mark::Yes, "Station: IOA-Prüfung (Ursache 47) nur mit Befehlspunkten"},
++    {"Command transmission", "Direct set point command transmission", Mark::Yes, Mark::Yes, ""},
++    {"Command transmission", "Select and execute command", Mark::Yes, Mark::Yes, "Station: Befehlspunkt mit Auswahl-Timeout; Abbruch (8) nur mit Befehlspunkten wirksam, sonst positive Bestätigung ohne Anwendung"},
++    {"Command transmission", "Select and execute set point command", Mark::Yes, Mark::Yes, "Station: Befehlspunkt mit Auswahl-Timeout"},
++    {"Command transmission", "C_SE ACTTERM used", Mark::Yes, Mark::Yes, "abschaltbar (command_termination, expect_termination)"},
++    {"Command transmission", "No additional definition", Mark::Yes, Mark::Yes, "Qualifier (QU) wird durchgereicht"},
++    {"Command transmission", "Short-pulse duration", Mark::Partial, Mark::Yes, "Station: Dauer bestimmt die Anwendung"},
++    {"Command transmission", "Long-pulse duration", Mark::Partial, Mark::Yes, "Station: Dauer bestimmt die Anwendung"},
++    {"Command transmission", "Persistent output", Mark::Partial, Mark::Yes, "Station: Ausgabe bestimmt die Anwendung"},
++    {"Command transmission", "Supervision of maximum delay in command direction", Mark::Yes, Mark::No, "Station: max_command_delay_ms; Leitstelle: Zeitmarke setzt die Anwendung (iec104_object.time)"},
++    {"Transmission of integrated totals", "Mode A: Local freeze with spontaneous transmission", Mark::Partial, Mark::Yes, "Station: Anwendung friert ein und sendet spontan"},
++    {"Transmission of integrated totals", "Mode B: Local freeze with counter interrogation", Mark::Partial, Mark::Yes, "Station: Anwendung friert ein und legt den Wert mit iec104_server_add_point() ab (iec104_server_update() sendet spontan); Zählerabfrage antwortet aus dem Prozessabbild"},
++    {"Transmission of integrated totals", "Mode C: Freeze and transmit by counter-interrogation commands", Mark::Partial, Mark::Yes, "Station bestätigt FRZ; Einfrieren durch die Anwendung (on_asdu)"},
++    {"Transmission of integrated totals", "Mode D: Freeze by counter-interrogation command, frozen values reported spontaneously", Mark::Partial, Mark::Yes, "Station bestätigt FRZ; Einfrieren und Senden durch die Anwendung"},
++    {"Transmission of integrated totals", "Counter read", Mark::Yes, Mark::Yes, ""},
++    {"Transmission of integrated totals", "Counter freeze without reset", Mark::Partial, Mark::Yes, "Station: siehe Mode C"},
++    {"Transmission of integrated totals", "Counter freeze with reset", Mark::Partial, Mark::Yes, "Station: siehe Mode C"},
++    {"Transmission of integrated totals", "Counter reset", Mark::Partial, Mark::Yes, "Station: siehe Mode C"},
++    {"Transmission of integrated totals", "General request counter", Mark::Yes, Mark::Yes, ""},
++    {"Transmission of integrated totals", "Request counter group 1 … group 4", Mark::Yes, Mark::Yes, "Bits 0..3 der Gruppenmaske"},
++    {"Parameter loading", "Threshold value", Mark::No, Mark::No, "Station antwortet negativ"},
++    {"Parameter loading", "Smoothing factor", Mark::No, Mark::No, "Station antwortet negativ"},
++    {"Parameter loading", "Low limit for transmission of measured values", Mark::No, Mark::No, "Station antwortet negativ"},
++    {"Parameter loading", "High limit for transmission of measured values", Mark::No, Mark::No, "Station antwortet negativ"},
++    {"Parameter activation", "Act/deact of persistent cyclic or periodic transmission of the addressed object", Mark::No, Mark::No, "Station antwortet negativ"},
++    {"Test procedure", "Test procedure", Mark::Yes, Mark::Yes, "C_TS_TA_1 (107), TESTFR auf der Verbindungsebene"},
++    {"File transfer", "File transfer in monitor direction: Transparent file", Mark::No, Mark::No, ""},
++    {"File transfer", "File transfer in monitor direction: Transmission of disturbance data of protection equipment", Mark::No, Mark::No, ""},
++    {"File transfer", "File transfer in monitor direction: Transmission of sequences of events", Mark::No, Mark::No, ""},
++    {"File transfer", "File transfer in monitor direction: Transmission of sequences of recorded analogue values", Mark::No, Mark::No, ""},
++    {"File transfer", "File transfer in control direction: Transparent file", Mark::No, Mark::No, ""},
++    {"Background scan", "Background scan", Mark::Yes, Mark::Yes, "Station: Anwendung sendet mit Ursache 2, nicht gepuffert"},
++    {"Acquisition of transmission delay", "Acquisition of transmission delay", Mark::NotIn104, Mark::NotIn104, "C_CD_NA_1 (106)"},
++};
++// clang-format on
++
++} // namespace interop
+diff --git a/tools/interop_list/interop_list.cpp b/tools/interop_list/interop_list.cpp
+new file mode 100644
+index 0000000..19a35c3
+--- /dev/null
++++ b/tools/interop_list/interop_list.cpp
+@@ -0,0 +1,479 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file interop_list.cpp
++ * @brief iec104_interop_list: prints the library's interoperability list.
++ *
++ *   iec104_interop_list [--role station|master|both] [--config FILE] [--format md|csv]
++ *
++ * The list follows the checklist of clause 9 (interop_data.hpp). Parameters
++ * (field lengths, timers, k, w, port, redundancy groups, TLS) come from the
++ * configuration file, else from the defaults. Markdown is for reading and
++ * handing over; CSV (one row per item, ';' separated) is for comparing with
++ * the list of a peer in a spreadsheet.
++ */
++#include "interop_data.hpp"
++
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <iec104/iec104.h>
++#include <set>
++#include <string>
++#include <vector>
++
++namespace {
++
++using interop::Group;
++using interop::Mark;
++
++struct Options {
++    bool station{true};
++    bool master{true};
++    bool csv{false};
++    std::string config_file;
++};
++
++const char* mark_text(Mark m) {
++    switch (m) {
++    case Mark::Yes:
++        return "X";
++    case Mark::Raw:
++        return "X roh";
++    case Mark::Partial:
++        return "teilw.";
++    case Mark::NotIn104:
++        return "–";
++    case Mark::No:
++        break;
++    }
++    return "";
++}
++
++/** @brief Parses "3 5 20-36" into a set of causes. */
++std::set<int> causes(const char* spec) {
++    std::set<int> out;
++    const std::string s = spec;
++    std::size_t pos = 0;
++    while (pos < s.size()) {
++        const std::size_t end = s.find(' ', pos);
++        const std::string part =
++            s.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
++        pos = end == std::string::npos ? s.size() : end + 1U;
++        if (part.empty()) {
++            continue;
++        }
++        const std::size_t dash = part.find('-');
++        const int from = std::atoi(part.c_str());
++        const int to = dash == std::string::npos ? from : std::atoi(part.c_str() + dash + 1U);
++        for (int c = from; c <= to; ++c) {
++            out.insert(c);
++        }
++    }
++    return out;
++}
++
++/** @brief Columns of the type/cause matrix; 20 stands for 20..36, 37 for 37..41. */
++struct CauseColumn {
++    int first;
++    int last;
++    const char* label;
++};
++constexpr CauseColumn kColumns[] = {
++    {1, 1, "1"},    {2, 2, "2"},    {3, 3, "3"},    {4, 4, "4"},       {5, 5, "5"},
++    {6, 6, "6"},    {7, 7, "7"},    {8, 8, "8"},    {9, 9, "9"},       {10, 10, "10"},
++    {11, 11, "11"}, {12, 12, "12"}, {13, 13, "13"}, {20, 36, "20–36"}, {37, 41, "37–41"},
++    {44, 44, "44"}, {45, 45, "45"}, {46, 46, "46"}, {47, 47, "47"},
++};
++
++bool column_used(const std::set<int>& used, const CauseColumn& c) {
++    for (int x = c.first; x <= c.last; ++x) {
++        if (used.count(x) != 0U) {
++            return true;
++        }
++    }
++    return false;
++}
++
++const char* group_title(Group g) {
++    switch (g) {
++    case Group::Monitor:
++        return "Process information in monitor direction";
++    case Group::Control:
++        return "Process information in control direction";
++    case Group::SystemMonitor:
++        return "System information in monitor direction";
++    case Group::SystemControl:
++        return "System information in control direction";
++    case Group::Parameter:
++        return "Parameter in control direction";
++    case Group::File:
++        return "File transfer";
++    }
++    return "";
++}
++
++/** @brief Parameters of the list, from the configuration. */
++struct Parameters {
++    iec104_config config{};
++    bool tls{false};
++};
++
++// --- Output ----------------------------------------------------------------------
++
++class Writer {
++  public:
++    explicit Writer(const Options& o) : o_(o) {}
++
++    void heading(int level, const std::string& text) const {
++        if (!o_.csv) {
++            std::printf("\n%s %s\n\n", std::string(static_cast<std::size_t>(level), '#').c_str(),
++                        text.c_str());
++        }
++    }
++    void text(const std::string& t) const {
++        if (!o_.csv) {
++            std::printf("%s\n", t.c_str());
++        }
++    }
++    /** @brief Header of an item table with the role columns. */
++    void item_table(const char* first, const char* second) const {
++        if (o_.csv) {
++            return;
++        }
++        std::printf("| %s | %s |%s%s Bemerkung |\n| --- | --- |%s%s --- |\n", first, second,
++                    o_.station ? " Station |" : "", o_.master ? " Leitstelle |" : "",
++                    o_.station ? " --- |" : "", o_.master ? " --- |" : "");
++    }
++    /** @brief One item: section (CSV only), two text columns, marks, remark. */
++    void item(const std::string& section, const std::string& a, const std::string& b, Mark station,
++              Mark master, const std::string& remark) const {
++        if (o_.csv) {
++            std::printf("%s;%s;%s;%s;%s;%s\n", csv(section).c_str(), csv(a).c_str(), csv(b).c_str(),
++                        o_.station ? mark_text(station) : "", o_.master ? mark_text(master) : "",
++                        csv(remark).c_str());
++            return;
++        }
++        std::printf("| %s | %s |", a.c_str(), b.c_str());
++        if (o_.station) {
++            std::printf(" %s |", mark_text(station));
++        }
++        if (o_.master) {
++            std::printf(" %s |", mark_text(master));
++        }
++        std::printf(" %s |\n", remark.c_str());
++    }
++    /**
++     * @brief A value row (parameters). Markdown: own table with standard and
++     *        selected value. CSV: the selected value stands in the column of
++     *        each listed role, the standard value in the remark.
++     */
++    void value(const std::string& section, const std::string& name, const std::string& standard,
++               const std::string& selected, const std::string& remark) const {
++        if (o_.csv) {
++            const std::string note = "Normwert " + standard + (remark.empty() ? "" : ", " + remark);
++            std::printf("%s;%s;;%s;%s;%s\n", csv(section).c_str(), csv(name).c_str(),
++                        o_.station ? csv(selected).c_str() : "",
++                        o_.master ? csv(selected).c_str() : "", csv(note).c_str());
++            return;
++        }
++        std::printf("| %s | %s | %s | %s |\n", name.c_str(), standard.c_str(), selected.c_str(),
++                    remark.c_str());
++    }
++
++  private:
++    static std::string csv(const std::string& s) {
++        std::string out;
++        for (const char c : s) {
++            out += c == ';' ? ',' : c;
++        }
++        return out;
++    }
++    const Options& o_;
++};
++
++/** @brief Milliseconds as seconds, exact: "15 s", "15.25 s", "172799.5 s". */
++std::string seconds(std::uint32_t ms) {
++    std::string text = std::to_string(ms / 1000U);
++    if (ms % 1000U != 0U) {
++        char fraction[8];
++        std::snprintf(fraction, sizeof fraction, "%03u", ms % 1000U);
++        std::string f = fraction;
++        while (f.back() == '0') {
++            f.pop_back();
++        }
++        text += "." + f;
++    }
++    return text + " s";
++}
++
++std::string octets(unsigned n) {
++    return n == 1U ? "1 Oktett" : std::to_string(n) + " Oktette";
++}
++
++void print_header(const Writer& w, const Options& o, const Parameters& p) {
++    if (o.csv) {
++        // UTF-8 with byte order mark, so that spreadsheets show umlauts and dashes.
++        std::printf("\xEF\xBB\xBF"
++                    "Abschnitt;Punkt;Bezeichnung;Station;Leitstelle;Bemerkung\n");
++        return;
++    }
++    std::printf("# Interoperabilitätsliste (IEC 60870-5-104, Abschnitt 9)\n\n");
++    std::printf("IEC 60870-5-104 Library %s · Rolle: %s · Parameter: %s\n", iec104_version_string(),
++                o.station && o.master ? "Station und Leitstelle"
++                : o.station           ? "Station (gesteuerte Station, Server)"
++                                      : "Leitstelle (steuernde Station, Client)",
++                o.config_file.empty() ? "Standardwerte" : o.config_file.c_str());
++    w.text("");
++    w.text("Erzeugt mit `iec104_interop_list`. Gliederung und Bezeichnungen nach öffentlichen "
++           "Wiedergaben der Checkliste (docs/02_Technik_und_Quellen.md, [ORA]); die Angaben "
++           "stammen aus dem Code der Library. Eigene Parameter: `iec104_interop_list --config "
++           "datei.conf`, zum Abgleich mit der Liste einer Gegenstelle `--format csv`.");
++    w.text("");
++    w.text("| Zeichen | Bedeutung |\n| --- | --- |\n"
++           "| X | unterstützt, von der Library selbst oder über ihre Schnittstelle |\n"
++           "| X roh | nur als rohe ASDU (`on_asdu`, `*_send_asdu`) |\n"
++           "| teilw. | teilweise; die Bemerkung sagt, was die Anwendung tun muss |\n"
++           "| – | in IEC 104 nicht vorgesehen (schwarzes Feld der Checkliste) |\n"
++           "| (leer) | nicht unterstützt |");
++    (void)p;
++}
++
++void print_system(const Writer& w, const Options& o) {
++    w.heading(2, "9.1 System or device");
++    w.item_table("Punkt", "Bezeichnung");
++    w.item("9.1", "Controlling station definition", "Master, Client", Mark::No,
++           o.master ? Mark::Yes : Mark::No, "iec104_client_*");
++    w.item("9.1", "Controlled station definition", "Slave, Server",
++           o.station ? Mark::Yes : Mark::No, Mark::No, "iec104_server_*");
++    w.heading(2, "9.2 Network configuration, 9.3 Physical layer, 9.4 Link layer");
++    w.text("Entfallen in IEC 104 (schwarze Felder): Übertragung über TCP/IP.");
++}
++
++void print_application_layer(const Writer& w, const Parameters& p) {
++    const iec104_link_config& l = p.config.link;
++    w.heading(2, "9.5 Application layer");
++    w.item_table("Punkt", "Wert");
++    w.item("9.5", "Transmission mode for application data",
++           "Mode 1 (least significant octet first)", Mark::Yes, Mark::Yes, "");
++    w.item("9.5", "Common address of ASDU", octets(l.ca_length), Mark::Yes, Mark::Yes,
++           l.ca_length == 2U ? "Norm: zwei Oktette" : "abweichend von der Norm (ca_length)");
++    w.item("9.5", "Information object address", octets(l.ioa_length) + ", unstrukturiert",
++           Mark::Yes, Mark::Yes,
++           l.ioa_length == 3U ? "Norm: drei Oktette" : "abweichend von der Norm (ioa_length)");
++    w.item("9.5", "Cause of transmission",
++           octets(l.cot_length) + (l.cot_length == 2U
++                                       ? " mit Herkunftsadresse " + std::to_string(l.originator)
++                                       : std::string()),
++           Mark::Yes, Mark::Yes,
++           l.cot_length == 2U ? "Norm: zwei Oktette" : "abweichend von der Norm");
++    w.item("9.5", "Length of APDU",
++           "max. " + std::to_string(4U + static_cast<unsigned>(l.max_asdu_length)) +
++               " Oktette (ASDU " + std::to_string(l.max_asdu_length) + ")",
++           Mark::Yes, Mark::Yes, "Norm: 253; empfangen werden immer bis 253 (max_asdu_length)");
++}
++
++void print_types(const Writer& w, const Options& o) {
++    Group current = Group::File;
++    bool first = true;
++    for (const interop::TypeRow& t : interop::kTypes) {
++        if (first || t.group != current) {
++            current = t.group;
++            first = false;
++            w.heading(3, std::string("9.5 ") + group_title(t.group));
++            w.item_table("Typ", "Bezeichnung");
++        }
++        w.item(std::string("9.5 ") + group_title(t.group),
++               "<" + std::to_string(t.id) + "> " + t.name, t.description, t.station, t.master,
++               t.remark);
++    }
++    (void)o;
++}
++
++void print_matrix(const Writer& w, const Options& o, bool station) {
++    const char* who = station ? "Station" : "Leitstelle";
++    w.heading(3, std::string("9.5 Type identification and cause of transmission assignments (") +
++                     who + ")");
++    if (!o.csv) {
++        std::printf("Ursachen, die die %s sendet oder auswertet.\n\n| Typ |", who);
++        for (const CauseColumn& c : kColumns) {
++            std::printf(" %s |", c.label);
++        }
++        std::printf("\n| --- |");
++        for (std::size_t i = 0; i < sizeof kColumns / sizeof kColumns[0]; ++i) {
++            std::printf(" --- |");
++        }
++        std::printf("\n");
++    }
++    for (const interop::TypeRow& t : interop::kTypes) {
++        const std::set<int> used = causes(station ? t.station_causes : t.master_causes);
++        if (used.empty()) {
++            continue;
++        }
++        if (o.csv) {
++            std::string list;
++            for (const CauseColumn& c : kColumns) {
++                if (column_used(used, c)) {
++                    list += (list.empty() ? "" : " ") + std::string(c.label);
++                }
++            }
++            std::printf("9.5 Cause (%s);<%u> %s;%s;%s;%s;\n", who, t.id, t.name, list.c_str(),
++                        station ? "X" : "", station ? "" : "X");
++            continue;
++        }
++        std::printf("| <%u> %s |", t.id, t.name);
++        for (const CauseColumn& c : kColumns) {
++            std::printf(" %s |", column_used(used, c) ? "X" : "");
++        }
++        std::printf("\n");
++    }
++}
++
++void print_functions(const Writer& w) {
++    const char* group = "";
++    for (const interop::FunctionRow& f : interop::kFunctions) {
++        if (std::strcmp(group, f.group) != 0) {
++            if (*group == '\0') {
++                w.heading(2, "9.6 Basic application functions");
++                w.item_table("Funktion", "Punkt");
++            }
++            group = f.group;
++        }
++        w.item(std::string("9.6 ") + f.group, f.group, f.item, f.station, f.master, f.remark);
++    }
++}
++
++void print_parameters(const Writer& w, const Options& o, const Parameters& p) {
++    const iec104_link_config& l = p.config.link;
++    w.heading(2, "9.6 Time-outs, k, w, port, redundancy, RFC 2200");
++    if (!o.csv) {
++        std::printf("| Parameter | Normwert | gewählt | Bemerkung |\n| --- | --- | --- | --- |\n");
++    }
++    const std::string s = "9.6 Parameters";
++    w.value(s, "t0", "30 s", seconds(l.t0_ms),
++            "Verbindungsaufbau; mit TLS einschließlich Handshake");
++    w.value(s, "t1", "15 s", seconds(l.t1_ms), "Quittung gesendeter I- und U-Rahmen (act)");
++    w.value(s, "t2", "10 s", seconds(l.t2_ms), "spätestens eigene Quittung; t2 < t1");
++    w.value(s, "t3", "20 s", l.t3_ms == 0U ? "aus" : seconds(l.t3_ms),
++            "Testrahmen nach Ruhe; Bereich 1 s … 48 h, 0 nur tolerant");
++    w.value(s, "k", "12", std::to_string(l.k), "Bereich 1 … 32767");
++    w.value(s, "w", "8", std::to_string(l.w), "Bereich 1 … 32767; w ≤ 2/3 k empfohlen");
++    w.value(s, "Portnumber", "2404", std::to_string(p.config.port),
++            p.tls ? "mit TLS üblich 19998 (IANA iec-104-sec)" : "frei wählbar");
++    w.value(s, "Redundant connections (Anzahl Gruppen)", "–",
++            p.config.group_count == 0U ? "keine (jede Verbindung eigene Gruppe)"
++                                       : std::to_string(p.config.group_count),
++            "Verbindungen je Gruppe unbegrenzt; eine aktiv; Puffer " +
++                std::to_string(p.config.server.event_buffer_size) + " Ereignisse");
++    w.value(s, "RFC 2200 suite", "Ethernet 802.3", "TCP/IP des Betriebssystems", "IPv4 und IPv6");
++    w.value(s, "Maximum allowable delay of commands", "–",
++            p.config.server.max_command_delay_ms == 0U
++                ? "aus"
++                : seconds(p.config.server.max_command_delay_ms),
++            "nur Station; Befehle 58–64 und 107");
++
++    w.heading(2, "Ergänzung: Sicherheit (IEC 62351-3)");
++    if (!o.csv) {
++        std::printf("| Parameter | Normwert | gewählt | Bemerkung |\n| --- | --- | --- | --- |\n");
++    }
++    const std::string t = "Ergänzung TLS";
++    w.value(t, "TLS", "–", p.tls ? "an" : "aus", "OpenSSL 3; TLS 1.2 und 1.3");
++    if (p.tls) {
++        const iec104_tls_config& c = p.config.tls;
++        w.value(t, "Versionen", "1.2 … 1.3",
++                std::string(c.min_version == IEC104_TLS_1_3 ? "1.3" : "1.2") + " … " +
++                    (c.max_version == IEC104_TLS_1_2 ? "1.2" : "1.3"),
++                "");
++        w.value(t, "Gegenseitige Authentifizierung", "ja", c.verify_peer != 0 ? "ja" : "nein",
++                "X.509");
++        w.value(t, "Sperrliste (CRL)", "–", c.crl_file[0] != '\0' ? "ja" : "nein", "");
++        w.value(t, "Renegotiation (TLS 1.2)", "ja", c.renegotiation != 0 ? "ja" : "nein",
++                "nur RFC 5746");
++        w.value(t, "Schlüsselerneuerung", "–",
++                c.renewal_interval_s == 0U ? "aus" : std::to_string(c.renewal_interval_s) + " s",
++                "Key Update (1.3) bzw. Renegotiation (1.2)");
++    }
++}
++
++void usage() {
++    std::printf("iec104_interop_list - interoperability list (IEC 60870-5-104, clause 9)\n\n"
++                "usage: iec104_interop_list [--role station|master|both] [--config FILE]\n"
++                "                           [--format md|csv]\n\n"
++                "  --role    station = controlled station (server), master = controlling\n"
++                "            station (client), both (default)\n"
++                "  --config  parameters from a configuration file (key = value)\n"
++                "  --format  md (default, Markdown) or csv (';' separated, for spreadsheets)\n");
++}
++
++} // namespace
++
++int main(int argc, char** argv) {
++    Options o;
++    for (int i = 1; i < argc; ++i) {
++        const std::string arg = argv[i];
++        const bool takes_value = arg == "--role" || arg == "--config" || arg == "--format";
++        if (takes_value && (i + 1 >= argc || argv[i + 1][0] == '\0')) {
++            std::fprintf(stderr, "missing value for %s (see --help)\n", arg.c_str());
++            return 2;
++        }
++        const char* value = takes_value ? argv[i + 1] : "";
++        if (arg == "--role") {
++            const std::string r = value;
++            ++i;
++            if (r != "station" && r != "master" && r != "both") {
++                std::fprintf(stderr, "invalid --role: %s\n", r.c_str());
++                return 2;
++            }
++            o.station = r != "master";
++            o.master = r != "station";
++        } else if (arg == "--config") {
++            o.config_file = value;
++            ++i;
++        } else if (arg == "--format") {
++            const std::string f = value;
++            ++i;
++            if (f != "md" && f != "csv") {
++                std::fprintf(stderr, "invalid --format: %s\n", f.c_str());
++                return 2;
++            }
++            o.csv = f == "csv";
++        } else if (arg == "--help" || arg == "-h") {
++            usage();
++            return 0;
++        } else {
++            std::fprintf(stderr, "unknown option %s (see --help)\n", arg.c_str());
++            return 2;
++        }
++    }
++    Parameters p;
++    iec104_config_init(&p.config);
++    if (!o.config_file.empty()) {
++        int line = 0;
++        const iec104_status st = iec104_config_load(o.config_file.c_str(), &p.config, &line);
++        if (st != IEC104_OK) {
++            std::fprintf(stderr, "%s: %s (line %d)\n", o.config_file.c_str(),
++                         iec104_status_string(st), line);
++            return 2;
++        }
++    }
++    p.tls = p.config.use_tls != 0;
++
++    const Writer w(o);
++    print_header(w, o, p);
++    print_system(w, o);
++    print_application_layer(w, p);
++    print_types(w, o);
++    if (o.station) {
++        print_matrix(w, o, true);
++    }
++    if (o.master) {
++        print_matrix(w, o, false);
++    }
++    print_functions(w);
++    print_parameters(w, o, p);
++    return 0;
++}
+diff --git a/tools/wsl_ausprobieren.sh b/tools/wsl_ausprobieren.sh
+new file mode 100755
+index 0000000..a9463e5
+--- /dev/null
++++ b/tools/wsl_ausprobieren.sh
+@@ -0,0 +1,135 @@
++#!/usr/bin/env bash
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++# wsl_ausprobieren.sh – richtet die Library in einem Linux-Ordner zum Ausprobieren ein
++# (gedacht für WSL, läuft auf jedem Linux).
++#
++# Aufruf, z. B. aus dem Windows-Checkout heraus:
++#   bash /mnt/c/<pfad>/<repo>/tools/wsl_ausprobieren.sh [ZIEL] [--ohne-bauen]
++#
++#   ZIEL          Arbeitsordner, Default ~/src/iee104
++#   --ohne-bauen  nur die fertig gebaute Library prüfen, nicht aus den Quellen bauen
++#
++# Schritte:
++#   1. Repo nach ZIEL holen (git clone) bzw. aktualisieren (git pull);
++#      dort liegen die Dateien auf dem Linux-Dateisystem, mit LF und schnell
++#   2. Voraussetzungen prüfen; fehlende Pakete als apt-Befehl ausgeben
++#   3. fertig gebaute Library aus dist/: pruefen.sh und beispiel.sh
++#   4. aus den Quellen bauen und alle Tests (ctest) laufen lassen
++#   5. ausgeben, wie Test-GUI und Selbsttest starten
++#
++# Das Skript ändert nichts am System; Pakete installiert es nicht selbst.
++
++set -u
++
++SRC="$(cd "$(dirname "$0")/.." && pwd)"
++ZIEL="$HOME/src/iee104"
++BAUEN=1
++for arg in "$@"; do
++    case "$arg" in
++        --ohne-bauen) BAUEN=0 ;;
++        -h|--help) sed -n '6,22p' "$0"; exit 0 ;;
++        *) ZIEL="$arg" ;;
++    esac
++done
++
++step() { printf '\n== %s\n' "$1"; }
++FEHLER=0
++
++# --- 1. Repo holen -----------------------------------------------------------------
++step "1. Repo nach $ZIEL"
++if [ "$SRC" = "$(cd "$ZIEL" 2>/dev/null && pwd)" ]; then
++    echo "läuft bereits im Arbeitsordner"
++elif [ -d "$ZIEL/.git" ]; then
++    git -C "$ZIEL" -c safe.directory='*' pull --ff-only || { echo "git pull fehlgeschlagen"; exit 1; }
++elif [ -d "$SRC/.git" ]; then
++    mkdir -p "$(dirname "$ZIEL")"
++    # Ein Checkout unter /mnt/c gehört aus Sicht von Git einem anderen Nutzer.
++    git -c safe.directory='*' clone -q "$SRC" "$ZIEL" || { echo "git clone fehlgeschlagen"; exit 1; }
++    echo "geholt aus $SRC"
++else
++    mkdir -p "$ZIEL"
++    cp -r "$SRC"/. "$ZIEL"/
++    echo "kopiert aus $SRC (kein Git-Repo)"
++fi
++cd "$ZIEL" || exit 1
++echo "Stand: $(sed -n 's/^Stand: \(.*\)/\1/p' README.md | head -1)"
++
++# --- 2. Voraussetzungen -----------------------------------------------------------------
++step "2. Voraussetzungen"
++APT=()
++have() { command -v "$1" > /dev/null 2>&1; }
++check() { # Name, vorhanden (0/1), apt-Paket
++    if [ "$2" = 1 ]; then printf '  %-30s ok\n' "$1"; else printf '  %-30s fehlt\n' "$1"; APT+=("$3"); fi
++}
++check "Julia (Test-GUI, Beispiele)" "$(have julia && echo 1 || echo 0)" ""
++check "cmake" "$(have cmake && echo 1 || echo 0)" cmake
++check "ninja" "$(have ninja && echo 1 || echo 0)" ninja-build
++check "C/C++-Compiler" "$( (have g++ && have gcc) && echo 1 || echo 0)" g++
++check "OpenSSL-Header" "$([ -f /usr/include/openssl/ssl.h ] && echo 1 || echo 0)" libssl-dev
++check "openssl (Testzertifikate)" "$(have openssl && echo 1 || echo 0)" openssl
++check "GoogleTest" "$( ([ -f /usr/include/gtest/gtest.h ] || [ -f /usr/local/include/gtest/gtest.h ]) && echo 1 || echo 0)" libgtest-dev
++check "unzip" "$(have unzip && echo 1 || echo 0)" unzip
++PAKETE=()
++for p in "${APT[@]}"; do [ -n "$p" ] && PAKETE+=("$p"); done
++if [ "${#PAKETE[@]}" -gt 0 ]; then
++    echo "  fehlende Pakete (Ubuntu/Debian): sudo apt install ${PAKETE[*]}"
++fi
++have julia || echo "  Julia: curl -fsSL https://install.julialang.org | sh"
++
++# --- 3. Fertig gebaute Library ----------------------------------------------------------
++step "3. Fertig gebaute Library"
++PAKET="$(ls -d dist/iec104-*-linux-x86_64 2>/dev/null | sort -V | tail -1)"
++if [ -z "$PAKET" ]; then
++    ZIP="$(ls dist/iec104-*-linux-x86_64.zip 2>/dev/null | sort -V | tail -1)"
++    if [ -n "$ZIP" ] && have unzip; then
++        unzip -q -o "$ZIP" -d dist
++        PAKET="${ZIP%.zip}"
++    fi
++fi
++if [ -z "$PAKET" ] || [ ! -f "$PAKET/pruefen.sh" ]; then
++    echo "  keine fertig gebaute Library mit Prüfskripten in dist/ gefunden"
++else
++    echo "  $PAKET"
++    bash "$PAKET/pruefen.sh" || FEHLER=1
++    if have julia; then
++        bash "$PAKET/beispiel.sh" 2470 || FEHLER=1
++    fi
++fi
++
++# --- 4. Aus den Quellen bauen -----------------------------------------------------------
++step "4. Aus den Quellen bauen und testen"
++if [ "$BAUEN" = 0 ]; then
++    echo "  übersprungen (--ohne-bauen)"
++elif [ "${#PAKETE[@]}" -gt 0 ]; then
++    echo "  übersprungen: erst die fehlenden Pakete installieren (siehe 2.)"
++else
++    if cmake --preset debug > build-debug.log 2>&1 && cmake --build --preset debug >> build-debug.log 2>&1; then
++        echo "  gebaut: build/debug"
++        if ctest --preset debug --output-on-failure > ctest.log 2>&1; then
++            echo "  Tests: $(grep -E 'tests passed' ctest.log)"
++        else
++            FEHLER=1
++            grep -E 'tests passed|\(Failed\)|\*\*\*' ctest.log | head -20
++            echo "  Einzelheiten: $ZIEL/ctest.log"
++        fi
++    else
++        FEHLER=1
++        tail -20 build-debug.log
++        echo "  Bau fehlgeschlagen, Einzelheiten: $ZIEL/build-debug.log"
++    fi
++fi
++
++# --- 5. Wie weiter ------------------------------------------------------------------------
++step "5. Ausprobieren"
++[ -n "$PAKET" ] && echo "  Test-GUI:     bash $ZIEL/$PAKET/gui.sh     dann http://localhost:8080 im Browser"
++if [ -x build/debug/iec104_selftest_server ]; then
++    echo "  Selbsttest:   cd $ZIEL && tools/selftest/run_selftest.sh build/debug/iec104_selftest_server build/debug/iec104_selftest_client"
++    echo "  Liste:        $ZIEL/build/debug/iec104_interop_list --role station | less"
++fi
++echo "  Anleitungen:  $ZIEL/docs/ (06 Anleitung, 07 Julia, 04 Selbsttest)"
++echo
++[ "$FEHLER" = 0 ] && echo "Ergebnis: alles ok" || echo "Ergebnis: es gab Fehler (siehe oben)"
++exit "$FEHLER"
