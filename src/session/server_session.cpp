@@ -119,6 +119,7 @@ bool is_late(std::uint8_t type, const codec::InformationObject& o,
 bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
                            const StationContext& station, CommandHandler& handler) {
     const ProcessImage& image = *station.image;
+    observer_ = station.observer; // used by answer() for negative answers
     codec::AsduHeader header{};
     std::size_t header_length = 0;
     if (codec::decode_asdu_header(asdu, length, profile_, header, header_length) != IEC104_OK ||
@@ -132,7 +133,7 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
     if (st == IEC104_ERR_UNSUPPORTED) {
         // Unknown type, or a type the strict profile rejects: negative mirror
         // with cause 44 (docs/02_Technik_und_Quellen.md, "Übertragungsursachen").
-        push_ready(mirror(asdu, length, kCotUnknownType, true));
+        answer(asdu, length, kCotUnknownType, true);
         return true;
     }
     if (st != IEC104_OK) {
@@ -150,6 +151,10 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
     // Maximum command delay (amendment 1): a command with time tag that is
     // older than the configured maximum is discarded without any answer.
     if (is_late(type, o, station)) {
+        ++stats_.commands_discarded;
+        if (station.observer != nullptr) {
+            station.observer->discarded_command(header, o);
+        }
         return true;
     }
 
@@ -162,10 +167,14 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
     const bool system = type == kInterrogation || type == kCounterInterrogation ||
                         type == kClockSync || type == kResetProcess;
     if (!image.empty() && !(broadcast && system) && !image.has_station(header.common_address)) {
-        push_ready(mirror(asdu, length, kCotUnknownStation, true));
+        answer(asdu, length, kCotUnknownStation, true);
         return true;
     }
 
+    if (type == kInterrogation || type == kCounterInterrogation || type == kRead || type == kTest ||
+        type == kTestWithTime) {
+        ++stats_.requests;
+    }
     switch (type) {
     case kInterrogation:
         answer_interrogation(d, o, image, asdu, length);
@@ -179,9 +188,8 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
     case kTest:
     case kTestWithTime:
         // The test command is confirmed by mirroring it (cause 7).
-        push_ready(mirror(asdu, length,
-                          header.cause == kCotActivation ? kCotActivationCon : kCotUnknownCause,
-                          header.cause != kCotActivation));
+        answer(asdu, length, header.cause == kCotActivation ? kCotActivationCon : kCotUnknownCause,
+               header.cause != kCotActivation);
         break;
     default:
         if (is_command_type(type) || type == kClockSync || type == kResetProcess) {
@@ -189,9 +197,8 @@ bool ServerSession::handle(const std::uint8_t* asdu, std::size_t length,
         } else {
             // Control-direction types the library does not implement yet
             // (parameters 110..113, delay acquisition 106): negative confirmation.
-            push_ready(mirror(asdu, length,
-                              header.cause == kCotActivation ? kCotActivationCon : kCotUnknownCause,
-                              true));
+            answer(asdu, length,
+                   header.cause == kCotActivation ? kCotActivationCon : kCotUnknownCause, true);
         }
         break;
     }
@@ -206,19 +213,19 @@ void ServerSession::answer_interrogation(const codec::DecodedAsdu& d,
     if (h.cause == kCotDeactivation) {
         // Stopping a running interrogation is not supported: negative DEACTCON.
         // TODO(norm): deactivation of an interrogation, clause 7.
-        push_ready(mirror(asdu, length, kCotDeactivationCon, true));
+        answer(asdu, length, kCotDeactivationCon, true);
         return;
     }
     if (h.cause != kCotActivation) {
-        push_ready(mirror(asdu, length, kCotUnknownCause, true));
+        answer(asdu, length, kCotUnknownCause, true);
         return;
     }
     if (o.ioa != 0U) {
-        push_ready(mirror(asdu, length, kCotUnknownIoa, true)); // interrogation uses IOA 0
+        answer(asdu, length, kCotUnknownIoa, true); // interrogation uses IOA 0
         return;
     }
     if (o.qoi < kCotStation || o.qoi > kLastGroup) {
-        push_ready(mirror(asdu, length, kCotActivationCon, true));
+        answer(asdu, length, kCotActivationCon, true);
         return;
     }
     // QOI 20..36 and the cause of the answers 20..36 have the same values:
@@ -250,15 +257,15 @@ void ServerSession::answer_counters(const codec::DecodedAsdu& d, const codec::In
                                     std::size_t length) {
     const codec::AsduHeader& h = d.header;
     if (h.cause != kCotActivation) {
-        push_ready(mirror(asdu, length, kCotUnknownCause, true));
+        answer(asdu, length, kCotUnknownCause, true);
         return;
     }
     if (o.ioa != 0U) {
-        push_ready(mirror(asdu, length, kCotUnknownIoa, true));
+        answer(asdu, length, kCotUnknownIoa, true);
         return;
     }
     if (o.qcc.rqt < 1U || o.qcc.rqt > kAllCounters) {
-        push_ready(mirror(asdu, length, kCotActivationCon, true));
+        answer(asdu, length, kCotActivationCon, true);
         return;
     }
     const unsigned group = o.qcc.rqt == kAllCounters ? 0U : o.qcc.rqt;
@@ -290,12 +297,12 @@ void ServerSession::answer_read(const codec::DecodedAsdu& d, const codec::Inform
                                 std::size_t length) {
     const codec::AsduHeader& h = d.header;
     if (h.cause != kCotRequest) {
-        push_ready(mirror(asdu, length, kCotUnknownCause, true));
+        answer(asdu, length, kCotUnknownCause, true);
         return;
     }
     const Point* p = image.find(h.common_address, o.ioa);
     if (p == nullptr) {
-        push_ready(mirror(asdu, length, kCotUnknownIoa, true));
+        answer(asdu, length, kCotUnknownIoa, true);
         return;
     }
     codec::AsduHeader data = h;
@@ -312,7 +319,7 @@ void ServerSession::answer_command(const codec::DecodedAsdu& d, const codec::Inf
     if (command && !station.commands->empty()) {
         const CommandPoint* point = station.commands->find(h.common_address, o.ioa);
         if (point == nullptr) {
-            push_ready(mirror(asdu, length, kCotUnknownIoa, true));
+            answer(asdu, length, kCotUnknownIoa, true);
             return;
         }
         answer_point_command(d, o, *point, station, handler, asdu, length);
@@ -320,11 +327,11 @@ void ServerSession::answer_command(const codec::DecodedAsdu& d, const codec::Inf
     }
     // Without command points the application alone decides about every command.
     if (h.cause == kCotDeactivation && command) {
-        push_ready(mirror(asdu, length, kCotDeactivationCon, false));
+        answer(asdu, length, kCotDeactivationCon, false);
         return;
     }
     if (h.cause != kCotActivation) {
-        push_ready(mirror(asdu, length, kCotUnknownCause, true));
+        answer(asdu, length, kCotUnknownCause, true);
         return;
     }
     execute(d, o, station, handler, asdu, length);
@@ -339,28 +346,28 @@ void ServerSession::answer_point_command(const codec::DecodedAsdu& d,
     const auto key = std::make_pair(h.common_address, o.ioa);
     if (h.type_id != point.type) {
         // The point exists but accepts another type (e.g. only with time tag).
-        push_ready(mirror(asdu, length,
-                          h.cause == kCotDeactivation ? kCotDeactivationCon : kCotActivationCon,
-                          true));
+        answer(asdu, length, h.cause == kCotDeactivation ? kCotDeactivationCon : kCotActivationCon,
+               true);
         return;
     }
     if (h.cause == kCotDeactivation) {
         // Breaking off a selection: confirmed if one exists, else negative.
         const bool selected = selections_.erase(key) > 0U;
-        push_ready(mirror(asdu, length, kCotDeactivationCon, !selected));
+        answer(asdu, length, kCotDeactivationCon, !selected);
         return;
     }
     if (h.cause != kCotActivation) {
-        push_ready(mirror(asdu, length, kCotUnknownCause, true));
+        answer(asdu, length, kCotUnknownCause, true);
         return;
     }
     if (is_select(h.type_id, o)) {
         if (point.model == CommandModel::Direct) {
-            push_ready(mirror(asdu, length, kCotActivationCon, true)); // no select on this point
+            answer(asdu, length, kCotActivationCon, true); // no select on this point
             return;
         }
         const bool accepted = handler.on_command(h, o);
-        push_ready(mirror(asdu, length, kCotActivationCon, !accepted));
+        ++(accepted ? stats_.commands_accepted : stats_.commands_rejected);
+        answer(asdu, length, kCotActivationCon, !accepted);
         if (accepted) {
             selections_[key] =
                 Selection{h.type_id, o, station.clock.monotonic_ms + point.select_timeout_ms};
@@ -379,7 +386,7 @@ void ServerSession::answer_point_command(const codec::DecodedAsdu& d,
             selections_.erase(it);
         }
         if (!valid) {
-            push_ready(mirror(asdu, length, kCotActivationCon, true));
+            answer(asdu, length, kCotActivationCon, true);
             return;
         }
     }
@@ -391,11 +398,12 @@ void ServerSession::execute(const codec::DecodedAsdu& d, const codec::Informatio
                             const std::uint8_t* asdu, std::size_t length) {
     const codec::AsduHeader& h = d.header;
     const bool accepted = handler.on_command(h, o);
-    push_ready(mirror(asdu, length, kCotActivationCon, !accepted));
+    ++(accepted ? stats_.commands_accepted : stats_.commands_rejected);
+    answer(asdu, length, kCotActivationCon, !accepted);
     // Termination after an executed command; a select is only confirmed.
     if (accepted && is_command_type(h.type_id) && station.options->command_termination &&
         !is_select(h.type_id, o)) {
-        push_ready(mirror(asdu, length, kCotActivationTerm, false));
+        answer(asdu, length, kCotActivationTerm, false);
     }
 }
 
@@ -428,6 +436,17 @@ iec104_status ServerSession::enqueue(const std::uint8_t* asdu, std::size_t lengt
     }
     push_ready({asdu, asdu + length});
     return IEC104_OK;
+}
+
+void ServerSession::answer(const std::uint8_t* asdu, std::size_t length, std::uint8_t cause,
+                           bool negative) {
+    push_ready(mirror(asdu, length, cause, negative));
+    if (negative) {
+        ++stats_.negative_answers;
+        if (observer_ != nullptr) {
+            observer_->negative_answer(asdu, length, cause);
+        }
+    }
 }
 
 void ServerSession::push_ready(std::vector<std::uint8_t> asdu) {

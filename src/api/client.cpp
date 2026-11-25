@@ -22,6 +22,7 @@
 
 #include <array>
 #include <new>
+#include <string>
 
 using namespace iec104;
 
@@ -45,10 +46,22 @@ struct iec104_client : api::CallbackSink {
 
     session::CommandTracker tracker;
     session::CommandTimeouts timeouts;
+    iec104_link_stats counters{};   // command and answer counters of the client
+    iec104_link_stats last_stats{}; // all counters of the last closed connection
+    bool had_connection{false};
 
     void on_asdu(std::uint32_t id, const std::uint8_t* asdu, std::size_t length) override {
         api::CallbackSink::on_asdu(id, asdu, length);
         deliver_objects(id, asdu, length, profile);
+        codec::AsduHeader header{};
+        std::size_t header_length = 0;
+        if (codec::decode_asdu_header(asdu, length, profile, header, header_length) == IEC104_OK &&
+            header.negative) {
+            ++counters.negative_answers;
+            logger().write(IEC104_LOG_WARNING, id,
+                           "negative answer: type " + std::to_string(header.type_id) + ", cause " +
+                               std::to_string(header.cause));
+        }
         if (tracker.open() == 0U) {
             return;
         }
@@ -82,13 +95,45 @@ struct iec104_client : api::CallbackSink {
     void on_closed(std::uint32_t id, transport::LinkCloseReason reason,
                    apci::CloseReason protocol_reason) override {
         api::CallbackSink::on_closed(id, reason, protocol_reason);
+        if (link() != nullptr) {
+            last_stats = stats_of(*link());
+        }
         std::vector<session::CommandOutcome> outcomes;
         tracker.connection_lost(outcomes);
         report(outcomes);
     }
 
-    // Passes finished commands to on_command_result.
-    void report(const std::vector<session::CommandOutcome>& outcomes) const {
+    // All counters of @p l plus the client's own.
+    [[nodiscard]] iec104_link_stats stats_of(const transport::Link& l) const noexcept {
+        iec104_link_stats s = counters;
+        api::copy_link_stats(l, s);
+        return s;
+    }
+
+    // Counts, logs and passes finished commands to on_command_result.
+    void report(const std::vector<session::CommandOutcome>& outcomes) {
+        for (const session::CommandOutcome& o : outcomes) {
+            switch (o.result) {
+            case session::CommandResult::Confirmed:
+            case session::CommandResult::Terminated:
+            case session::CommandResult::Selected:
+                ++counters.commands_accepted;
+                break;
+            case session::CommandResult::Rejected:
+                ++counters.commands_rejected;
+                break;
+            case session::CommandResult::NoConfirmation:
+            case session::CommandResult::NoTermination:
+                ++counters.commands_discarded;
+                break;
+            case session::CommandResult::ConnectionLost:
+                break;
+            }
+            logger().write(IEC104_LOG_INFO, kClientLinkId,
+                           "command type " + std::to_string(o.type) + " ioa " +
+                               std::to_string(o.object.ioa) + ": " +
+                               iec104_command_result_string(to_c(o.result)));
+        }
         if (callbacks().on_command_result == nullptr) {
             return;
         }
@@ -210,7 +255,12 @@ iec104_status iec104_client_connect(iec104_client* client, const char* host, uin
     if (init != IEC104_OK) {
         return init;
     }
+    link->set_trace(client);
+    client->logger().write(IEC104_LOG_INFO, kClientLinkId,
+                           "connecting to " + std::string(host) + ":" + std::to_string(port));
     client->links.push_back(std::move(link));
+    client->had_connection = true;
+    client->counters = iec104_link_stats{};
     return IEC104_OK;
 }
 
@@ -339,6 +389,30 @@ void iec104_client_close(iec104_client* client) {
     if (client != nullptr && client->link() != nullptr) {
         client->link()->close();
     }
+}
+
+void iec104_client_set_log(iec104_client* client, iec104_log_level max_level, iec104_log_fn fn,
+                           void* user) {
+    if (client == nullptr) {
+        return;
+    }
+    client->logger().set(max_level, fn, user);
+    api::log_config_warnings(client->config, client->logger());
+}
+
+iec104_status iec104_client_get_stats(const iec104_client* client, iec104_link_stats* out) {
+    if (client == nullptr || out == nullptr) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    if (!client->links.empty()) {
+        *out = client->stats_of(*client->links.front());
+        return IEC104_OK;
+    }
+    if (!client->had_connection) {
+        return IEC104_ERR_WRONG_STATE;
+    }
+    *out = client->last_stats;
+    return IEC104_OK;
 }
 
 void iec104_client_destroy(iec104_client* client) {

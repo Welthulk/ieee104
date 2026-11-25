@@ -61,8 +61,75 @@ struct CommonOptions {
     std::string host;
     std::uint16_t port{IEC104_DEFAULT_PORT};
     iec104_link_config link{};
+    iec104_server_options server{};
+    iec104_client_options client{};
     bool verbose{false};
+    bool stats{false};
+    int log_level{-1}; ///< -1 = no log output, else iec104_log_level
+
+    CommonOptions() {
+        iec104_link_config_init(&link);
+        iec104_server_options_init(&server);
+        iec104_client_options_init(&client);
+    }
 };
+
+/**
+ * @brief Applies --config FILE before all other options, so that options on
+ *        the command line override the file. Exits with code 2 on errors.
+ */
+inline void load_config_option(int argc, char** argv, CommonOptions& o) {
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) != "--config") {
+            continue;
+        }
+        iec104_config c{};
+        iec104_config_init(&c);
+        c.link = o.link;
+        c.server = o.server;
+        c.client = o.client;
+        c.port = o.port;
+        std::snprintf(c.host, sizeof c.host, "%s", o.host.c_str());
+        int line = 0;
+        const iec104_status st = iec104_config_load(argv[i + 1], &c, &line);
+        if (st != IEC104_OK) {
+            std::fprintf(stderr, "%s: %s (line %d)\n", argv[i + 1], iec104_status_string(st), line);
+            std::exit(2);
+        }
+        o.link = c.link;
+        o.server = c.server;
+        o.client = c.client;
+        o.port = c.port;
+        o.host = c.host;
+    }
+}
+
+/** @brief Log callback of the programs: one line per message on stdout. */
+inline void print_log(void* /*user*/, iec104_log_level level, uint32_t connection,
+                      const char* message) {
+    std::printf("[%s] %u: %s\n", iec104_log_level_string(level), connection, message);
+}
+
+/** @brief Prints the counters of one connection. */
+inline void print_stats(const iec104_link_stats& s) {
+    std::printf("  frames sent / received: I %llu / %llu, S %llu / %llu, U %llu / %llu\n"
+                "  octets sent / received: %llu / %llu\n"
+                "  requests %llu, commands accepted %llu, rejected %llu, discarded %llu,"
+                " negative answers %llu\n",
+                static_cast<unsigned long long>(s.i_frames_sent),
+                static_cast<unsigned long long>(s.i_frames_received),
+                static_cast<unsigned long long>(s.s_frames_sent),
+                static_cast<unsigned long long>(s.s_frames_received),
+                static_cast<unsigned long long>(s.u_frames_sent),
+                static_cast<unsigned long long>(s.u_frames_received),
+                static_cast<unsigned long long>(s.bytes_sent),
+                static_cast<unsigned long long>(s.bytes_received),
+                static_cast<unsigned long long>(s.requests),
+                static_cast<unsigned long long>(s.commands_accepted),
+                static_cast<unsigned long long>(s.commands_rejected),
+                static_cast<unsigned long long>(s.commands_discarded),
+                static_cast<unsigned long long>(s.negative_answers));
+}
 
 /** @brief Prints the options both programs understand (part of --help). */
 inline void print_common_help() {
@@ -72,6 +139,10 @@ inline void print_common_help() {
                 "--tolerant)\n"
                 "  --k N --w N      window sizes (default 12 and 8)\n"
                 "  --tolerant       accept known deviations of peers (default: strict)\n"
+                "  --config FILE    read parameters from FILE (key = value, see docs/06);\n"
+                "                   options on the command line override the file\n"
+                "  --log LEVEL      library log: error, warning, info, debug, trace\n"
+                "  --stats          print the counters of each connection at the end\n"
                 "  --verbose        print every state change and object\n"
                 "  --help           this text\n",
                 IEC104_DEFAULT_PORT);
@@ -96,7 +167,24 @@ inline bool parse_common(int argc, char** argv, int& i, CommonOptions& o) {
     const std::string arg = argv[i];
     auto value = [&]() -> const char* { return i + 1 < argc ? argv[++i] : nullptr; };
     constexpr unsigned long kMaxSeconds = 48UL * 3600UL;
-    if (arg == "--host") {
+    if (arg == "--config") {
+        (void)value(); // applied before by load_config_option()
+    } else if (arg == "--stats") {
+        o.stats = true;
+    } else if (arg == "--log") {
+        const std::string level = value() != nullptr ? argv[i] : "";
+        const char* names[] = {"error", "warning", "info", "debug", "trace"};
+        o.log_level = -1;
+        for (int n = 0; n < 5; ++n) {
+            if (level == names[n]) {
+                o.log_level = n;
+            }
+        }
+        if (o.log_level < 0) {
+            std::fprintf(stderr, "invalid value for --log: %s\n", level.c_str());
+            std::exit(2);
+        }
+    } else if (arg == "--host") {
         const char* v = value();
         o.host = v != nullptr ? v : "";
     } else if (arg == "--port") {

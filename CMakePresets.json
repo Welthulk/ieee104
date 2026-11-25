@@ -1,6 +1,10 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -12,13 +16,26 @@
       "name": "debug",
       "displayName": "Debug (GCC)",
       "inherits": "base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
       "name": "release",
       "displayName": "Release (GCC)",
       "inherits": "base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "shared",
+      "displayName": "Debug, shared library (GCC)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_SHARED_LIBS": "ON"
+      }
     },
     {
       "name": "asan",
@@ -54,16 +71,66 @@
     }
   ],
   "buildPresets": [
-    { "name": "debug",   "configurePreset": "debug" },
-    { "name": "release", "configurePreset": "release" },
-    { "name": "asan",    "configurePreset": "asan" },
-    { "name": "clang",   "configurePreset": "clang" },
-    { "name": "fuzz",    "configurePreset": "fuzz" }
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan"
+    },
+    {
+      "name": "clang",
+      "configurePreset": "clang"
+    },
+    {
+      "name": "fuzz",
+      "configurePreset": "fuzz"
+    },
+    {
+      "name": "shared",
+      "configurePreset": "shared"
+    }
   ],
   "testPresets": [
-    { "name": "debug",   "configurePreset": "debug",   "output": { "outputOnFailure": true } },
-    { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } },
-    { "name": "asan",    "configurePreset": "asan",    "output": { "outputOnFailure": true } },
-    { "name": "clang",   "configurePreset": "clang",   "output": { "outputOnFailure": true } }
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "clang",
+      "configurePreset": "clang",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "shared",
+      "configurePreset": "shared",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

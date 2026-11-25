@@ -10,10 +10,11 @@ Exemplarische IEC-60870-5-104-Library: Client und Server, Kern C++17, stabile C-
 - `docs/01_IEC104_verstehen.md` ist die Einführung.
 - `docs/02_Technik_und_Quellen.md` ist die namensfreie Fassung von Konzept und Recherche; Code zitiert nur diese.
 - `docs/03_Quellen_APCI.md` belegt die Regeln der Zustandsmaschine aus öffentlichen Quellen (Normtexte liegen nicht vor, F4).
-- `docs/05_Normfragen_und_Festlegungen.md` ist die weitergabefähige Fassung der offenen Normfragen (N1–N13) und Festlegungen (E1–E7). Code und Tests verweisen nur darauf, nie auf `intern/04_Analyse.md` oder `tasks/`.
+- `docs/05_Normfragen_und_Festlegungen.md` ist die weitergabefähige Fassung der offenen Normfragen (N1–N13) und Festlegungen (E1–E8). Code und Tests verweisen nur darauf, nie auf `intern/04_Analyse.md` oder `tasks/`.
 
 ## Weitergabe-Zip
 
+- Lieferung: Version in `CMakeLists.txt` und `iec104.h` erhöhen, `CHANGELOG.md` ergänzen, committen, dann `tools/make_package.sh`. Es erzeugt `dist/iec104-<version>.zip`, den Patch gegen die vorige Lieferung (Tag `lieferung-<version>`) und setzt das neue Tag. Zip, Patch und Tag pushen (`git push origin lieferung-<version>`).
 - `tools/make_package.sh` baut `dist/iec104-<version>.zip` aus dem letzten Commit, ohne `intern/`, `tasks/`, CLAUDE.md, `.vscode/` und interne Skripte, und prüft das Zip selbst (Begriffsliste, Verweise auf interne Unterlagen). Bei einem Treffer wird es gelöscht.
 - Das Zip geht in ein firmeninternes Repo und an Kollegen für manuelle Tests. Keine Kunden-, Projekt- oder Herstellernamen, keine Hinweise auf KI-Werkzeuge, Aufgabennummern oder diesen Arbeitsablauf. Autor und Rechteinhaber stehen nur im SPDX-Kopf und in `LICENSES/`.
 - `docs/` ist Weitergabe-Doku und wird von `check_neutral.sh` voll geprüft; Projektbezug, Recherche mit Kundennamen, Analyse und Folien liegen in `intern/`.

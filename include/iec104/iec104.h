@@ -61,7 +61,7 @@ extern "C" {
 /** @brief Major version of this header. Incompatible API changes increment it. */
 #define IEC104_VERSION_MAJOR 0
 /** @brief Minor version of this header. Compatible additions increment it. */
-#define IEC104_VERSION_MINOR 1
+#define IEC104_VERSION_MINOR 2
 /** @brief Patch version of this header. Fixes without API change increment it. */
 #define IEC104_VERSION_PATCH 0
 
@@ -404,6 +404,50 @@ typedef struct iec104_callbacks {
 } iec104_callbacks;
 
 /* ------------------------------------------------------------------------- */
+/* Logging and statistics                                                    */
+/* ------------------------------------------------------------------------- */
+
+/** @brief Log levels, from most to least important. */
+/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
+typedef enum iec104_log_level {
+    IEC104_LOG_ERROR = 0,   /**< Connection lost because of an error, protocol violation. */
+    IEC104_LOG_WARNING = 1, /**< Unusual: negative answers, discarded commands, config warnings. */
+    IEC104_LOG_INFO = 2,    /**< Connections, start/stop, command results. */
+    IEC104_LOG_DEBUG = 3,   /**< Every state change, received requests. */
+    IEC104_LOG_TRACE = 4    /**< Every APDU as hex dump. */
+} iec104_log_level;
+
+/**
+ * @brief Receives one log message (English, one line, without newline).
+ * @param connection Connection id, 0 for messages that concern no connection.
+ */
+typedef void (*iec104_log_fn)(void* user, iec104_log_level level, uint32_t connection,
+                              const char* message);
+
+/** @brief Short name of a log level ("error", "warning", ...). Never NULL. */
+IEC104_API const char* iec104_log_level_string(iec104_log_level level);
+
+/** @brief Counters of one connection since it was opened. */
+typedef struct iec104_link_stats {
+    uint64_t i_frames_sent;     /**< I-frames (ASDUs) sent. */
+    uint64_t i_frames_received; /**< I-frames (ASDUs) received. */
+    uint64_t s_frames_sent;     /**< S-frames sent. */
+    uint64_t s_frames_received; /**< S-frames received. */
+    uint64_t u_frames_sent;     /**< U-frames (STARTDT, STOPDT, TESTFR) sent. */
+    uint64_t u_frames_received; /**< U-frames received. */
+    uint64_t bytes_sent;        /**< Octets of all sent APDUs. */
+    uint64_t bytes_received;    /**< Octets of all received APDUs. */
+    uint64_t requests;          /**< Server: interrogations, reads, tests answered. Client: 0. */
+    uint64_t
+        commands_accepted; /**< Server: accepted by on_command. Client: confirmed or executed. */
+    uint64_t commands_rejected;  /**< Server: rejected by on_command. Client: negative answer. */
+    uint64_t commands_discarded; /**< Server: older than the maximum command delay.
+                                      Client: no confirmation or termination in time. */
+    uint64_t negative_answers;   /**< Server: sent. Client: received. */
+    uint32_t send_queue;         /**< Server: ASDUs waiting for the window. Client: 0. */
+} iec104_link_stats;
+
+/* ------------------------------------------------------------------------- */
 /* Server (controlled station)                                               */
 /* ------------------------------------------------------------------------- */
 
@@ -563,6 +607,23 @@ IEC104_API iec104_status iec104_server_send(iec104_server* server, uint32_t conn
                                             uint16_t common_address, uint8_t cause,
                                             const iec104_object* objects, size_t count);
 
+/**
+ * @brief Sets the log callback; messages up to @p max_level are passed on.
+ *
+ * Configuration warnings (t2 >= t1, w > 2/3 k) are reported at once.
+ * @p fn NULL switches logging off.
+ */
+IEC104_API void iec104_server_set_log(iec104_server* server, iec104_log_level max_level,
+                                      iec104_log_fn fn, void* user);
+
+/**
+ * @brief Counters of one connection.
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL; IEC104_ERR_WRONG_STATE
+ *         if the connection does not exist (any more).
+ */
+IEC104_API iec104_status iec104_server_get_stats(const iec104_server* server, uint32_t connection,
+                                                 iec104_link_stats* out);
+
 /** @brief Closes all connections and the listening socket and frees the handle. NULL is ignored. */
 IEC104_API void iec104_server_destroy(iec104_server* server);
 
@@ -672,6 +733,58 @@ IEC104_API iec104_link_state iec104_client_state(const iec104_client* client);
 
 /** @brief Closes the connection (reported as IEC104_CLOSE_LOCAL on the next poll). */
 IEC104_API void iec104_client_close(iec104_client* client);
+
+/** @brief As iec104_server_set_log(). */
+IEC104_API void iec104_client_set_log(iec104_client* client, iec104_log_level max_level,
+                                      iec104_log_fn fn, void* user);
+
+/**
+ * @brief Counters of the current (or last) connection.
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL; IEC104_ERR_WRONG_STATE
+ *         before the first connect.
+ */
+IEC104_API iec104_status iec104_client_get_stats(const iec104_client* client,
+                                                 iec104_link_stats* out);
+
+/* ------------------------------------------------------------------------- */
+/* Configuration file                                                        */
+/* ------------------------------------------------------------------------- */
+
+/** @brief Everything a configuration file can set. */
+typedef struct iec104_config {
+    iec104_link_config link;      /**< Timers, windows, ASDU profile. */
+    iec104_server_options server; /**< Server behaviour. */
+    iec104_client_options client; /**< Client time limits. */
+    char host[256];               /**< Address: server = bind address, client = peer. */
+    uint16_t port;                /**< TCP port. */
+} iec104_config;
+
+/** @brief Defaults of all parts (standard values, host "", port 2404). Does nothing for NULL. */
+IEC104_API void iec104_config_init(iec104_config* config);
+
+/**
+ * @brief Reads a configuration file into @p config (keys not in the file keep their value).
+ *
+ * Format: one `key = value` per line; `#` or `;` starts a comment. Times in
+ * seconds (fractions allowed). Keys:
+ *
+ * | key | field |
+ * |-----|-------|
+ * | host, port | host, port |
+ * | t0, t1, t2, t3 | link timers (s) |
+ * | k, w, tolerant | link |
+ * | cot_length, ca_length, ioa_length, max_asdu_length, originator | link (ASDU profile) |
+ * | send_end_of_init, command_termination, cause_of_init | server |
+ * | max_command_delay | server (s) |
+ * | confirmation_timeout, termination_timeout, expect_termination | client (s) |
+ *
+ * @param error_line Receives the line number of the first error (0 if none); may be NULL.
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, an unknown key or
+ *         a malformed line; IEC104_ERR_OUT_OF_RANGE for a value outside its
+ *         type; IEC104_ERR_IO if the file cannot be read.
+ */
+IEC104_API iec104_status iec104_config_load(const char* path, iec104_config* config,
+                                            int* error_line);
 
 /** @brief Closes the connection and frees the handle. NULL is ignored. */
 IEC104_API void iec104_client_destroy(iec104_client* client);

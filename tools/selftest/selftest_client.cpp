@@ -272,7 +272,7 @@ void print_help() {
 int main(int argc, char** argv) {
     Client c;
     c.opt.common.host = "127.0.0.1";
-    iec104_link_config_init(&c.opt.common.link);
+    selftest::load_config_option(argc, argv, c.opt.common);
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (selftest::parse_common(argc, argv, i, c.opt.common)) {
@@ -309,6 +309,11 @@ int main(int argc, char** argv) {
     if (st != IEC104_OK) {
         std::fprintf(stderr, "invalid configuration: %s\n", iec104_status_string(st));
         return 2;
+    }
+    (void)iec104_client_set_options(c.handle, &c.opt.common.client);
+    if (c.opt.common.log_level >= 0) {
+        iec104_client_set_log(c.handle, static_cast<iec104_log_level>(c.opt.common.log_level),
+                              selftest::print_log, nullptr);
     }
     const auto ca = static_cast<std::uint16_t>(c.opt.ca);
     const std::uint64_t step_ms = c.opt.timeout_s * 1000U;
@@ -483,6 +488,10 @@ int main(int argc, char** argv) {
 
     iec104_client_close(c.handle);
     (void)wait_for(c, 1000, [&] { return c.state == IEC104_LINK_CLOSED; });
+    iec104_link_stats stats{};
+    if (c.opt.common.stats && iec104_client_get_stats(c.handle, &stats) == IEC104_OK) {
+        selftest::print_stats(stats);
+    }
     iec104_client_destroy(c.handle);
     std::printf("result: %s\n", passed ? "PASSED" : "FAILED");
     return passed ? 0 : 1;

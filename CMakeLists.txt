@@ -6,7 +6,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(iec104
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
     LANGUAGES C CXX)
 
@@ -66,10 +66,12 @@ endfunction()
 # ---------------------------------------------------------------------------
 # Library
 # ---------------------------------------------------------------------------
-add_library(iec104
+add_library(iec104_objects OBJECT
     src/api/client.cpp
+    src/api/config.cpp
     src/api/iec104.cpp
     src/api/link_common.cpp
+    src/api/logger.cpp
     src/api/server.cpp
     src/api/values.cpp
     src/apci/apci_config.cpp
@@ -86,27 +88,39 @@ add_library(iec104
     src/session/server_session.cpp
     src/transport/link.cpp
     src/transport/tcp.cpp)
-add_library(iec104::iec104 ALIAS iec104)
-
-target_include_directories(iec104
-    PUBLIC  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-            $<INSTALL_INTERFACE:include>
+# The sources are compiled once; the library (static or shared, see
+# BUILD_SHARED_LIBS) is made from these objects. Tests and fuzzers link the
+# objects directly because they check internal functions.
+target_include_directories(iec104_objects
+    PUBLIC  ${PROJECT_SOURCE_DIR}/include
     PRIVATE ${PROJECT_SOURCE_DIR}/src)
-
-target_compile_definitions(iec104 PRIVATE IEC104_BUILDING_LIBRARY
+target_compile_definitions(iec104_objects PRIVATE IEC104_BUILDING_LIBRARY
     IEC104_VERSION_STRING="${PROJECT_VERSION}")
-
 # Core rules: no exceptions, no RTTI (see docs/02_Technik_und_Quellen.md, "Sprache und Architektur")
-target_compile_options(iec104 PRIVATE -fno-exceptions -fno-rtti)
-set_target_properties(iec104 PROPERTIES
+target_compile_options(iec104_objects PRIVATE -fno-exceptions -fno-rtti)
+set_target_properties(iec104_objects PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
     CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON
+    VISIBILITY_INLINES_HIDDEN ON)
+if(IEC104_ENABLE_CLANG_TIDY)
+    set_target_properties(iec104_objects PROPERTIES CXX_CLANG_TIDY "${IEC104_CLANG_TIDY}")
+endif()
+iec104_set_warnings(iec104_objects TRUE)
+
+add_library(iec104 $<TARGET_OBJECTS:iec104_objects>)
+add_library(iec104::iec104 ALIAS iec104)
+target_include_directories(iec104 PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+set_target_properties(iec104 PROPERTIES
+    LINKER_LANGUAGE CXX
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR})
-if(IEC104_ENABLE_CLANG_TIDY)
-    set_target_properties(iec104 PROPERTIES CXX_CLANG_TIDY "${IEC104_CLANG_TIDY}")
+if(NOT BUILD_SHARED_LIBS)
+    # A static library carries no dependencies: users that link with the C
+    # compiler need the C++ runtime and libm explicitly.
+    target_link_libraries(iec104 INTERFACE stdc++ m)
 endif()
-iec104_set_warnings(iec104 TRUE)
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -128,6 +142,7 @@ if(IEC104_BUILD_TESTS)
         tests/test_command_tracker.cpp
         tests/test_cp56time2a.cpp
         tests/test_elements.cpp
+        tests/test_operation.cpp
         tests/test_session.cpp
         tests/test_tcp_loopback.cpp
         tests/test_type_table.cpp
@@ -137,7 +152,7 @@ if(IEC104_BUILD_TESTS)
     # Reference data (captures of foreign implementations), read at run time
     target_compile_definitions(iec104_tests PRIVATE
         IEC104_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
-    target_link_libraries(iec104_tests PRIVATE iec104::iec104 GTest::gtest GTest::gtest_main)
+    target_link_libraries(iec104_tests PRIVATE iec104_objects GTest::gtest GTest::gtest_main)
     iec104_set_warnings(iec104_tests FALSE)
     gtest_discover_tests(iec104_tests)
 endif()
@@ -168,27 +183,57 @@ endif()
 if(IEC104_BUILD_FUZZERS)
     add_executable(fuzz_codec fuzz/fuzz_codec.cpp)
     target_include_directories(fuzz_codec PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(fuzz_codec PRIVATE iec104::iec104)
+    target_link_libraries(fuzz_codec PRIVATE iec104_objects)
     target_link_options(fuzz_codec PRIVATE -fsanitize=fuzzer)
     iec104_set_warnings(fuzz_codec FALSE)
 
     add_executable(fuzz_session fuzz/fuzz_session.cpp)
     target_include_directories(fuzz_session PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(fuzz_session PRIVATE iec104::iec104)
+    target_link_libraries(fuzz_session PRIVATE iec104_objects)
     target_link_options(fuzz_session PRIVATE -fsanitize=fuzzer)
     iec104_set_warnings(fuzz_session FALSE)
 
     add_executable(fuzz_apci fuzz/fuzz_apci.cpp)
     target_include_directories(fuzz_apci PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(fuzz_apci PRIVATE iec104::iec104)
+    target_link_libraries(fuzz_apci PRIVATE iec104_objects)
     target_link_options(fuzz_apci PRIVATE -fsanitize=fuzzer)
     iec104_set_warnings(fuzz_apci FALSE)
 endif()
 
 # ---------------------------------------------------------------------------
-# Install
+# Examples
 # ---------------------------------------------------------------------------
+option(IEC104_BUILD_EXAMPLES "Build the examples (examples/)" ON)
+if(IEC104_BUILD_EXAMPLES AND NOT IEC104_BUILD_FUZZERS)
+    add_subdirectory(examples)
+    if(IEC104_BUILD_TESTS AND NOT IEC104_ENABLE_SANITIZERS)
+        # The examples, built against the installed library (find_package)
+        # and run against each other. Not with sanitizers: the installed
+        # library would need the sanitizer runtime in the foreign project.
+        add_test(NAME Examples.HelloWorldInstalled
+            COMMAND ${PROJECT_SOURCE_DIR}/tools/check_install.sh ${CMAKE_BINARY_DIR}
+                    ${PROJECT_SOURCE_DIR})
+        set_tests_properties(Examples.HelloWorldInstalled PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Install and package export (find_package(iec104), target iec104::iec104)
+# ---------------------------------------------------------------------------
+include(CMakePackageConfigHelpers)
+set(IEC104_CMAKE_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/iec104)
 install(TARGETS iec104 EXPORT iec104Targets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(EXPORT iec104Targets NAMESPACE iec104:: DESTINATION ${IEC104_CMAKE_DIR})
+configure_package_config_file(cmake/iec104Config.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/iec104Config.cmake
+    INSTALL_DESTINATION ${IEC104_CMAKE_DIR})
+# Version 0.x: only the same minor version is compatible.
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/iec104ConfigVersion.cmake
+    VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/iec104Config.cmake
+              ${CMAKE_CURRENT_BINARY_DIR}/iec104ConfigVersion.cmake
+        DESTINATION ${IEC104_CMAKE_DIR})

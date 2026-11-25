@@ -18,6 +18,7 @@
 
 #include "apci/apci_config.hpp"
 #include "apci/connection.hpp"
+#include "api/logger.hpp"
 #include "codec/asdu.hpp"
 #include "iec104/iec104.h"
 #include "transport/link.hpp"
@@ -48,6 +49,12 @@ class CallbackSink : public transport::LinkSink {
     void on_state(std::uint32_t id, apci::State state) override;
     void on_closed(std::uint32_t id, transport::LinkCloseReason reason,
                    apci::CloseReason protocol_reason) override;
+    void on_frame(std::uint32_t id, bool outgoing, const std::uint8_t* apdu,
+                  std::size_t length) override;
+
+    /** @brief The log output of this handle. */
+    [[nodiscard]] Logger& logger() noexcept { return logger_; }
+    [[nodiscard]] const Logger& logger() const noexcept { return logger_; }
 
   protected:
     /**
@@ -64,7 +71,14 @@ class CallbackSink : public transport::LinkSink {
 
   private:
     iec104_callbacks callbacks_{};
+    Logger logger_;
 };
+
+/** @brief Logs the violated recommendations of @p config (t2 < t1, w <= 2/3 k) as warnings. */
+void log_config_warnings(const apci::ApciConfig& config, const Logger& logger);
+
+/** @brief Fills the link part of @p out from the state machine counters. */
+void copy_link_stats(const transport::Link& link, iec104_link_stats& out) noexcept;
 
 /**
  * @brief One round of the event loop for a set of links and an optional listener.

@@ -101,6 +101,22 @@ const char* iec104_link_state_string(iec104_link_state state) {
     return "unknown state";
 }
 
+const char* iec104_log_level_string(iec104_log_level level) {
+    switch (level) {
+    case IEC104_LOG_ERROR:
+        return "error";
+    case IEC104_LOG_WARNING:
+        return "warning";
+    case IEC104_LOG_INFO:
+        return "info";
+    case IEC104_LOG_DEBUG:
+        return "debug";
+    case IEC104_LOG_TRACE:
+        return "trace";
+    }
+    return "unknown level";
+}
+
 const char* iec104_command_result_string(iec104_command_result result) {
     switch (result) {
     case IEC104_COMMAND_CONFIRMED:

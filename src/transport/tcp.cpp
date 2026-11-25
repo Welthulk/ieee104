@@ -12,6 +12,8 @@
  */
 #include "transport/tcp.hpp"
 
+#include <arpa/inet.h>
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <ctime>
@@ -136,6 +138,29 @@ iec104_status finish_connect(const Socket& socket) noexcept {
         return IEC104_ERR_IO;
     }
     return IEC104_OK;
+}
+
+std::string peer_address(const Socket& socket) {
+    sockaddr_storage addr{};
+    socklen_t len = sizeof addr;
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): socket API takes sockaddr*
+    if (getpeername(socket.fd(), reinterpret_cast<sockaddr*>(&addr), &len) != 0) {
+        return {};
+    }
+    std::array<char, INET6_ADDRSTRLEN> text{};
+    if (addr.ss_family == AF_INET) {
+        sockaddr_in in{};
+        std::memcpy(&in, &addr, sizeof in);
+        (void)inet_ntop(AF_INET, &in.sin_addr, text.data(), text.size());
+        return std::string(text.data()) + ":" + std::to_string(ntohs(in.sin_port));
+    }
+    if (addr.ss_family == AF_INET6) {
+        sockaddr_in6 in6{};
+        std::memcpy(&in6, &addr, sizeof in6);
+        (void)inet_ntop(AF_INET6, &in6.sin6_addr, text.data(), text.size());
+        return "[" + std::string(text.data()) + "]:" + std::to_string(ntohs(in6.sin6_port));
+    }
+    return {};
 }
 
 std::uint16_t local_port(const Socket& socket) noexcept {

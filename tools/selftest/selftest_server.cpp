@@ -92,6 +92,12 @@ void on_state(void* user, std::uint32_t id, iec104_link_state state, iec104_clos
         selftest::report_line("clock synchronizations", std::to_string(p.clock_syncs));
         const bool passed =
             p.sent == s->opt.count && (reason == IEC104_CLOSE_PEER || reason == IEC104_CLOSE_LOCAL);
+        if (s->opt.common.stats) {
+            iec104_link_stats st{};
+            if (iec104_server_get_stats(s->handle, id, &st) == IEC104_OK) {
+                selftest::print_stats(st);
+            }
+        }
         std::printf("connection %u result: %s\n", id, passed ? "PASSED" : "FAILED");
         if (s->opt.once && !s->finished_once) {
             s->finished_once = true;
@@ -196,7 +202,9 @@ void print_help() {
 
 int main(int argc, char** argv) {
     Server s;
-    iec104_link_config_init(&s.opt.common.link);
+    // Self-test default; a configuration file or later options may change it.
+    s.opt.common.server.max_command_delay_ms = selftest::kMaxCommandDelayMs;
+    selftest::load_config_option(argc, argv, s.opt.common);
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (selftest::parse_common(argc, argv, i, s.opt.common)) {
@@ -241,10 +249,11 @@ int main(int argc, char** argv) {
                                     IEC104_COMMAND_SELECT_EXECUTE, selftest::kSelectTimeoutMs);
     (void)iec104_server_add_command(s.handle, selftest::kStation, selftest::kTimedIoa, 58,
                                     IEC104_COMMAND_DIRECT, 0);
-    iec104_server_options options;
-    iec104_server_options_init(&options);
-    options.max_command_delay_ms = selftest::kMaxCommandDelayMs;
-    (void)iec104_server_set_options(s.handle, &options);
+    (void)iec104_server_set_options(s.handle, &s.opt.common.server);
+    if (s.opt.common.log_level >= 0) {
+        iec104_server_set_log(s.handle, static_cast<iec104_log_level>(s.opt.common.log_level),
+                              selftest::print_log, nullptr);
+    }
     st = iec104_server_listen(s.handle, s.opt.common.host.c_str(), s.opt.common.port);
     if (st != IEC104_OK) {
         std::fprintf(stderr, "cannot listen on port %u: %s\n", s.opt.common.port,

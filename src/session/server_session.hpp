@@ -98,12 +98,42 @@ struct SessionClock {
     std::int64_t utc_ms{0};        ///< Wall clock (UTC, ms since 1970) for the command delay.
 };
 
+/**
+ * @brief Receives notable events of a session (for logging). Every method may be ignored.
+ */
+class SessionObserver {
+  public:
+    SessionObserver() = default;
+    SessionObserver(const SessionObserver&) = delete;
+    SessionObserver& operator=(const SessionObserver&) = delete;
+    SessionObserver(SessionObserver&&) = delete;
+    SessionObserver& operator=(SessionObserver&&) = delete;
+    virtual ~SessionObserver() = default;
+    /** @brief A request was answered negatively (@p asdu is the request). */
+    virtual void negative_answer(const std::uint8_t* asdu, std::size_t length,
+                                 std::uint8_t cause) = 0;
+    /** @brief A time-tagged command was discarded (maximum command delay). */
+    virtual void discarded_command(const codec::AsduHeader& header,
+                                   const codec::InformationObject& object) = 0;
+};
+
+/** @brief Counters of one session. */
+struct SessionStats {
+    std::uint64_t requests{0}; ///< Interrogations, counter interrogations, reads, tests.
+    std::uint64_t commands_accepted{
+        0}; ///< Commands, clock syncs, resets accepted by the application.
+    std::uint64_t commands_rejected{0};  ///< ... rejected by the application.
+    std::uint64_t commands_discarded{0}; ///< Discarded: older than the maximum command delay.
+    std::uint64_t negative_answers{0};   ///< Answers with P/N = 1 (incl. causes 44..47).
+};
+
 /** @brief Everything the station provides to a session for handling one request (never NULL). */
 struct StationContext {
     const ProcessImage* image{nullptr};     ///< Data points (interrogation, read).
     const CommandTable* commands{nullptr};  ///< Command points (empty = application decides).
     const SessionOptions* options{nullptr}; ///< Behaviour.
     SessionClock clock;                     ///< Current time.
+    SessionObserver* observer{nullptr};     ///< Optional, may be NULL.
 };
 
 /** @brief Application layer of one connection of the controlled station. */
@@ -134,6 +164,9 @@ class ServerSession {
     /** @brief Sends queued ASDUs while @p sender can take them. */
     void pump(AsduSender& sender);
 
+    /** @brief Counters since creation. */
+    [[nodiscard]] const SessionStats& stats() const noexcept { return stats_; }
+
     /** @brief Number of queued entries (ASDUs and interrogation jobs). */
     [[nodiscard]] std::size_t queued() const noexcept { return queue_.size(); }
 
@@ -149,6 +182,7 @@ class ServerSession {
         codec::AsduHeader header{};     // job: header of the data ASDUs
     };
 
+    void answer(const std::uint8_t* asdu, std::size_t length, std::uint8_t cause, bool negative);
     void push_ready(std::vector<std::uint8_t> asdu);
     void push_encoded(const codec::AsduHeader& header, const codec::InformationObject& object);
     void push_job(const codec::AsduHeader& header, std::vector<Point> points);
@@ -177,6 +211,8 @@ class ServerSession {
     std::uint8_t originator_;
     std::deque<Item> queue_;
     bool init_sent_{false};
+    SessionStats stats_{};
+    SessionObserver* observer_{nullptr}; // of the request being handled
 
     /** @brief A selected command waiting for its execute (select before operate). */
     struct Selection {

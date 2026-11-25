@@ -28,6 +28,7 @@
 #include <map>
 #include <new>
 #include <poll.h>
+#include <string>
 
 using namespace iec104;
 
@@ -48,7 +49,7 @@ class LinkSender : public session::AsduSender {
 
 } // namespace
 
-struct iec104_server : api::CallbackSink, session::CommandHandler {
+struct iec104_server : api::CallbackSink, session::CommandHandler, session::SessionObserver {
     iec104_server(const apci::ApciConfig& c, const iec104_link_config& link,
                   const iec104_callbacks* cb) noexcept
         : api::CallbackSink(cb), config(c), profile(api::to_profile(link)),
@@ -85,6 +86,9 @@ struct iec104_server : api::CallbackSink, session::CommandHandler {
             auto link = std::make_unique<transport::Link>();
             if (link->init_accepted(next_id, config, std::move(s), transport::monotonic_ms()) ==
                 IEC104_OK) {
+                link->set_trace(this);
+                logger().write(IEC104_LOG_INFO, next_id,
+                               "connection accepted from " + link->peer());
                 sessions.emplace(next_id, session::ServerSession(profile, originator));
                 ++next_id;
                 links.push_back(std::move(link));
@@ -111,7 +115,7 @@ struct iec104_server : api::CallbackSink, session::CommandHandler {
         current_connection = id;
         const session::StationContext station{
             &image, &commands, &options,
-            session::SessionClock{transport::monotonic_ms(), transport::utc_ms()}};
+            session::SessionClock{transport::monotonic_ms(), transport::utc_ms()}, this};
         const bool handled =
             it != sessions.end() && it->second.handle(asdu, length, station, *this);
         current_connection = 0;
@@ -146,7 +150,31 @@ struct iec104_server : api::CallbackSink, session::CommandHandler {
             return false;
         }
         const iec104_asdu_info info = api::to_info(header);
-        return callbacks().on_command(callbacks().user, current_connection, &info, &c) != 0;
+        const bool accepted =
+            callbacks().on_command(callbacks().user, current_connection, &info, &c) != 0;
+        logger().write(IEC104_LOG_INFO, current_connection,
+                       "command type " + std::to_string(header.type_id) + " ioa " +
+                           std::to_string(object.ioa) + (accepted ? ": accepted" : ": rejected"));
+        return accepted;
+    }
+
+    // --- SessionObserver: notable events for the log ----------------------
+
+    void negative_answer(const std::uint8_t* asdu, std::size_t length,
+                         std::uint8_t cause) override {
+        if (logger().enabled(IEC104_LOG_WARNING) && length > 0U) {
+            logger().write(IEC104_LOG_WARNING, current_connection,
+                           "negative answer to type " + std::to_string(asdu[0]) + ", cause " +
+                               std::to_string(cause));
+        }
+    }
+
+    void discarded_command(const codec::AsduHeader& header,
+                           const codec::InformationObject& object) override {
+        logger().write(IEC104_LOG_WARNING, current_connection,
+                       "command type " + std::to_string(header.type_id) + " ioa " +
+                           std::to_string(object.ioa) +
+                           " discarded: older than the maximum command delay");
     }
 
     // Queues @p asdu on one or all started connections.
@@ -382,6 +410,42 @@ iec104_status iec104_server_send(iec104_server* server, uint32_t connection,
         remaining -= used;
     }
     return result;
+}
+
+void iec104_server_set_log(iec104_server* server, iec104_log_level max_level, iec104_log_fn fn,
+                           void* user) {
+    if (server == nullptr) {
+        return;
+    }
+    server->logger().set(max_level, fn, user);
+    api::log_config_warnings(server->config, server->logger());
+}
+
+iec104_status iec104_server_get_stats(const iec104_server* server, uint32_t connection,
+                                      iec104_link_stats* out) {
+    if (server == nullptr || out == nullptr) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    for (const auto& link : server->links) {
+        if (link->id() != connection) {
+            continue;
+        }
+        iec104_link_stats s{};
+        api::copy_link_stats(*link, s);
+        const auto it = server->sessions.find(connection);
+        if (it != server->sessions.end()) {
+            const session::SessionStats& ss = it->second.stats();
+            s.requests = ss.requests;
+            s.commands_accepted = ss.commands_accepted;
+            s.commands_rejected = ss.commands_rejected;
+            s.commands_discarded = ss.commands_discarded;
+            s.negative_answers = ss.negative_answers;
+            s.send_queue = static_cast<uint32_t>(it->second.queued());
+        }
+        *out = s;
+        return IEC104_OK;
+    }
+    return IEC104_ERR_WRONG_STATE;
 }
 
 void iec104_server_destroy(iec104_server* server) {

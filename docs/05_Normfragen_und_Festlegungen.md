@@ -1,6 +1,6 @@
 # Normfragen und Festlegungen
 
-Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stellen zu N1–N13 sind mit `TODO(norm)` markiert; E1–E7 sind technische Festlegungen. Belege: `docs/02_Technik_und_Quellen.md`, `docs/03_Quellen_APCI.md`.
+Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stellen zu N1–N13 sind mit `TODO(norm)` markiert; E1–E8 sind technische Festlegungen. Belege: `docs/02_Technik_und_Quellen.md`, `docs/03_Quellen_APCI.md`.
 
 ## Normfragen
 
@@ -31,3 +31,4 @@ Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stell
 | E5 | Dekodieren ist verlustfrei: auch reservierte Bits bleiben erhalten (z. B. RES1–RES4 der CP56Time2a). Kodieren prüft Wertebereiche und schneidet nie ab | Eine dekodierte ASDU ergibt beim erneuten Kodieren dieselben Oktette (wichtig für Gateways, Mitschnitte und den Fuzzer); Programmierfehler werden nicht zu falschen Daten auf der Leitung |
 | E6 | Die Library testet sich selbst: Zustandsmaschinen im Speicher gekoppelt (ohne Netz) und Selbsttest-Programme über TCP | Prüfung ohne fremde Gegenstelle, Grundlage für manuelle Tests (`docs/04_Selbsttest.md`) |
 | E7 | Befehlsmodell je IOA: ohne Befehlspunkte entscheidet die Anwendung allein; mit Befehlspunkten prüft die Library IOA, Typ, Select/Execute und Auswahl-Timeout, bevor die Anwendung gefragt wird. Eine Auswahl gilt je Verbindung | Bekannte Anforderungen von Gegenstellen (Select/Execute je Datenpunkt, nur Befehle mit Zeitmarke) werden Parameter statt Anwendungslogik |
+| E8 | Laufzeitmodell: kein interner Thread; die Anwendung ruft `*_poll()` in ihrem Thread, dort laufen auch alle Callbacks. Ein Handle gehört einem Thread | keine Sperren in der Library, vorhersagbares Verhalten; die Anwendung wählt selbst, ob Poll in einem eigenen Thread läuft |

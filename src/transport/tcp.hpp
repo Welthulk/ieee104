@@ -25,6 +25,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace iec104::transport {
 
@@ -104,6 +105,9 @@ iec104_status connect_tcp(const char* host, std::uint16_t port, Socket& out) noe
  * @return IEC104_OK if connected, IEC104_ERR_IO if the connect failed.
  */
 iec104_status finish_connect(const Socket& socket) noexcept;
+
+/** @brief Address of the peer as "ip:port" (IPv6 in brackets), "" on error. */
+std::string peer_address(const Socket& socket);
 
 /** @brief Local port of a bound socket, 0 on error. */
 std::uint16_t local_port(const Socket& socket) noexcept;

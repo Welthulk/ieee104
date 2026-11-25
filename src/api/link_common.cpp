@@ -100,8 +100,46 @@ void CallbackSink::on_asdu(std::uint32_t id, const std::uint8_t* asdu, std::size
     }
 }
 
+void CallbackSink::on_frame(std::uint32_t id, bool outgoing, const std::uint8_t* apdu,
+                            std::size_t length) {
+    if (logger_.enabled(IEC104_LOG_TRACE)) {
+        logger_.write(IEC104_LOG_TRACE, id,
+                      std::string(outgoing ? "sent " : "received ") + Logger::hex(apdu, length));
+    }
+}
+
+void log_config_warnings(const apci::ApciConfig& config, const Logger& logger) {
+    apci::ConfigWarnings w{};
+    if (apci::validate(config, w) != IEC104_OK) {
+        return;
+    }
+    if (w.t2_not_below_t1) {
+        logger.write(IEC104_LOG_WARNING, 0, "configuration: t2 is not below t1");
+    }
+    if (w.w_above_two_thirds_k) {
+        logger.write(IEC104_LOG_WARNING, 0, "configuration: w is above 2/3 of k");
+    }
+}
+
+void copy_link_stats(const transport::Link& link, iec104_link_stats& out) noexcept {
+    const apci::ConnectionStats& s = link.stats();
+    out.i_frames_sent = s.i_sent;
+    out.i_frames_received = s.i_received;
+    out.s_frames_sent = s.s_sent;
+    out.s_frames_received = s.s_received;
+    out.u_frames_sent = s.u_sent;
+    out.u_frames_received = s.u_received;
+    out.bytes_sent = s.bytes_sent;
+    out.bytes_received = s.bytes_received;
+}
+
 void CallbackSink::on_state(std::uint32_t id, apci::State state) {
     // Closed is reported once, with its reason, by on_closed().
+    if (state != apci::State::Closed) {
+        const bool important = state == apci::State::Started || state == apci::State::Stopped;
+        logger_.write(important ? IEC104_LOG_INFO : IEC104_LOG_DEBUG, id,
+                      std::string("state ") + iec104_link_state_string(to_c(state)));
+    }
     if (callbacks_.on_state != nullptr && state != apci::State::Closed) {
         callbacks_.on_state(callbacks_.user, id, to_c(state), IEC104_CLOSE_NONE);
     }
@@ -109,6 +147,11 @@ void CallbackSink::on_state(std::uint32_t id, apci::State state) {
 
 void CallbackSink::on_closed(std::uint32_t id, transport::LinkCloseReason reason,
                              apci::CloseReason protocol_reason) {
+    const iec104_close_reason c = to_c(reason, protocol_reason);
+    // A regular end is information; everything else means the link failed.
+    const bool regular = c == IEC104_CLOSE_LOCAL || c == IEC104_CLOSE_PEER;
+    logger_.write(regular ? IEC104_LOG_INFO : IEC104_LOG_ERROR, id,
+                  std::string("closed: ") + iec104_close_reason_string(c));
     if (callbacks_.on_state != nullptr) {
         callbacks_.on_state(callbacks_.user, id, IEC104_LINK_CLOSED, to_c(reason, protocol_reason));
     }

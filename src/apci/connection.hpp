@@ -100,6 +100,28 @@ struct Event {
     std::array<std::uint8_t, codec::kMaxAsduLength> asdu{}; ///< AsduReceived: the ASDU.
 };
 
+/** @brief Counters of one connection (frames by format, octets). */
+struct ConnectionStats {
+    std::uint64_t i_sent{0};         ///< I-frames sent.
+    std::uint64_t i_received{0};     ///< I-frames received.
+    std::uint64_t s_sent{0};         ///< S-frames sent.
+    std::uint64_t s_received{0};     ///< S-frames received.
+    std::uint64_t u_sent{0};         ///< U-frames sent.
+    std::uint64_t u_received{0};     ///< U-frames received.
+    std::uint64_t bytes_sent{0};     ///< Octets of all sent APDUs.
+    std::uint64_t bytes_received{0}; ///< Octets of all received APDUs.
+};
+
+/**
+ * @brief Observer of every complete APDU (for a raw data trace).
+ *
+ * @param context  Value given to set_trace().
+ * @param outgoing true for a frame this side sends, false for a received one.
+ * @param apdu     The complete APDU, valid only during the call.
+ */
+using TraceFn = void (*)(void* context, bool outgoing, const std::uint8_t* apdu,
+                         std::size_t length);
+
 /**
  * @brief Transmission control of one connection (see file comment).
  *
@@ -204,12 +226,25 @@ class Connection {
     [[nodiscard]] std::uint16_t unacknowledged() const noexcept;
     /** @brief True if send_asdu() would currently accept an ASDU of maximum length. */
     [[nodiscard]] bool can_send() const noexcept;
+    /** @brief Counters since init(). */
+    [[nodiscard]] const ConnectionStats& stats() const noexcept { return stats_; }
+
+    /**
+     * @brief Installs a trace observer (NULL = none). Call after init(), which resets it.
+     */
+    void set_trace(TraceFn fn, void* context) noexcept {
+        trace_fn_ = fn;
+        trace_context_ = context;
+    }
 
   private:
     static constexpr std::size_t kEventCapacity = 8;
     static constexpr std::size_t kOutputCapacity = 4096;
 
     // Helpers, see connection.cpp.
+    void trace(bool outgoing, const std::uint8_t* apdu, std::size_t length) const noexcept;
+    void count_sent(codec::FrameFormat format, const std::uint8_t* apdu,
+                    std::size_t length) noexcept;
     void handle_frame(const std::uint8_t* frame, const codec::Apci& apci, TimeMs now) noexcept;
     void handle_i_frame(const std::uint8_t* frame, const codec::Apci& apci, TimeMs now) noexcept;
     void handle_u_frame(codec::UFunction function, TimeMs now) noexcept;
@@ -255,6 +290,9 @@ class Connection {
     std::array<std::uint8_t, kOutputCapacity> out_{};
     std::size_t out_fill_{0};
     std::array<Event, kEventCapacity> events_{};
+    ConnectionStats stats_{};
+    TraceFn trace_fn_{nullptr};
+    void* trace_context_{nullptr};
     std::size_t event_head_{0};
     std::size_t event_count_{0};
 };

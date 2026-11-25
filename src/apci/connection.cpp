@@ -157,6 +157,21 @@ std::size_t Connection::receive(const std::uint8_t* data, std::size_t size, Time
             fail(CloseReason::MalformedFrame);
             return size;
         }
+        // Count and trace before handling: a frame that closes the
+        // connection is still part of the record.
+        switch (apci.format) {
+        case FrameFormat::I:
+            ++stats_.i_received;
+            break;
+        case FrameFormat::S:
+            ++stats_.s_received;
+            break;
+        case FrameFormat::U:
+            ++stats_.u_received;
+            break;
+        }
+        stats_.bytes_received += rx_fill_;
+        trace(false, rx_.data(), rx_fill_);
         handle_frame(rx_.data(), apci, now);
         rx_fill_ = 0;
     }
@@ -442,6 +457,9 @@ iec104_status Connection::send_asdu(const std::uint8_t* asdu, std::size_t length
     }
     (void)append_output(header.data(), header.size());
     (void)append_output(asdu, length);
+    // The frame is contiguous at the end of the output buffer.
+    const std::size_t frame_length = codec::kApciLength + length;
+    count_sent(FrameFormat::I, &out_[out_fill_ - frame_length], frame_length);
 
     // R10: remember when the frame left, t1 runs from here.
     sent_at_[(sent_head_ + unacknowledged()) % sent_at_.size()] = now;
@@ -461,6 +479,7 @@ bool Connection::send_u(UFunction function, TimeMs now) noexcept {
         !append_output(frame.data(), frame.size())) {
         return false;
     }
+    count_sent(FrameFormat::U, frame.data(), frame.size());
     // R10: every act is supervised by t1 until its confirmation arrives.
     // Start/stop and the link test are supervised separately: a test may
     // run while STARTDT or STOPDT is open and the other way round.
@@ -479,9 +498,33 @@ bool Connection::send_s(TimeMs /*now*/) noexcept {
         !append_output(frame.data(), frame.size())) {
         return false;
     }
+    count_sent(FrameFormat::S, frame.data(), frame.size());
     unacked_rx_ = 0;
     t2_deadline_ = 0;
     return true;
+}
+
+void Connection::count_sent(FrameFormat format, const std::uint8_t* apdu,
+                            std::size_t length) noexcept {
+    switch (format) {
+    case FrameFormat::I:
+        ++stats_.i_sent;
+        break;
+    case FrameFormat::S:
+        ++stats_.s_sent;
+        break;
+    case FrameFormat::U:
+        ++stats_.u_sent;
+        break;
+    }
+    stats_.bytes_sent += length;
+    trace(true, apdu, length);
+}
+
+void Connection::trace(bool outgoing, const std::uint8_t* apdu, std::size_t length) const noexcept {
+    if (trace_fn_ != nullptr) {
+        trace_fn_(trace_context_, outgoing, apdu, length);
+    }
 }
 
 bool Connection::append_output(const std::uint8_t* data, std::size_t size) noexcept {

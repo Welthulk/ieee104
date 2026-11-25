@@ -28,6 +28,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace iec104::transport {
 
@@ -57,6 +58,9 @@ class LinkSink {
     /** @brief Link @p id is closed; it is removed after this call. */
     virtual void on_closed(std::uint32_t id, LinkCloseReason reason,
                            apci::CloseReason protocol_reason) = 0;
+    /** @brief A complete APDU was sent or received on link @p id (for a raw data trace). */
+    virtual void on_frame(std::uint32_t /*id*/, bool /*outgoing*/, const std::uint8_t* /*apdu*/,
+                          std::size_t /*length*/) {}
 };
 
 /** @brief A TCP connection plus its state machine (see file comment). */
@@ -104,12 +108,24 @@ class Link {
     [[nodiscard]] bool connecting() const noexcept { return connecting_; }
     [[nodiscard]] apci::State state() const noexcept { return conn_.state(); }
     [[nodiscard]] bool can_send() const noexcept { return conn_.can_send(); }
+    /** @brief Frame and octet counters of the state machine. */
+    [[nodiscard]] const apci::ConnectionStats& stats() const noexcept { return conn_.stats(); }
+    /** @brief Address of the peer ("ip:port"), "" while connecting. */
+    [[nodiscard]] std::string peer() const { return peer_address(socket_); }
+
+    /** @brief Passes every complete APDU of this link to @p sink->on_frame() (NULL = off). */
+    void set_trace(LinkSink* sink) noexcept {
+        trace_sink_ = sink;
+        conn_.set_trace(sink != nullptr ? &Link::trace_thunk : nullptr, this);
+    }
 
   private:
     void read_input(apci::TimeMs now, LinkSink& sink) noexcept;
     void dispatch_events(LinkSink& sink) noexcept;
     void flush_output() noexcept;
     void finish(LinkCloseReason reason, LinkSink& sink) noexcept;
+    static void trace_thunk(void* context, bool outgoing, const std::uint8_t* apdu,
+                            std::size_t length) noexcept;
 
     std::uint32_t id_{0};
     Socket socket_;
@@ -119,6 +135,7 @@ class Link {
     LinkCloseReason close_reason_{LinkCloseReason::None};
     apci::CloseReason protocol_reason_{apci::CloseReason::None};
     bool reported_closed_{false};
+    LinkSink* trace_sink_{nullptr};
 
     // Bytes taken from the state machine but not yet accepted by the socket.
     std::array<std::uint8_t, 8192> pending_{};

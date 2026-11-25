@@ -184,4 +184,14 @@ void Link::finish(LinkCloseReason reason, LinkSink& sink) noexcept {
     sink.on_closed(id_, reason, protocol_reason_);
 }
 
+void Link::trace_thunk(void* context, bool outgoing, const std::uint8_t* apdu,
+                       std::size_t length) noexcept {
+    // context is the Link itself (set in set_trace(); links live in unique_ptr,
+    // so the address stays valid).
+    const auto* link = static_cast<const Link*>(context);
+    if (link->trace_sink_ != nullptr) {
+        link->trace_sink_->on_frame(link->id_, outgoing, apdu, length);
+    }
+}
+
 } // namespace iec104::transport

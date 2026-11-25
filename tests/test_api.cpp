@@ -16,12 +16,12 @@
 #include <gtest/gtest.h>
 
 // Rule: the version string reported by the built library matches the project
-// version. Source: CMakeLists.txt (project VERSION 0.1.0) and the
+// version. Source: CMakeLists.txt (project VERSION 0.2.0) and the
 // IEC104_VERSION_* macros in iec104.h.
 TEST(Api, VersionStringMatchesMacros) {
     const char* v = iec104_version_string();
     ASSERT_NE(v, nullptr);
-    EXPECT_STREQ(v, "0.1.0");
+    EXPECT_STREQ(v, "0.2.0");
 }
 
 // Rule: iec104_status_string() never returns NULL, also for values that are

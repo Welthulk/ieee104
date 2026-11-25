@@ -459,3 +459,22 @@ TEST(ApciConnection, StopWhileTestIsOpen) {
     EXPECT_EQ(p.client.conn.state(), State::Stopped);
     EXPECT_EQ(p.client.close_reason(), CloseReason::None);
 }
+
+// Rule: the counters follow every frame in both directions.
+TEST(ApciConnection, Counters) {
+    Pair p;
+    p.start();
+    ASSERT_EQ(p.server.conn.send_asdu(kAsdu.data(), kAsdu.size(), p.now), IEC104_OK);
+    p.pump();
+    p.advance(10000); // t2: the client acknowledges with an S-frame
+    const ConnectionStats& c = p.client.conn.stats();
+    const ConnectionStats& s = p.server.conn.stats();
+    EXPECT_EQ(c.u_sent, 1U); // STARTDT act
+    EXPECT_EQ(s.u_received, 1U);
+    EXPECT_EQ(s.i_sent, 1U);
+    EXPECT_EQ(c.i_received, 1U);
+    EXPECT_EQ(c.s_sent, 1U);
+    EXPECT_EQ(s.s_received, 1U);
+    EXPECT_EQ(c.bytes_received, s.bytes_sent);
+    EXPECT_EQ(s.bytes_sent, 6U + 6U + kAsdu.size() + 0U); // STARTDT con + I-frame
+}

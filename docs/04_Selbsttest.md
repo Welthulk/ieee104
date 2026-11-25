@@ -206,6 +206,9 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
 | `--k N`, `--w N` | Fenstergrößen | 12, 8 |
 | `--tolerant` | bekannte Abweichungen zulassen | aus (strikt) |
 | `--verbose` | jeden Zustandswechsel und jedes Objekt ausgeben | aus |
+| `--config F` | Parameter aus Datei F (`docs/06_Anleitung.md`, Abschnitt 5); Optionen auf der Kommandozeile überschreiben die Datei | – |
+| `--log STUFE` | Log der Library: error, warning, info, debug, trace (trace = jede APDU als Hexdump) | aus |
+| `--stats` | Zähler je Verbindung am Ende ausgeben | aus |
 
 ## 6. Was der Selbsttest abdeckt und was nicht
 

@@ -2,7 +2,7 @@
 
 Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`). Jede Protokollregel im Code nennt ihre Quelle.
 
-Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
+Stand: 25.11.2026, Version 0.2.0, Linux x86-64.
 
 ## Stand
 
@@ -15,7 +15,8 @@ Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
 | C-API | Server und Client mit Handles, konfigurierbaren Ports, Timern und ASDU-Profil; Werte statt Oktette (`iec104_object`), Callbacks für Objekte, Befehle und Zustandswechsel |
 | Selbsttest | `iec104_selftest_server` und `iec104_selftest_client` für automatische und manuelle Tests |
 | Befehle | Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung am Client mit Ergebnis je Befehl und getrennten Timeouts |
-| in Arbeit | Pufferung, TLS (OpenSSL 3.x), Redundanzgruppen, Logging und Statistik |
+| Betrieb | Log-Callback mit Stufen und APDU-Trace, Statistik je Verbindung, Konfigurationsdatei, `find_package(iec104)`, statisch oder geteilt |
+| in Arbeit | Pufferung, TLS (OpenSSL 3.x), Redundanzgruppen |
 
 ## Unterlagen
 
@@ -25,7 +26,8 @@ Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
 | `docs/02_Technik_und_Quellen.md` | Architektur, Protokollaufbau, Parameter, Typkennungen, Elemente, Quellen |
 | `docs/03_Quellen_APCI.md` | Öffentliche Belege für die Regeln der Verbindungssteuerung |
 | `docs/04_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
-| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E7), auf die der Code verweist |
+| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E8), auf die der Code verweist |
+| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Regeln |
 
 ## Verzeichnisse
 
@@ -39,6 +41,7 @@ Stand: 25.11.2026, Version 0.1.0, Linux x86-64.
 | `src/api/` | Implementierung der C-Schnittstelle |
 | `tests/` | Unit-Tests (GoogleTest), Referenzdaten unter `tests/data/` |
 | `fuzz/` | libFuzzer-Ziele für Codec und Zustandsmaschine |
+| `examples/` | Hello World: kleinster Server und Client |
 | `tools/selftest/` | Selbsttest-Programme und Testskript |
 | `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer |
 
