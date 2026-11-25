@@ -261,3 +261,36 @@ tls_session_lifetime = 600
     EXPECT_EQ(iec104_config_load(bad.c_str(), &c, &line), IEC104_ERR_INVALID_ARGUMENT);
     EXPECT_EQ(line, 1);
 }
+
+// Rule: every "group" line adds a redundancy group; the buffer settings of
+// the file apply to all groups, also when they stand below the groups.
+TEST(ConfigFile, RedundancyGroups) {
+    const std::string path = write_file("groups.conf", R"(group = 192.0.2.10, 192.0.2.11
+group = 2001:db8::1 2001:db8::2
+group = *
+event_buffer_size = 5000
+overflow = reject
+)");
+    iec104_config c{};
+    iec104_config_init(&c);
+    EXPECT_EQ(c.server.event_buffer_size, 1000U);
+    EXPECT_EQ(c.server.overflow, IEC104_OVERFLOW_DROP_OLDEST);
+    int line = -1;
+    ASSERT_EQ(iec104_config_load(path.c_str(), &c, &line), IEC104_OK) << line;
+    ASSERT_EQ(c.group_count, 3U);
+    EXPECT_STREQ(c.groups[0].peers[0], "192.0.2.10");
+    EXPECT_STREQ(c.groups[0].peers[1], "192.0.2.11");
+    EXPECT_STREQ(c.groups[0].peers[2], "");
+    EXPECT_STREQ(c.groups[1].peers[1], "2001:db8::2");
+    EXPECT_STREQ(c.groups[2].peers[0], ""); // any address
+    for (std::uint32_t i = 0; i < c.group_count; ++i) {
+        EXPECT_EQ(c.groups[i].buffer_size, 5000U);
+        EXPECT_EQ(c.groups[i].overflow, IEC104_OVERFLOW_REJECT);
+    }
+    EXPECT_EQ(c.server.event_buffer_size, 5000U);
+
+    const std::string bad = write_file("groups_bad.conf", "group =\n");
+    EXPECT_EQ(iec104_config_load(bad.c_str(), &c, &line), IEC104_ERR_INVALID_ARGUMENT);
+    const std::string range = write_file("groups_range.conf", "event_buffer_size = 2000000\n");
+    EXPECT_EQ(iec104_config_load(range.c_str(), &c, &line), IEC104_ERR_OUT_OF_RANGE);
+}

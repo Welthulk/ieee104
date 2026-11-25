@@ -5,11 +5,13 @@
 # All rights reserved by SOPTIM AG.
 # run_selftest.sh – Selbsttest-Server und -Client über Loopback gegeneinander.
 #
-# Aufruf: run_selftest.sh SERVER_PROGRAMM CLIENT_PROGRAMM [--tls ZERTIFIKATSVERZEICHNIS]
+# Aufruf: run_selftest.sh SERVER_PROGRAMM CLIENT_PROGRAMM [--tls ZERTIFIKATSVERZEICHNIS | --switchover]
 #                         [ZUSÄTZLICHE CLIENT-OPTIONEN]
 #
 # Mit --tls laufen beide über TLS mit den Testzertifikaten aus
 # tools/make_test_certs.sh; der Server erneuert die Schlüssel alle 2 s.
+# Mit --switchover bilden zwei Verbindungen des Clients eine Redundanzgruppe;
+# der Client schaltet in der Mitte der Messreihe auf die zweite um.
 #
 # Der Server lauscht auf einem freien Port (--port 0) und schreibt ihn in eine
 # Datei; der Client liest ihn von dort. Kurze Timer (t3 = 1 s) und eine Ruhe
@@ -30,6 +32,11 @@ if [ "${1:-}" = "--tls" ]; then
                 --tls-crl "$D/crl.pem" --tls-renewal 2)
     CLIENT_TLS=(--tls-ca "$D/ca.pem" --tls-cert "$D/client.pem" --tls-key "$D/client.key"
                 --tls-peer-name localhost)
+elif [ "${1:-}" = "--switchover" ]; then
+    shift
+    # Längere Reihe (300 Werte, 15 s), damit die Umschaltung mitten hinein fällt.
+    SERVER_TLS=(--broadcast --group 127.0.0.1 --stats --count 300 --interval 50)
+    CLIENT_TLS=(--switchover --expect 300)
 fi
 
 WORK="$(mktemp -d)"

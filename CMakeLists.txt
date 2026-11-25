@@ -6,7 +6,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(iec104
-    VERSION 0.3.0
+    VERSION 0.4.0
     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
     LANGUAGES C CXX)
 
@@ -86,6 +86,7 @@ add_library(iec104_objects OBJECT
     src/session/command_table.cpp
     src/session/command_tracker.cpp
     src/session/process_image.cpp
+    src/session/redundancy_group.cpp
     src/session/server_session.cpp
     src/transport/link.cpp
     src/transport/tcp.cpp
@@ -160,6 +161,7 @@ if(IEC104_BUILD_TESTS)
         tests/test_cp56time2a.cpp
         tests/test_elements.cpp
         tests/test_operation.cpp
+        tests/test_redundancy.cpp
         tests/test_session.cpp
         tests/test_tcp_loopback.cpp
         tests/test_tls.cpp
@@ -208,6 +210,11 @@ if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
             COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
                     $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>)
         set_tests_properties(SelfTest.ServerAndClientOverTcp PROPERTIES TIMEOUT 90)
+        add_test(NAME SelfTest.SwitchOver
+            COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
+                    $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>
+                    --switchover)
+        set_tests_properties(SelfTest.SwitchOver PROPERTIES TIMEOUT 90)
         if(IEC104_TLS)
             add_test(NAME SelfTest.ServerAndClientOverTls
                 COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh

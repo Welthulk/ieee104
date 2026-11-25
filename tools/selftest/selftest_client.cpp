@@ -30,6 +30,7 @@
  *   unknown command IOA          rejected (cause 47)           -
  *   unknown station              negative, cause 46            -
  *   spontaneous values           N values in order             -
+ *   switch-over (--switchover)   STOPDT old, STARTDT standby, the series continues
  *   idle period, STOPDT          yes                           yes
  *
  * Exit code: 0 = all steps passed, 1 = a step failed, 2 = usage error.
@@ -50,6 +51,7 @@ struct Options {
     unsigned long timeout_s{20};
     unsigned long ca{selftest::kStation};
     bool foreign{false};
+    bool switchover{false}; // second connection as standby, switch in the middle of the series
 };
 
 /** @brief One received object with the parts of its ASDU the checks need. */
@@ -73,6 +75,7 @@ struct Client {
     iec104_link_state state{IEC104_LINK_CONNECTING};
     iec104_close_reason close_reason{IEC104_CLOSE_NONE};
     std::vector<Received> received;
+    Client* other{nullptr}; // the other connection of a switch-over test, polled as well
 };
 
 std::uint64_t now_ms() {
@@ -127,8 +130,49 @@ bool wait_for(Client& c, std::uint64_t ms, const std::function<bool()>& done) {
     const std::uint64_t end = now_ms() + ms;
     while (!done() && c.state != IEC104_LINK_CLOSED && now_ms() < end) {
         (void)iec104_client_poll(c.handle, 10);
+        if (c.other != nullptr && c.other->handle != nullptr) {
+            (void)iec104_client_poll(c.other->handle, 0); // the standby answers TESTFR
+        }
     }
     return done();
+}
+
+/** @brief Values of IOA 100 with cause spontaneous, in order of arrival. */
+std::vector<double> series(const Client& c) {
+    std::vector<double> v;
+    for (const Received& r : c.received) {
+        if (r.info.cause == IEC104_COT_SPONTANEOUS && r.object.ioa == selftest::kMeasurementIoa) {
+            v.push_back(r.object.value);
+        }
+    }
+    return v;
+}
+
+/**
+ * @brief The series 0, 1, 2, ... received over two connections one after the other.
+ *
+ * Events not acknowledged before the switch-over may arrive again on the
+ * second connection; such repetitions are skipped.
+ * @param repeated Receives the number of skipped repetitions.
+ * @return Length of the gap-free series 0..n-1, or -1 if it has a gap or is out of order.
+ */
+long merged_series(const Client& first, const Client& second, unsigned long& repeated) {
+    std::vector<double> all = series(first);
+    const std::vector<double> more = series(second);
+    repeated = 0;
+    for (const double v : more) {
+        if (!all.empty() && v <= all.back()) {
+            ++repeated;
+            continue;
+        }
+        all.push_back(v);
+    }
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        if (all[i] != static_cast<double>(i)) {
+            return -1;
+        }
+    }
+    return static_cast<long>(all.size());
 }
 
 /** @brief Index of the first object at or after @p from with type and cause, or -1. */
@@ -270,14 +314,45 @@ void print_help() {
                 "  --expect N       spontaneous values to expect (default 100)\n"
                 "  --idle S         idle seconds before STOPDT, to see the link test\n"
                 "                   (default 0; choose more than t3)\n"
-                "  --timeout S      limit for each step in seconds (default 20)\n");
+                "  --timeout S      limit for each step in seconds (default 20)\n"
+                "  --switchover     open a second connection as standby and switch to it\n"
+                "                   while the series runs (server with --broadcast)\n");
     selftest::print_common_help();
+}
+
+/** @brief Creates the client handle of @p c with all options; prints the error. */
+iec104_status create_handle(Client& c) {
+    iec104_callbacks cb{};
+    cb.user = &c;
+    cb.on_state = on_state;
+    cb.on_security = on_security;
+    cb.on_object = on_object;
+    cb.on_command_result = on_command_result;
+    iec104_status st = iec104_client_create(&c.opt.common.link, &cb, &c.handle);
+    if (st != IEC104_OK) {
+        std::fprintf(stderr, "invalid configuration: %s\n", iec104_status_string(st));
+        return st;
+    }
+    (void)iec104_client_set_options(c.handle, &c.opt.common.client);
+    if (c.opt.common.log_level >= 0) {
+        iec104_client_set_log(c.handle, static_cast<iec104_log_level>(c.opt.common.log_level),
+                              selftest::print_log, nullptr);
+    }
+    if (c.opt.common.use_tls &&
+        (st = iec104_client_set_tls(c.handle, &c.opt.common.tls)) != IEC104_OK) {
+        std::fprintf(stderr, "TLS settings: %s (details with --log error)\n",
+                     iec104_status_string(st));
+        iec104_client_destroy(c.handle);
+        c.handle = nullptr;
+    }
+    return st;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
     Client c;
+    Client standby; // second connection of the switch-over test
     c.opt.common.host = "127.0.0.1";
     selftest::load_config_option(argc, argv, c.opt.common);
     for (int i = 1; i < argc; ++i) {
@@ -298,6 +373,8 @@ int main(int argc, char** argv) {
             c.opt.ca = selftest::parse_number("--ca", value(), 65535);
         } else if (arg == "--foreign") {
             c.opt.foreign = true;
+        } else if (arg == "--switchover") {
+            c.opt.switchover = true;
         } else if (arg == "--help" || arg == "-h") {
             print_help();
             return 0;
@@ -307,27 +384,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    iec104_callbacks cb{};
-    cb.user = &c;
-    cb.on_state = on_state;
-    cb.on_security = on_security;
-    cb.on_object = on_object;
-    cb.on_command_result = on_command_result;
-    iec104_status st = iec104_client_create(&c.opt.common.link, &cb, &c.handle);
+    iec104_status st = create_handle(c);
     if (st != IEC104_OK) {
-        std::fprintf(stderr, "invalid configuration: %s\n", iec104_status_string(st));
-        return 2;
-    }
-    (void)iec104_client_set_options(c.handle, &c.opt.common.client);
-    if (c.opt.common.log_level >= 0) {
-        iec104_client_set_log(c.handle, static_cast<iec104_log_level>(c.opt.common.log_level),
-                              selftest::print_log, nullptr);
-    }
-    if (c.opt.common.use_tls &&
-        (st = iec104_client_set_tls(c.handle, &c.opt.common.tls)) != IEC104_OK) {
-        std::fprintf(stderr, "TLS settings: %s (details with --log error)\n",
-                     iec104_status_string(st));
-        iec104_client_destroy(c.handle);
         return 2;
     }
     const auto ca = static_cast<std::uint16_t>(c.opt.ca);
@@ -396,6 +454,17 @@ int main(int argc, char** argv) {
         (void)iec104_client_get_tls_info(c.handle, &tls);
         step("TLS", tls.version[0] != '\0',
              std::string(tls.version) + ", " + tls.cipher + ", peer " + tls.peer_subject);
+    }
+    if (c.opt.switchover) {
+        // Standby: connected, data transfer stopped, supervised with TESTFR.
+        standby.opt = c.opt;
+        ok = create_handle(standby) == IEC104_OK &&
+             iec104_client_connect(standby.handle, c.opt.common.host.c_str(), c.opt.common.port) ==
+                 IEC104_OK;
+        c.other = &standby;
+        standby.other = &c;
+        ok = ok && wait_for(standby, step_ms, [&] { return standby.state == IEC104_LINK_STOPPED; });
+        step("standby connection (stopped)", ok);
     }
     ok = iec104_client_start(c.handle) == IEC104_OK &&
          wait_for(c, step_ms, [&] { return c.state == IEC104_LINK_STARTED; });
@@ -473,46 +542,88 @@ int main(int argc, char** argv) {
                  });
             step("unknown station (cause 46)", ok);
 
-            // Spontaneous values of IOA 100 in order.
-            auto spontaneous = [&](bool& in_order) {
-                unsigned long n = 0;
-                in_order = true;
-                for (const Received& r : c.received) {
-                    if (r.info.cause == IEC104_COT_SPONTANEOUS &&
-                        r.object.ioa == selftest::kMeasurementIoa) {
-                        in_order = in_order && r.object.value == static_cast<double>(n);
-                        ++n;
+            if (c.opt.switchover) {
+                // Switch while the series is running: STOPDT on the first
+                // connection, STARTDT on the standby; the series must go on
+                // without a gap (the server sends it with --broadcast).
+                ok = wait_for(c, step_ms, [&] { return !series(c).empty(); }) &&
+                     series(c).size() < c.opt.expect && iec104_client_stop(c.handle) == IEC104_OK &&
+                     wait_for(
+                         c, step_ms, [&] { return c.state == IEC104_LINK_STOPPED; }) &&
+                     iec104_client_start(standby.handle) == IEC104_OK &&
+                     wait_for(
+                         standby, step_ms, [&] { return standby.state == IEC104_LINK_STARTED; });
+                step("switch-over (STOPDT, STARTDT standby)", ok,
+                     std::to_string(series(c).size()) + " values before");
+                unsigned long repeated = 0;
+                const auto expect = static_cast<long>(c.opt.expect);
+                ok = ok && wait_for(standby, step_ms,
+                                    [&] { return merged_series(c, standby, repeated) >= expect; });
+                const long n = merged_series(c, standby, repeated);
+                step("spontaneous values", ok && n == expect,
+                     n < 0 ? "gap or NOT in order"
+                           : std::to_string(n) + "/" + std::to_string(expect) + ", in order" +
+                                 (repeated > 0U ? ", " + std::to_string(repeated) + " repeated"
+                                                : ""));
+            } else {
+                // Spontaneous values of IOA 100 in order.
+                auto spontaneous = [&](bool& in_order) {
+                    unsigned long n = 0;
+                    in_order = true;
+                    for (const Received& r : c.received) {
+                        if (r.info.cause == IEC104_COT_SPONTANEOUS &&
+                            r.object.ioa == selftest::kMeasurementIoa) {
+                            in_order = in_order && r.object.value == static_cast<double>(n);
+                            ++n;
+                        }
                     }
-                }
-                return n;
-            };
-            bool in_order = true;
-            ok = wait_for(c, step_ms, [&] { return spontaneous(in_order) >= c.opt.expect; });
-            const unsigned long values = spontaneous(in_order);
-            step("spontaneous values", ok && in_order && values == c.opt.expect,
-                 std::to_string(values) + "/" + std::to_string(c.opt.expect) +
-                     (in_order ? ", in order" : ", NOT in order"));
+                    return n;
+                };
+                bool in_order = true;
+                ok = wait_for(c, step_ms, [&] { return spontaneous(in_order) >= c.opt.expect; });
+                const unsigned long values = spontaneous(in_order);
+                step("spontaneous values", ok && in_order && values == c.opt.expect,
+                     std::to_string(values) + "/" + std::to_string(c.opt.expect) +
+                         (in_order ? ", in order" : ", NOT in order"));
+            }
         }
+
+        // After a switch-over the standby carries the data.
+        Client& m = c.opt.switchover && standby.state == IEC104_LINK_STARTED ? standby : c;
 
         // Idle: the link stays up only if both sides answer TESTFR within t1.
         if (c.opt.idle_s > 0U) {
-            (void)wait_for(c, c.opt.idle_s * 1000U, [] { return false; });
-            step("idle period (link test)", c.state == IEC104_LINK_STARTED,
-                 c.state == IEC104_LINK_STARTED ? std::to_string(c.opt.idle_s) + " s, ok"
-                                                : closed_detail());
+            (void)wait_for(m, c.opt.idle_s * 1000U, [] { return false; });
+            step("idle period (link test)", m.state == IEC104_LINK_STARTED,
+                 m.state == IEC104_LINK_STARTED  ? std::to_string(c.opt.idle_s) + " s, ok"
+                 : m.state == IEC104_LINK_CLOSED ? iec104_close_reason_string(m.close_reason)
+                                                 : "timeout");
+            if (c.opt.switchover) {
+                step("idle connection still open",
+                     (&m == &c ? standby : c).state == IEC104_LINK_STOPPED);
+            }
         }
 
-        ok = c.state == IEC104_LINK_STARTED && iec104_client_stop(c.handle) == IEC104_OK &&
-             wait_for(c, step_ms, [&] { return c.state == IEC104_LINK_STOPPED; });
-        step("stop data transfer (STOPDT)", ok, ok ? "" : closed_detail());
+        ok = m.state == IEC104_LINK_STARTED && iec104_client_stop(m.handle) == IEC104_OK &&
+             wait_for(m, step_ms, [&] { return m.state == IEC104_LINK_STOPPED; });
+        step("stop data transfer (STOPDT)", ok,
+             ok || m.state != IEC104_LINK_CLOSED ? "" : iec104_close_reason_string(m.close_reason));
     }
 
-    iec104_client_close(c.handle);
-    (void)wait_for(c, 1000, [&] { return c.state == IEC104_LINK_CLOSED; });
+    c.other = nullptr;
+    standby.other = nullptr;
+    for (Client* k : {&standby, &c}) {
+        if (k->handle == nullptr) {
+            continue;
+        }
+        iec104_client_close(k->handle);
+        (void)wait_for(*k, 1000, [&] { return k->state == IEC104_LINK_CLOSED; });
+    }
     iec104_link_stats stats{};
     if (c.opt.common.stats && iec104_client_get_stats(c.handle, &stats) == IEC104_OK) {
         selftest::print_stats(stats);
     }
+    iec104_client_destroy(standby.handle);
     iec104_client_destroy(c.handle);
     std::printf("result: %s\n", passed ? "PASSED" : "FAILED");
     return passed ? 0 : 1;

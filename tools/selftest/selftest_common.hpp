@@ -39,6 +39,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 namespace selftest {
 
@@ -68,6 +69,7 @@ struct CommonOptions {
     int log_level{-1}; ///< -1 = no log output, else iec104_log_level
     bool use_tls{false};
     iec104_tls_config tls{};
+    std::vector<iec104_group_config> groups; ///< Redundancy groups (server).
 
     CommonOptions() {
         iec104_link_config_init(&link);
@@ -108,6 +110,7 @@ inline void load_config_option(int argc, char** argv, CommonOptions& o) {
         o.host = c.host;
         o.use_tls = c.use_tls != 0;
         o.tls = c.tls;
+        o.groups.assign(&c.groups[0], &c.groups[0] + c.group_count);
     }
 }
 

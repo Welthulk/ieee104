@@ -61,7 +61,7 @@ extern "C" {
 /** @brief Major version of this header. Incompatible API changes increment it. */
 #define IEC104_VERSION_MAJOR 0
 /** @brief Minor version of this header. Compatible additions increment it. */
-#define IEC104_VERSION_MINOR 3
+#define IEC104_VERSION_MINOR 4
 /** @brief Patch version of this header. Fixes without API change increment it. */
 #define IEC104_VERSION_PATCH 0
 
@@ -604,6 +604,13 @@ IEC104_API iec104_status iec104_server_send_asdu(iec104_server* server, uint32_t
 IEC104_API size_t iec104_server_connection_count(const iec104_server* server);
 
 /** @brief Behaviour of the server's application layer. */
+/** @brief What happens when an event arrives at a full event buffer. */
+/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
+typedef enum iec104_overflow {
+    IEC104_OVERFLOW_DROP_OLDEST = 0, /**< The oldest event is dropped (default). */
+    IEC104_OVERFLOW_REJECT = 1       /**< The new event is rejected: IEC104_ERR_WOULD_BLOCK. */
+} iec104_overflow;
+
 typedef struct iec104_server_options {
     /** 1 (default) = send end of initialization (type 70, cause 4) on the first STARTDT
      *  of every connection after the server was created. */
@@ -615,14 +622,97 @@ typedef struct iec104_server_options {
     /** Maximum age in ms of a command with time tag (58..64, 107) against the server's
      *  UTC clock; older commands are discarded without answer. 0 (default) = no check. */
     uint32_t max_command_delay_ms;
+    /** Event buffer of a connection without configured redundancy groups (see
+     *  iec104_server_add_group()): events while the connection is stopped, and
+     *  sent but unacknowledged ones. Default 1000; set before listen. */
+    uint32_t event_buffer_size;
+    /** Behaviour of that buffer when it is full; default IEC104_OVERFLOW_DROP_OLDEST. */
+    iec104_overflow overflow;
 } iec104_server_options;
 
 /** @brief Fills @p options with the defaults. Does nothing for NULL. */
 IEC104_API void iec104_server_options_init(iec104_server_options* options);
 
-/** @brief Applies options. @return IEC104_OK or IEC104_ERR_INVALID_ARGUMENT for NULL. */
+/**
+ * @brief Applies options.
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL; IEC104_ERR_OUT_OF_RANGE
+ *         for an event buffer size outside 1..IEC104_MAX_EVENT_BUFFER.
+ */
 IEC104_API iec104_status iec104_server_set_options(iec104_server* server,
                                                    const iec104_server_options* options);
+
+/* Redundancy groups (edition 2, clause 10) -------------------------------- */
+
+/** @brief Most addresses of controlling stations in one group. */
+#define IEC104_GROUP_MAX_PEERS 8
+/** @brief Size of an address text in ::iec104_group_config, including the NUL. */
+#define IEC104_ADDRESS_SIZE 64
+/** @brief Largest event buffer of a group. */
+#define IEC104_MAX_EVENT_BUFFER 1000000
+
+/**
+ * @brief Settings of a redundancy group.
+ *
+ * The connections of one controlling station form a group. Only one of them
+ * transfers data (the one started last with STARTDT); the others stand by in
+ * STOPDT. Spontaneous data goes into the group's event buffer and stays
+ * there until the active connection has acknowledged it. After a break or a
+ * switch-over, unacknowledged events are sent again on the next active
+ * connection (they may arrive twice, but are not lost).
+ */
+typedef struct iec104_group_config {
+    /** IP addresses of the controlling station ("192.0.2.10", "2001:db8::1");
+     *  all empty = any address (only one such group is used). */
+    /* NOLINTNEXTLINE(*-avoid-c-arrays): C header */
+    char peers[IEC104_GROUP_MAX_PEERS][IEC104_ADDRESS_SIZE];
+    uint32_t buffer_size;     /**< Events in the buffer, default 1000. */
+    iec104_overflow overflow; /**< Default IEC104_OVERFLOW_DROP_OLDEST. */
+} iec104_group_config;
+
+/** @brief Defaults: any address, 1000 events, drop oldest. Does nothing for NULL. */
+IEC104_API void iec104_group_config_init(iec104_group_config* config);
+
+/**
+ * @brief Adds a redundancy group (before iec104_server_listen()).
+ *
+ * With groups, a new connection joins the group that lists its address, or
+ * else the group open to any address; without such a group it is rejected
+ * at once (logged as warning). Without any group, every connection is a
+ * group of its own (buffer from ::iec104_server_options).
+ *
+ * @param group Receives the id of the group (1, 2, ...); may be NULL.
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL or an address
+ *         without NUL; IEC104_ERR_OUT_OF_RANGE for a buffer size outside
+ *         1..IEC104_MAX_EVENT_BUFFER; IEC104_ERR_WRONG_STATE after listen.
+ */
+IEC104_API iec104_status iec104_server_add_group(iec104_server* server,
+                                                 const iec104_group_config* config,
+                                                 uint32_t* group);
+
+/** @brief State and counters of a redundancy group. */
+typedef struct iec104_group_stats {
+    uint32_t active_connection; /**< Connection that transfers data, 0 = none. */
+    uint32_t connections;       /**< Connections in the group. */
+    uint32_t buffered;          /**< Events in the buffer. */
+    uint32_t in_flight;         /**< ... of them sent, not yet acknowledged. */
+    uint64_t events;            /**< Events put into the buffer. */
+    uint64_t dropped;           /**< Events dropped because the buffer was full. */
+    uint64_t rejected;          /**< Events rejected because the buffer was full. */
+    uint64_t resent;            /**< Sent events queued again after a stop or break. */
+    uint64_t switchovers;       /**< Changes of the active connection to another one. */
+} iec104_group_stats;
+
+/**
+ * @brief Counters of a group.
+ * @return IEC104_OK; IEC104_ERR_WRONG_STATE if the group does not exist (a
+ *         connection's own group ends with the connection).
+ */
+IEC104_API iec104_status iec104_server_get_group_stats(const iec104_server* server, uint32_t group,
+                                                       iec104_group_stats* out);
+
+/** @brief Group of a connection, 0 if the connection does not exist. */
+IEC104_API uint32_t iec104_server_connection_group(const iec104_server* server,
+                                                   uint32_t connection);
 
 /**
  * @brief Adds a data point to the server's process image (or replaces it).
@@ -882,6 +972,9 @@ IEC104_API iec104_status iec104_client_get_tls_info(const iec104_client* client,
 /* Configuration file                                                        */
 /* ------------------------------------------------------------------------- */
 
+/** @brief Most redundancy groups in a configuration file. */
+#define IEC104_CONFIG_MAX_GROUPS 8
+
 /** @brief Everything a configuration file can set. */
 typedef struct iec104_config {
     iec104_link_config link;      /**< Timers, windows, ASDU profile. */
@@ -891,6 +984,9 @@ typedef struct iec104_config {
     uint16_t port;                /**< TCP port. */
     int use_tls;                  /**< 1: apply @p tls with *_set_tls(). */
     iec104_tls_config tls;        /**< TLS settings. */
+    /** Redundancy groups of a server, for iec104_server_add_group(). */
+    iec104_group_config groups[IEC104_CONFIG_MAX_GROUPS];
+    uint32_t group_count; /**< Used entries of @p groups. */
 } iec104_config;
 
 /** @brief Defaults of all parts (standard values, host "", port 2404). Does nothing for NULL. */
@@ -910,6 +1006,8 @@ IEC104_API void iec104_config_init(iec104_config* config);
  * | cot_length, ca_length, ioa_length, max_asdu_length, originator | link (ASDU profile) |
  * | send_end_of_init, command_termination, cause_of_init | server |
  * | max_command_delay | server (s) |
+ * | event_buffer_size, overflow ("drop_oldest", "reject") | server; also for the groups |
+ * | group | one redundancy group per line: addresses separated by blanks or commas, "*" = any |
  * | confirmation_timeout, termination_timeout, expect_termination | client (s) |
  * | tls | use_tls |
  * | tls_ca, tls_certificate, tls_key, tls_crl | tls (files) |

@@ -124,6 +124,39 @@ iec104_status parse_whole_seconds(const std::string& text, std::uint32_t& out) {
     return parse_small(text, 7UL * 24UL * 3600UL, out); // at most one week
 }
 
+/** @brief "group = 192.0.2.10, 192.0.2.11" or "group = *": appends a redundancy group. */
+iec104_status parse_group(const std::string& value, iec104_config& c) {
+    if (c.group_count >= IEC104_CONFIG_MAX_GROUPS) {
+        return IEC104_ERR_OUT_OF_RANGE;
+    }
+    iec104_group_config g{};
+    iec104_group_config_init(&g);
+    std::size_t n = 0;
+    std::size_t pos = 0;
+    while (pos < value.size()) {
+        const std::size_t end = value.find_first_of(" \t,", pos);
+        const std::string address =
+            value.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        pos = end == std::string::npos ? value.size() : end + 1U;
+        if (address.empty() || address == "*") {
+            continue;
+        }
+        if (n >= IEC104_GROUP_MAX_PEERS) {
+            return IEC104_ERR_OUT_OF_RANGE;
+        }
+        const iec104_status st = parse_text(address, g.peers[n]);
+        if (st != IEC104_OK) {
+            return st;
+        }
+        ++n;
+    }
+    if (n == 0U && value != "*") {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    c.groups[c.group_count++] = g;
+    return IEC104_OK;
+}
+
 /** @brief Applies one TLS key ("tls_..."); IEC104_ERR_INVALID_ARGUMENT for an unknown key. */
 iec104_status apply_tls(const std::string& key, const std::string& value, const std::string& base,
                         iec104_tls_config& t) {
@@ -174,6 +207,46 @@ iec104_status apply_tls(const std::string& key, const std::string& value, const 
     }
     if (key == "tls_session_lifetime") {
         return parse_whole_seconds(value, t.session_lifetime_s);
+    }
+    return IEC104_ERR_INVALID_ARGUMENT;
+}
+
+/** @brief Applies one key of the server or client options; INVALID_ARGUMENT for an unknown key. */
+iec104_status apply_station(const std::string& key, const std::string& value, iec104_config& c) {
+    if (key == "send_end_of_init") {
+        return parse_flag(value, c.server.send_end_of_init);
+    }
+    if (key == "command_termination") {
+        return parse_flag(value, c.server.command_termination);
+    }
+    if (key == "cause_of_init") {
+        return parse_small(value, 127, c.server.cause_of_init);
+    }
+    if (key == "event_buffer_size") {
+        return parse_small(value, IEC104_MAX_EVENT_BUFFER, c.server.event_buffer_size);
+    }
+    if (key == "overflow") {
+        if (value == "drop_oldest" || value == "reject") {
+            c.server.overflow =
+                value == "reject" ? IEC104_OVERFLOW_REJECT : IEC104_OVERFLOW_DROP_OLDEST;
+            return IEC104_OK;
+        }
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    if (key == "group") {
+        return parse_group(value, c);
+    }
+    if (key == "max_command_delay") {
+        return parse_seconds(value, c.server.max_command_delay_ms);
+    }
+    if (key == "confirmation_timeout") {
+        return parse_seconds(value, c.client.confirmation_timeout_ms);
+    }
+    if (key == "termination_timeout") {
+        return parse_seconds(value, c.client.termination_timeout_ms);
+    }
+    if (key == "expect_termination") {
+        return parse_flag(value, c.client.expect_termination);
     }
     return IEC104_ERR_INVALID_ARGUMENT;
 }
@@ -230,28 +303,7 @@ iec104_status apply(const std::string& key, const std::string& value, const std:
     if (key == "originator") {
         return parse_small(value, 255, l.originator);
     }
-    if (key == "send_end_of_init") {
-        return parse_flag(value, c.server.send_end_of_init);
-    }
-    if (key == "command_termination") {
-        return parse_flag(value, c.server.command_termination);
-    }
-    if (key == "cause_of_init") {
-        return parse_small(value, 127, c.server.cause_of_init);
-    }
-    if (key == "max_command_delay") {
-        return parse_seconds(value, c.server.max_command_delay_ms);
-    }
-    if (key == "confirmation_timeout") {
-        return parse_seconds(value, c.client.confirmation_timeout_ms);
-    }
-    if (key == "termination_timeout") {
-        return parse_seconds(value, c.client.termination_timeout_ms);
-    }
-    if (key == "expect_termination") {
-        return parse_flag(value, c.client.expect_termination);
-    }
-    return IEC104_ERR_INVALID_ARGUMENT;
+    return apply_station(key, value, c);
 }
 
 } // namespace
@@ -306,6 +358,11 @@ iec104_status iec104_config_load(const char* path, iec104_config* config, int* e
             }
             return st;
         }
+    }
+    // Groups take the buffer settings of the file, wherever they stand in it.
+    for (std::uint32_t i = 0; i < c.group_count; ++i) {
+        c.groups[i].buffer_size = c.server.event_buffer_size;
+        c.groups[i].overflow = c.server.overflow;
     }
     *config = c;
     return IEC104_OK;

@@ -82,6 +82,8 @@ class LinkSink {
     /** @brief A complete APDU was sent or received on link @p id (for a raw data trace). */
     virtual void on_frame(std::uint32_t /*id*/, bool /*outgoing*/, const std::uint8_t* /*apdu*/,
                           std::size_t /*length*/) {}
+    /** @brief The peer acknowledged the @p count oldest unacknowledged I-frames of link @p id. */
+    virtual void on_acknowledged(std::uint32_t /*id*/, std::uint16_t /*count*/) {}
     /** @brief A security event on TLS link @p id. */
     virtual void on_tls(std::uint32_t /*id*/, TlsEvent /*event*/, const std::string& /*text*/) {}
 };

@@ -12,6 +12,7 @@
  */
 #include "session/server_session.hpp"
 
+#include <algorithm>
 #include <array>
 #include <utility>
 
@@ -438,6 +439,25 @@ iec104_status ServerSession::enqueue(const std::uint8_t* asdu, std::size_t lengt
     return IEC104_OK;
 }
 
+void ServerSession::enqueue_event(const std::uint8_t* asdu, std::size_t length, std::uint64_t id) {
+    Item item{};
+    item.asdu.assign(asdu, asdu + length);
+    item.event_id = id;
+    queue_.push_back(std::move(item));
+}
+
+void ServerSession::drop_events() {
+    queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
+                                [](const Item& i) { return i.event_id != 0U; }),
+                 queue_.end());
+}
+
+void ServerSession::drop_event(std::uint64_t id) {
+    queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
+                                [id](const Item& i) { return i.event_id == id; }),
+                 queue_.end());
+}
+
 void ServerSession::answer(const std::uint8_t* asdu, std::size_t length, std::uint8_t cause,
                            bool negative) {
     push_ready(mirror(asdu, length, cause, negative));
@@ -503,6 +523,9 @@ void ServerSession::pump(AsduSender& sender) {
         if (item.points.empty()) {
             if (sender.send(item.asdu.data(), item.asdu.size()) != IEC104_OK) {
                 return;
+            }
+            if (item.event_id != 0U) {
+                sender.sent_event(item.event_id);
             }
             queue_.pop_front();
             continue;

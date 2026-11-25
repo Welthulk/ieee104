@@ -62,6 +62,8 @@ class AsduSender {
     virtual bool can_send() = 0;
     /** @brief Sends one ASDU. @return IEC104_OK or IEC104_ERR_WOULD_BLOCK. */
     virtual iec104_status send(const std::uint8_t* asdu, std::size_t length) = 0;
+    /** @brief The ASDU just sent was the buffered event @p id (see enqueue_event()). */
+    virtual void sent_event(std::uint64_t /*id*/) {}
 };
 
 /** @brief The application's decision on commands (implemented by the API over a callback). */
@@ -161,6 +163,19 @@ class ServerSession {
      */
     iec104_status enqueue(const std::uint8_t* asdu, std::size_t length);
 
+    /**
+     * @brief Queues a buffered event of the redundancy group (no queue limit:
+     *        the group's buffer bounds it). @p id is reported to
+     *        AsduSender::sent_event() when it is sent.
+     */
+    void enqueue_event(const std::uint8_t* asdu, std::size_t length, std::uint64_t id);
+
+    /** @brief Removes all queued events (the group takes them back). */
+    void drop_events();
+
+    /** @brief Removes the queued event @p id (dropped by the group). */
+    void drop_event(std::uint64_t id);
+
     /** @brief Sends queued ASDUs while @p sender can take them. */
     void pump(AsduSender& sender);
 
@@ -177,6 +192,7 @@ class ServerSession {
     /** @brief One entry of the send queue: a ready ASDU or an interrogation job. */
     struct Item {
         std::vector<std::uint8_t> asdu; // ready ASDU (if points is empty)
+        std::uint64_t event_id{0};      // ready ASDU from the group buffer, 0 = none
         std::vector<Point> points;      // job: points still to send
         std::size_t next{0};            // job: index of the next point
         codec::AsduHeader header{};     // job: header of the data ASDUs

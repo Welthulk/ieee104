@@ -16,15 +16,25 @@
  * confirms by itself. Requests (interrogation, commands, ...) are answered
  * by the session (src/session/server_session.hpp).
  *
+ * Spontaneous data (iec104_server_update(), iec104_server_send() to all)
+ * goes through the event buffer of a redundancy group
+ * (src/session/redundancy_group.hpp): every connection belongs to one group,
+ * only the active connection of a group receives the events, and an event
+ * stays buffered until the peer has acknowledged it. Without groups added by
+ * the application, every connection is a group of its own.
+ *
  * Layer: API.
  */
 #include "api/link_common.hpp"
 #include "api/values.hpp"
 #include "session/command_table.hpp"
 #include "session/process_image.hpp"
+#include "session/redundancy_group.hpp"
 #include "session/server_session.hpp"
 
 #include <array>
+#include <cstring>
+#include <deque>
 #include <map>
 #include <new>
 #include <poll.h>
@@ -34,18 +44,65 @@ using namespace iec104;
 
 namespace {
 
-/** @brief Lets a session send over a TCP link. */
+constexpr std::uint8_t kCotPeriodic = 1;
+constexpr std::uint8_t kCotBackground = 2;
+
+/** @brief Application layer of one connection plus what its unacknowledged I-frames carry. */
+struct Peer {
+    explicit Peer(session::ServerSession s) noexcept : session(std::move(s)) {}
+    session::ServerSession session;
+    // One entry per sent, unacknowledged I-frame, oldest first: the id of
+    // the buffered event it carried, 0 for anything else. Acknowledgements
+    // (N(R)) are counted, so every I-frame of the link must be recorded.
+    std::deque<std::uint64_t> in_flight;
+    session::RedundancyGroup* group{nullptr};
+    std::uint32_t group_id{0};
+};
+
+/** @brief Sends an ASDU on @p link and records the I-frame for @p peer. */
+iec104_status transmit(transport::Link& link, Peer& peer, const std::uint8_t* asdu,
+                       std::size_t length) noexcept {
+    const iec104_status st = link.send_asdu(asdu, length, transport::monotonic_ms());
+    if (st == IEC104_OK) {
+        peer.in_flight.push_back(0);
+    }
+    return st;
+}
+
+/** @brief Lets a session send over a link; marks buffered events as sent. */
 class LinkSender : public session::AsduSender {
   public:
-    explicit LinkSender(transport::Link& link) noexcept : link_(link) {}
+    LinkSender(transport::Link& link, Peer& peer) noexcept : link_(link), peer_(peer) {}
     bool can_send() override { return link_.can_send(); }
     iec104_status send(const std::uint8_t* asdu, std::size_t length) override {
-        return link_.send_asdu(asdu, length, transport::monotonic_ms());
+        return transmit(link_, peer_, asdu, length);
+    }
+    void sent_event(std::uint64_t id) override {
+        if (!peer_.in_flight.empty()) {
+            peer_.in_flight.back() = id; // the I-frame just recorded by send()
+        }
+        if (peer_.group != nullptr) {
+            peer_.group->sent(id);
+        }
     }
 
   private:
     transport::Link& link_;
+    Peer& peer_;
 };
+
+/** @brief IP address of a peer address "ip:port" / "[ipv6]:port" (IPv4-mapped as IPv4). */
+std::string address_of(const std::string& peer) {
+    std::string ip = peer.substr(0, peer.rfind(':'));
+    if (ip.size() >= 2U && ip.front() == '[' && ip.back() == ']') {
+        ip = ip.substr(1, ip.size() - 2U);
+    }
+    const std::string mapped = "::ffff:";
+    if (ip.compare(0, mapped.size(), mapped) == 0 && ip.find('.') != std::string::npos) {
+        ip = ip.substr(mapped.size());
+    }
+    return ip;
+}
 
 } // namespace
 
@@ -61,12 +118,21 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
     transport::Socket listener;
     std::shared_ptr<transport::TlsContext> tls; // NULL = plain TCP; for new connections
     std::vector<std::unique_ptr<transport::Link>> links;
-    std::map<std::uint32_t, session::ServerSession> sessions;
+    std::map<std::uint32_t, Peer> peers;
     session::ProcessImage image;
     session::CommandTable commands;
     session::SessionOptions options;
     std::uint32_t next_id{1};
     std::uint32_t current_connection{0}; // connection of the request being handled
+
+    // Redundancy groups by id. Groups added by the application live as long
+    // as the server; without them every connection gets a group of its own
+    // (same id space), which ends with the connection.
+    std::map<std::uint32_t, std::unique_ptr<session::RedundancyGroup>> groups;
+    bool configured_groups{false};
+    std::uint32_t next_group{1};
+    session::GroupConfig own_group; // settings of a connection's own group (server options)
+    std::map<std::uint32_t, bool> overflowing; // group id -> buffer full reported
 
     transport::Link* find(std::uint32_t id) noexcept {
         for (auto& link : links) {
@@ -84,27 +150,170 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
             if (transport::accept_tcp(listener, s) != IEC104_OK) {
                 return;
             }
+            const std::string from = transport::peer_address(s);
+            const std::uint32_t group = assign_group(address_of(from));
+            if (group == 0U) {
+                // Not a controlling station of any group (also an address allow-list).
+                logger().write(IEC104_LOG_WARNING, 0,
+                               "connection from " + from +
+                                   " rejected: not in any redundancy group");
+                continue; // the socket closes here
+            }
             auto link = std::make_unique<transport::Link>();
             if (link->init_accepted(next_id, config, std::move(s), transport::monotonic_ms(),
-                                    tls) == IEC104_OK) {
-                link->set_trace(this);
-                logger().write(IEC104_LOG_INFO, next_id,
-                               "connection accepted from " + link->peer());
-                sessions.emplace(next_id, session::ServerSession(profile, originator));
-                ++next_id;
-                links.push_back(std::move(link));
+                                    tls) != IEC104_OK) {
+                drop_own_group(group);
+                continue;
             }
+            link->set_trace(this);
+            logger().write(IEC104_LOG_INFO, next_id,
+                           "connection accepted from " + from +
+                               (configured_groups ? ", group " + std::to_string(group) : ""));
+            Peer& peer = peers.emplace(next_id, Peer(session::ServerSession(profile, originator)))
+                             .first->second;
+            peer.group = groups.at(group).get();
+            peer.group_id = group;
+            peer.group->join(next_id);
+            ++next_id;
+            links.push_back(std::move(link));
         }
     }
 
     // Sends what the sessions have queued, as far as the windows allow.
     void pump_all() noexcept {
         for (auto& link : links) {
-            const auto it = sessions.find(link->id());
-            if (it != sessions.end() && !link->closed()) {
-                LinkSender sender(*link);
-                it->second.pump(sender);
+            const auto it = peers.find(link->id());
+            if (it != peers.end() && !link->closed()) {
+                LinkSender sender(*link, it->second);
+                it->second.session.pump(sender);
             }
+        }
+    }
+
+    // --- Redundancy groups ----------------------------------------------------
+
+    // Group of a new connection from @p address; 0 = reject.
+    std::uint32_t assign_group(const std::string& address) {
+        if (!configured_groups) {
+            const std::uint32_t id = next_group++;
+            groups.emplace(id, std::make_unique<session::RedundancyGroup>(own_group));
+            return id;
+        }
+        // An explicit address match wins over a group open to any address.
+        std::uint32_t any = 0;
+        for (const auto& [id, group] : groups) {
+            if (group->config().peers.empty()) {
+                any = any != 0U ? any : id;
+            } else if (group->accepts(address)) {
+                return id;
+            }
+        }
+        return any;
+    }
+
+    // Removes the own group of a connection that is gone.
+    void drop_own_group(std::uint32_t group) {
+        if (!configured_groups) {
+            groups.erase(group);
+            overflowing.erase(group);
+        }
+    }
+
+    // Hands the buffered events of @p group to its active connection.
+    void deliver(std::uint32_t group_id, session::RedundancyGroup& group) {
+        const std::uint32_t active = group.active();
+        const auto it = peers.find(active);
+        if (it == peers.end()) {
+            return;
+        }
+        const std::vector<const session::BufferedEvent*> events = group.queue_on_active();
+        for (const session::BufferedEvent* e : events) {
+            it->second.session.enqueue_event(e->asdu.data(), e->asdu.size(), e->id);
+        }
+        logger().write(IEC104_LOG_INFO, active,
+                       "group " + std::to_string(group_id) + ": active, " +
+                           std::to_string(events.size()) + " buffered events");
+    }
+
+    // Takes the queued events of @p connection back into its group.
+    void withdraw(std::uint32_t connection) {
+        const auto it = peers.find(connection);
+        if (it != peers.end()) {
+            it->second.session.drop_events();
+        }
+    }
+
+    // Puts an event into every group (spontaneous data to all connections).
+    iec104_status publish(const std::uint8_t* asdu, std::size_t length, std::uint8_t cause) {
+        if (groups.empty()) {
+            return IEC104_ERR_WRONG_STATE; // nobody to send to, nothing to keep
+        }
+        // Cyclic and background data are not buffered: only the active connections get them.
+        // TODO(norm): clause 10, which causes are buffered.
+        if (cause == kCotPeriodic || cause == kCotBackground) {
+            bool sent = false;
+            for (const auto& [id, group] : groups) {
+                const auto it = peers.find(group->active());
+                if (it != peers.end()) {
+                    sent = it->second.session.enqueue(asdu, length) == IEC104_OK || sent;
+                }
+            }
+            return sent ? IEC104_OK : IEC104_ERR_WRONG_STATE;
+        }
+        bool rejected = false;
+        for (const auto& [id, group] : groups) {
+            rejected = add_event(id, *group, asdu, length) != IEC104_OK || rejected;
+        }
+        return rejected ? IEC104_ERR_WOULD_BLOCK : IEC104_OK;
+    }
+
+    // Puts an event into one group and queues it on the group's active connection.
+    iec104_status add_event(std::uint32_t id, session::RedundancyGroup& group,
+                            const std::uint8_t* asdu, std::size_t length) {
+        const session::RedundancyGroup::Added a = group.add(asdu, length);
+        if (a.dropped && a.dropped_queued_on != 0U) {
+            const auto it = peers.find(a.dropped_queued_on);
+            if (it != peers.end()) {
+                it->second.session.drop_event(a.dropped_id);
+            }
+        }
+        if (a.status != IEC104_OK || a.dropped) {
+            report_overflow(id, group);
+        }
+        if (a.status != IEC104_OK) {
+            return a.status;
+        }
+        const auto it = peers.find(group.active());
+        if (it != peers.end()) {
+            for (const session::BufferedEvent* e : group.queue_on_active()) {
+                it->second.session.enqueue_event(e->asdu.data(), e->asdu.size(), e->id);
+            }
+        }
+        return IEC104_OK;
+    }
+
+    void report_overflow(std::uint32_t id, const session::RedundancyGroup& group) {
+        bool& reported = overflowing[id];
+        if (!reported) {
+            reported = true;
+            logger().write(IEC104_LOG_WARNING, group.active(),
+                           "group " + std::to_string(id) + ": event buffer full (" +
+                               std::to_string(group.config().capacity) + "), " +
+                               (group.config().overflow == session::Overflow::DropOldest
+                                    ? "oldest events dropped"
+                                    : "new events rejected"));
+        }
+    }
+
+    void check_overflow_end(std::uint32_t id, const session::RedundancyGroup& group) {
+        const auto it = overflowing.find(id);
+        if (it != overflowing.end() && it->second &&
+            group.stats().buffered < group.config().capacity) {
+            it->second = false;
+            const session::GroupStats st = group.stats();
+            logger().write(IEC104_LOG_INFO, group.active(),
+                           "group " + std::to_string(id) + ": event buffer has room again (" +
+                               std::to_string(st.dropped + st.rejected) + " events lost so far)");
         }
     }
 
@@ -112,13 +321,13 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
 
     void on_asdu(std::uint32_t id, const std::uint8_t* asdu, std::size_t length) override {
         api::CallbackSink::on_asdu(id, asdu, length);
-        const auto it = sessions.find(id);
+        const auto it = peers.find(id);
         current_connection = id;
         const session::StationContext station{
             &image, &commands, &options,
             session::SessionClock{transport::monotonic_ms(), transport::utc_ms()}, this};
         const bool handled =
-            it != sessions.end() && it->second.handle(asdu, length, station, *this);
+            it != peers.end() && it->second.session.handle(asdu, length, station, *this);
         current_connection = 0;
         if (!handled) {
             deliver_objects(id, asdu, length, profile);
@@ -127,16 +336,69 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
 
     void on_state(std::uint32_t id, apci::State state) override {
         api::CallbackSink::on_state(id, state);
-        const auto it = sessions.find(id);
-        if (state == apci::State::Started && it != sessions.end()) {
-            it->second.on_started(image, options);
+        const auto it = peers.find(id);
+        if (it == peers.end() || it->second.group == nullptr) {
+            return;
+        }
+        Peer& peer = it->second;
+        session::RedundancyGroup& group = *peer.group;
+        if (state == apci::State::Started) {
+            peer.session.on_started(image, options); // end of initialization first
+            const std::uint32_t previous = group.start(id);
+            if (previous != 0U) {
+                withdraw(previous);
+                logger().write(IEC104_LOG_WARNING, id,
+                               "group " + std::to_string(peer.group_id) +
+                                   ": takes over from connection " + std::to_string(previous) +
+                                   " (STARTDT without STOPDT on the old connection)");
+            }
+            deliver(peer.group_id, group);
+        } else if (state == apci::State::Stopped && group.active() == id) {
+            withdraw(id);
+            if (group.stop(id) != 0U) {
+                deliver(peer.group_id, group);
+            }
+        }
+    }
+
+    void on_acknowledged(std::uint32_t id, std::uint16_t count) override {
+        const auto it = peers.find(id);
+        if (it == peers.end()) {
+            return;
+        }
+        Peer& peer = it->second;
+        for (std::uint16_t i = 0; i < count && !peer.in_flight.empty(); ++i) {
+            const std::uint64_t event = peer.in_flight.front();
+            peer.in_flight.pop_front();
+            if (event != 0U && peer.group != nullptr) {
+                peer.group->acknowledged(event);
+            }
+        }
+        if (peer.group != nullptr) {
+            check_overflow_end(peer.group_id, *peer.group);
         }
     }
 
     void on_closed(std::uint32_t id, transport::LinkCloseReason reason,
                    apci::CloseReason protocol_reason) override {
         api::CallbackSink::on_closed(id, reason, protocol_reason);
-        sessions.erase(id);
+        const auto it = peers.find(id);
+        if (it == peers.end()) {
+            return;
+        }
+        const std::uint32_t group_id = it->second.group_id;
+        session::RedundancyGroup* group = it->second.group;
+        peers.erase(it); // its queued events are gone with the session
+        if (group != nullptr) {
+            const bool was_active = group->active() == id;
+            const std::uint32_t now_active = group->leave(id);
+            if (was_active && now_active != 0U) {
+                deliver(group_id, *group);
+            }
+            if (!configured_groups) {
+                drop_own_group(group_id);
+            }
+        }
     }
 
     // --- CommandHandler: the application decides --------------------------
@@ -178,28 +440,21 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
                            " discarded: older than the maximum command delay");
     }
 
-    // Queues @p asdu on one or all started connections.
-    iec104_status enqueue(std::uint32_t connection, const std::uint8_t* asdu, std::size_t length) {
-        bool any = false;
-        bool full = false;
-        for (auto& link : links) {
-            if ((connection != 0U && link->id() != connection) ||
-                link->state() != apci::State::Started) {
-                continue;
+    // Queues @p asdu on one started connection, or (connection 0) as event for all groups.
+    iec104_status enqueue(std::uint32_t connection, const std::uint8_t* asdu, std::size_t length,
+                          std::uint8_t cause) {
+        iec104_status st = IEC104_ERR_WRONG_STATE;
+        if (connection == 0U) {
+            st = publish(asdu, length, cause);
+        } else {
+            const transport::Link* link = find(connection);
+            const auto it = peers.find(connection);
+            if (link != nullptr && link->state() == apci::State::Started && it != peers.end()) {
+                st = it->second.session.enqueue(asdu, length);
             }
-            const auto it = sessions.find(link->id());
-            if (it == sessions.end()) {
-                continue;
-            }
-            const iec104_status st = it->second.enqueue(asdu, length);
-            any = any || st == IEC104_OK;
-            full = full || st == IEC104_ERR_WOULD_BLOCK;
         }
         pump_all();
-        if (full) {
-            return IEC104_ERR_WOULD_BLOCK;
-        }
-        return any ? IEC104_OK : IEC104_ERR_WRONG_STATE;
+        return st;
     }
 };
 
@@ -265,19 +520,22 @@ iec104_status iec104_server_send_asdu(iec104_server* server, uint32_t connection
     if (server == nullptr || asdu == nullptr || length == 0U || length > codec::kMaxAsduLength) {
         return IEC104_ERR_INVALID_ARGUMENT;
     }
-    const apci::TimeMs now = transport::monotonic_ms();
     if (connection != 0U) {
         transport::Link* link = server->find(connection);
-        return link != nullptr ? link->send_asdu(asdu, length, now) : IEC104_ERR_WRONG_STATE;
+        const auto it = server->peers.find(connection);
+        return link != nullptr && it != server->peers.end()
+                   ? transmit(*link, it->second, asdu, length)
+                   : IEC104_ERR_WRONG_STATE;
     }
-    // Broadcast to every started connection.
+    // Broadcast to every started connection (raw ASDUs are not buffered).
     bool sent = false;
     bool blocked = false;
     for (auto& link : server->links) {
-        if (link->state() != apci::State::Started) {
+        const auto it = server->peers.find(link->id());
+        if (link->state() != apci::State::Started || it == server->peers.end()) {
             continue;
         }
-        const iec104_status st = link->send_asdu(asdu, length, now);
+        const iec104_status st = transmit(*link, it->second, asdu, length);
         sent = sent || st == IEC104_OK;
         blocked = blocked || st == IEC104_ERR_WOULD_BLOCK;
     }
@@ -297,6 +555,9 @@ void iec104_server_options_init(iec104_server_options* options) {
         options->command_termination = 1;
         options->cause_of_init = 0;
         options->max_command_delay_ms = 0;
+        const session::GroupConfig defaults{};
+        options->event_buffer_size = static_cast<uint32_t>(defaults.capacity);
+        options->overflow = IEC104_OVERFLOW_DROP_OLDEST;
     }
 }
 
@@ -308,8 +569,88 @@ iec104_status iec104_server_set_options(iec104_server* server,
     server->options.send_end_of_init = options->send_end_of_init != 0;
     server->options.command_termination = options->command_termination != 0;
     server->options.cause_of_init = options->cause_of_init;
+    if (options->event_buffer_size == 0U || options->event_buffer_size > IEC104_MAX_EVENT_BUFFER) {
+        return IEC104_ERR_OUT_OF_RANGE;
+    }
     server->options.max_command_delay_ms = options->max_command_delay_ms;
+    server->own_group.capacity = options->event_buffer_size;
+    server->own_group.overflow = options->overflow == IEC104_OVERFLOW_REJECT
+                                     ? session::Overflow::Reject
+                                     : session::Overflow::DropOldest;
     return IEC104_OK;
+}
+
+void iec104_group_config_init(iec104_group_config* config) {
+    if (config != nullptr) {
+        *config = iec104_group_config{};
+        config->buffer_size = static_cast<uint32_t>(session::GroupConfig{}.capacity);
+        config->overflow = IEC104_OVERFLOW_DROP_OLDEST;
+    }
+}
+
+iec104_status iec104_server_add_group(iec104_server* server, const iec104_group_config* config,
+                                      uint32_t* group) {
+    if (server == nullptr || config == nullptr) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    if (server->listener.valid() || !server->links.empty()) {
+        return IEC104_ERR_WRONG_STATE;
+    }
+    if (config->buffer_size == 0U || config->buffer_size > IEC104_MAX_EVENT_BUFFER) {
+        return IEC104_ERR_OUT_OF_RANGE;
+    }
+    session::GroupConfig g;
+    g.capacity = config->buffer_size;
+    g.overflow = config->overflow == IEC104_OVERFLOW_REJECT ? session::Overflow::Reject
+                                                            : session::Overflow::DropOldest;
+    for (const auto& peer : config->peers) { // NOLINT(*-array-to-pointer-decay): C struct
+        const auto* text = static_cast<const char*>(peer);
+        const auto* end = static_cast<const char*>(std::memchr(text, '\0', sizeof peer));
+        if (end == nullptr) {
+            return IEC104_ERR_INVALID_ARGUMENT;
+        }
+        if (end != text) {
+            g.peers.emplace_back(text, end);
+        }
+    }
+    const std::uint32_t id = server->next_group++;
+    server->groups.emplace(id, std::make_unique<session::RedundancyGroup>(std::move(g)));
+    server->configured_groups = true;
+    if (group != nullptr) {
+        *group = id;
+    }
+    return IEC104_OK;
+}
+
+iec104_status iec104_server_get_group_stats(const iec104_server* server, uint32_t group,
+                                            iec104_group_stats* out) {
+    if (server == nullptr || out == nullptr) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    const auto it = server->groups.find(group);
+    if (it == server->groups.end()) {
+        return IEC104_ERR_WRONG_STATE;
+    }
+    const session::GroupStats g = it->second->stats();
+    *out = iec104_group_stats{};
+    out->active_connection = g.active;
+    out->connections = static_cast<uint32_t>(g.connections);
+    out->buffered = static_cast<uint32_t>(g.buffered);
+    out->in_flight = static_cast<uint32_t>(g.in_flight);
+    out->events = g.events;
+    out->dropped = g.dropped;
+    out->rejected = g.rejected;
+    out->resent = g.resent;
+    out->switchovers = g.switchovers;
+    return IEC104_OK;
+}
+
+uint32_t iec104_server_connection_group(const iec104_server* server, uint32_t connection) {
+    if (server == nullptr) {
+        return 0;
+    }
+    const auto it = server->peers.find(connection);
+    return it != server->peers.end() ? it->second.group_id : 0U;
 }
 
 iec104_status iec104_server_add_command(iec104_server* server, uint16_t common_address,
@@ -365,7 +706,7 @@ iec104_status iec104_server_update(iec104_server* server, uint16_t common_addres
     if (st != IEC104_OK) {
         return st;
     }
-    st = server->enqueue(0, buf.data(), n);
+    st = server->enqueue(0, buf.data(), n, IEC104_COT_SPONTANEOUS);
     // No started connection is not an error for an update: the image holds the value.
     return st == IEC104_ERR_WRONG_STATE ? IEC104_OK : st;
 }
@@ -403,7 +744,7 @@ iec104_status iec104_server_send(iec104_server* server, uint32_t connection,
         if (st != IEC104_OK) {
             return st;
         }
-        result = server->enqueue(connection, buf.data(), n);
+        result = server->enqueue(connection, buf.data(), n, cause);
         if (result != IEC104_OK) {
             return result;
         }
@@ -433,15 +774,15 @@ iec104_status iec104_server_get_stats(const iec104_server* server, uint32_t conn
         }
         iec104_link_stats s{};
         api::copy_link_stats(*link, s);
-        const auto it = server->sessions.find(connection);
-        if (it != server->sessions.end()) {
-            const session::SessionStats& ss = it->second.stats();
+        const auto it = server->peers.find(connection);
+        if (it != server->peers.end()) {
+            const session::SessionStats& ss = it->second.session.stats();
             s.requests = ss.requests;
             s.commands_accepted = ss.commands_accepted;
             s.commands_rejected = ss.commands_rejected;
             s.commands_discarded = ss.commands_discarded;
             s.negative_answers = ss.negative_answers;
-            s.send_queue = static_cast<uint32_t>(it->second.queued());
+            s.send_queue = static_cast<uint32_t>(it->second.session.queued());
         }
         *out = s;
         return IEC104_OK;
