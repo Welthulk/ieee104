@@ -1,0 +1,165 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 7108590..6558b1a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,12 @@
+ # Änderungen
+ 
++## 0.6.2 (25.11.2026)
++
++| Bereich | Änderung |
++| --- | --- |
++| Lieferung | `beispiel.sh` konnte „connection closed, reason 3“ melden: Julia puffert die Ausgabe in eine Datei, „listening“ kam erst beim Ende der Station an, die Leitstelle verband sich zu spät. `server.jl` leert die Ausgabe jetzt sofort |
++| Julia | `server.jl [port] [sekunden] [adresse]`: optionale Adresse; `beispiel.sh` startet die Station nur auf `127.0.0.1` und zeigt bei Fehlern Log und Portzustand der Station |
++
+ ## 0.6.1 (25.11.2026)
+ 
+ | Bereich | Änderung |
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9cd9886..33b7dee 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,7 @@
+ cmake_minimum_required(VERSION 3.21)
+ 
+ project(iec104
+-    VERSION 0.6.1
++    VERSION 0.6.2
+     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
+     LANGUAGES C CXX)
+ 
+diff --git a/README.md b/README.md
+index 6f9d545..f325d31 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
+ 
+-Stand: 25.11.2026, Version 0.6.1, Linux x86-64.
++Stand: 25.11.2026, Version 0.6.2, Linux x86-64.
+ 
+ ## Sofort nutzen, ohne zu bauen
+ 
+@@ -18,7 +18,7 @@ Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab
+ Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iee104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
+ 
+ ```bash
+-cd dist/iec104-0.6.1-linux-x86_64
++cd dist/iec104-0.6.2-linux-x86_64
+ gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
+ julia julia/server.jl 2404 &                                                       # Julia: Station
+ julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
+diff --git a/docs/07_Julia.md b/docs/07_Julia.md
+index 1788575..17759e8 100644
+--- a/docs/07_Julia.md
++++ b/docs/07_Julia.md
+@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
+ Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
+ 
+ ```bash
+-cd iec104-0.6.1-linux-x86_64
++cd iec104-0.6.2-linux-x86_64
+ julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
+ julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
+ ```
+diff --git a/docs/09_Interoperabilitaetsliste.md b/docs/09_Interoperabilitaetsliste.md
+index e2965ca..5983cd2 100644
+--- a/docs/09_Interoperabilitaetsliste.md
++++ b/docs/09_Interoperabilitaetsliste.md
+@@ -1,6 +1,6 @@
+ # Interoperabilitätsliste (IEC 60870-5-104, Abschnitt 9)
+ 
+-IEC 60870-5-104 Library 0.6.1 · Rolle: Station und Leitstelle · Parameter: Standardwerte
++IEC 60870-5-104 Library 0.6.2 · Rolle: Station und Leitstelle · Parameter: Standardwerte
+ 
+ Erzeugt mit `iec104_interop_list`. Gliederung und Bezeichnungen nach öffentlichen Wiedergaben der Checkliste (docs/02_Technik_und_Quellen.md, [ORA]); die Angaben stammen aus dem Code der Library. Eigene Parameter: `iec104_interop_list --config datei.conf`, zum Abgleich mit der Liste einer Gegenstelle `--format csv`.
+ 
+diff --git a/examples/julia/server.jl b/examples/julia/server.jl
+index 3eb542b..84bee6c 100644
+--- a/examples/julia/server.jl
++++ b/examples/julia/server.jl
+@@ -9,7 +9,7 @@
+ # every second and is sent spontaneously; the library answers a general
+ # interrogation by itself. Commands are printed and accepted.
+ #
+-#   julia server.jl [port] [seconds]
++#   julia server.jl [port] [seconds] [address]      address default: all
+ 
+ include(joinpath(@__DIR__, "IEC104.jl"))
+ using .IEC104
+@@ -25,7 +25,7 @@ function on_command(user::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd::Pt
+     return Cint(1)   # 1 = accept (positive confirmation), 0 = reject
+ end
+ 
+-function main(port = IEC104.DEFAULT_PORT, seconds = 0)
++function main(port = IEC104.DEFAULT_PORT, seconds = 0, address = nothing)
+     st = ServerState(Tuple{UInt32,AsduInfo,Object}[])
+     cb = Callbacks(st;
+         on_command = @cfunction(on_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})))
+@@ -34,8 +34,10 @@ function main(port = IEC104.DEFAULT_PORT, seconds = 0)
+         try
+             value = 0.0
+             server_add_point(server, 1, Object(13, 100, value))   # M_ME_NC_1, group 1
+-            server_listen(server, port)
++            address === nothing ? server_listen(server, port) :
++                                  server_listen(server, port; address = address)
+             println("listening on port ", server_port(server))
++            flush(stdout)   # stdout to a file is buffered; scripts wait for this line
+             t_end = seconds > 0 ? time() + seconds : Inf
+             next = time() + 1
+             while time() < t_end
+@@ -44,6 +46,7 @@ function main(port = IEC104.DEFAULT_PORT, seconds = 0)
+                     println("connection $conn: command type $(i.type), IOA $(c.ioa), value $(c.value)")
+                 end
+                 empty!(st.commands)
++                flush(stdout)
+                 if time() >= next                                # once per second
+                     value += 1
+                     server_update(server, 1, Object(13, 100, value))
+@@ -59,5 +62,5 @@ end
+ if abspath(PROGRAM_FILE) == @__FILE__
+     port = parse(Int, get(ARGS, 1, string(IEC104.DEFAULT_PORT)))
+     seconds = parse(Int, get(ARGS, 2, "0"))
+-    main(port, seconds)
++    main(port, seconds, get(ARGS, 3, nothing))
+ end
+diff --git a/include/iec104/iec104.h b/include/iec104/iec104.h
+index 3da4ed6..fd526ef 100644
+--- a/include/iec104/iec104.h
++++ b/include/iec104/iec104.h
+@@ -63,7 +63,7 @@ extern "C" {
+ /** @brief Minor version of this header. Compatible additions increment it. */
+ #define IEC104_VERSION_MINOR 6
+ /** @brief Patch version of this header. Fixes without API change increment it. */
+-#define IEC104_VERSION_PATCH 1
++#define IEC104_VERSION_PATCH 2
+ 
+ /**
+  * @brief Default TCP port of an IEC 60870-5-104 connection without TLS.
+diff --git a/packaging/beispiel.sh b/packaging/beispiel.sh
+index f00432c..7ee97cd 100755
+--- a/packaging/beispiel.sh
++++ b/packaging/beispiel.sh
+@@ -13,7 +13,7 @@ cd "$(dirname "$0")" || exit 1
+ PORT="${1:-2404}"
+ command -v julia > /dev/null 2>&1 || { echo "Julia fehlt (bash pruefen.sh)"; exit 1; }
+ LOG="$(mktemp)"
+-julia --startup-file=no julia/server.jl "$PORT" 120 < /dev/null > "$LOG" 2>&1 &
++julia --startup-file=no julia/server.jl "$PORT" 120 127.0.0.1 < /dev/null > "$LOG" 2>&1 &
+ SERVER=$!
+ trap 'kill "$SERVER" 2>/dev/null; rm -f "$LOG"' EXIT
+ echo "Station startet (beim ersten Start nach einer Julia-Installation bis zu einigen Minuten) ..."
+@@ -26,5 +26,12 @@ grep -q listening "$LOG" || { echo "Station nach 5 Minuten nicht bereit:"; cat "
+ echo "Station läuft auf Port $PORT, Leitstelle verbindet sich:"
+ julia --startup-file=no julia/client.jl 127.0.0.1 "$PORT"
+ RC=$?
++if [ "$RC" != 0 ]; then
++    echo "--- Log der Station:"
++    cat "$LOG"
++    echo "--- Station läuft noch: $(kill -0 "$SERVER" 2>/dev/null && echo ja || echo nein)"
++    echo "--- Port $PORT:"
++    ss -ltn 2>/dev/null | grep -E "[:.]$PORT[[:space:]]" || echo "(niemand lauscht)"
++fi
+ [ "$RC" = 0 ] && echo "Ergebnis: ok" || echo "Ergebnis: FEHLER ($RC)"
+ exit "$RC"
