@@ -1,0 +1,1535 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 6558b1a..ea71040 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,17 @@
+ # Änderungen
+ 
++## 0.7.0 (26.11.2026)
++
++| Bereich | Änderung |
++| --- | --- |
++| Test-GUI | Bereich „Gegenstelle lib60870“: startet ein unverändertes lib60870-Beispiel (`simple_client`, `cs104_client_async`, `cs104_client_no_threads`) als Leitstelle gegen die GUI-Station auf 127.0.0.1; Ausgabe unter Ereignisse. Ordner beim Start: `gui.sh 8080 127.0.0.1 <lib60870-C>` |
++| Test-GUI | Schutz: Host-Kopfzeile nur `localhost` oder IP-Adresse, `/api/` nur mit Kopfzeile `X-IEC104-GUI`, nur GET; die Station lauscht auf der Adresse der GUI (Standard 127.0.0.1) statt auf allen |
++| Test-GUI | Zustände und Fehler auf Deutsch mit Hinweis (z. B. „niemand lauscht – Station gestartet?“, „erst STARTDT“, erlaubter Wertebereich); Wertebereich neben den Eingabefeldern; Typ einer IOA lässt sich nicht mehr ändern; keine doppelten Zeilen unter Ereignisse |
++| Beispiele | `server.jl` und `hello_server` lauschen ohne Adressangabe nur auf 127.0.0.1 |
++| Interop | `run_lib60870.sh` startet lib60870-Stationen (lauschen fest auf 0.0.0.0) nur mit `--mit-stationen` |
++| Werkzeug | `wsl_ausprobieren.sh --mit-lib60870`: lib60870 v2.4.1 neben den Arbeitsordner holen und bauen, GUI-Aufruf mit lib60870 ausgeben |
++| Test | `tests/gui/test_gui.sh` (ctest `Julia.Gui`, `Julia.GuiLib60870` im shared-Build) |
++
+ ## 0.6.2 (25.11.2026)
+ 
+ | Bereich | Änderung |
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 33b7dee..7ffd0fb 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,7 @@
+ cmake_minimum_required(VERSION 3.21)
+ 
+ project(iec104
+-    VERSION 0.6.2
++    VERSION 0.7.0
+     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
+     LANGUAGES C CXX)
+ 
+@@ -307,6 +307,31 @@ if(IEC104_BUILD_EXAMPLES AND NOT IEC104_BUILD_FUZZERS)
+     endif()
+ endif()
+ 
++# ---------------------------------------------------------------------------
++# Test GUI in Julia (examples/julia/gui) over HTTP, only on 127.0.0.1. Needs
++# the shared library, Julia and curl; with IEC104_LIB60870_DIR also with
++# lib60870 as controlling station against the station of the GUI.
++# ---------------------------------------------------------------------------
++if(IEC104_BUILD_TESTS AND BUILD_SHARED_LIBS)
++    find_program(IEC104_JULIA julia)
++    find_program(IEC104_CURL curl)
++    if(IEC104_JULIA AND IEC104_CURL)
++        set(_gui_env "JULIA=${IEC104_JULIA}" "CURL=${IEC104_CURL}")
++        add_test(NAME Julia.Gui
++            COMMAND ${PROJECT_SOURCE_DIR}/tests/gui/test_gui.sh $<TARGET_FILE:iec104>)
++        # Empty IEC104_LIB60870: without lib60870, even if set in the environment.
++        set_tests_properties(Julia.Gui PROPERTIES TIMEOUT 300
++            ENVIRONMENT "${_gui_env};IEC104_LIB60870=")
++        if(IEC104_LIB60870_DIR)
++            get_filename_component(_lib60870 "${IEC104_LIB60870_DIR}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
++            add_test(NAME Julia.GuiLib60870
++                COMMAND ${PROJECT_SOURCE_DIR}/tests/gui/test_gui.sh $<TARGET_FILE:iec104> ${_lib60870})
++            set_tests_properties(Julia.GuiLib60870 PROPERTIES TIMEOUT 300
++                ENVIRONMENT "${_gui_env}")
++        endif()
++    endif()
++endif()
++
+ # ---------------------------------------------------------------------------
+ # API documentation (Doxygen): target "doc", output <build>/doc/html
+ # ---------------------------------------------------------------------------
+diff --git a/README.md b/README.md
+index f325d31..49fcd6b 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
+ 
+-Stand: 25.11.2026, Version 0.6.2, Linux x86-64.
++Stand: 26.11.2026, Version 0.7.0, Linux x86-64.
+ 
+ ## Sofort nutzen, ohne zu bauen
+ 
+@@ -18,7 +18,7 @@ Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab
+ Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iee104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
+ 
+ ```bash
+-cd dist/iec104-0.6.2-linux-x86_64
++cd dist/iec104-0.7.0-linux-x86_64
+ gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
+ julia julia/server.jl 2404 &                                                       # Julia: Station
+ julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
+@@ -38,7 +38,7 @@ julia julia/gui/iec104_gui.jl
+ | Sicherheit | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3: gegenseitige Authentifizierung, Sperrlisten, Prüfung von Name oder Fingerprint, Key Update und Renegotiation, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse; Abweisung unbekannter Absender |
+ | Betrieb | Log mit Stufen bis zum APDU-Hexdump, Statistik je Verbindung und Gruppe, Konfigurationsdatei, kein interner Thread (Poll im Thread der Anwendung) |
+ | Einbindung | stabile C-Schnittstelle (ein Header), statisch oder geteilt, `find_package(iec104)`, Anbindung für Julia per `ccall`; fertig gebaute Library |
+-| Werkzeuge | Test-GUI im Browser (Leitstelle und Station); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870; Interoperabilitätsliste für die eigene Konfiguration (`iec104_interop_list`, Markdown oder CSV) |
++| Werkzeuge | Test-GUI im Browser (Leitstelle und Station, dazu lib60870 als fremde Leitstelle gegen die eigene Station); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870; Interoperabilitätsliste für die eigene Konfiguration (`iec104_interop_list`, Markdown oder CSV) |
+ 
+ ## Tests
+ 
+@@ -136,7 +136,7 @@ cmake -S . -B build-tls -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build bui
+ cd -
+ ```
+ 
+-Testen (Ports 2404 und 19998 müssen frei sein):
++Testen (Port 19998 muss frei sein; `--mit-stationen` auch 2404 und lib60870-Stationen auf `0.0.0.0`, siehe `docs/08_Interop.md`):
+ 
+ ```bash
+ tools/interop/run_lib60870.sh ../lib60870/lib60870-C build/debug
+diff --git a/docs/07_Julia.md b/docs/07_Julia.md
+index 17759e8..53ee66d 100644
+--- a/docs/07_Julia.md
++++ b/docs/07_Julia.md
+@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
+ Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
+ 
+ ```bash
+-cd iec104-0.6.2-linux-x86_64
++cd iec104-0.7.0-linux-x86_64
+ julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
+ julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
+ ```
+@@ -28,7 +28,7 @@ type 13  cause 3  station 1  IOA 100  value 31.0    spontan
+ | --- | --- |
+ | `IEC104.jl` | Modul `IEC104`: Typen wie im Header, Funktionen für Server und Client (u. a. `client_interrogation`, `client_read`, `client_send_command`, `client_clock_sync`) |
+ | `client.jl` | Leitstelle: verbinden, STARTDT, Generalabfrage, Werte ausgeben |
+-| `server.jl` | Station: ein Messwert, spontane Meldung jede Sekunde, Befehle annehmen |
++| `server.jl` | Station: ein Messwert, spontane Meldung jede Sekunde, Befehle annehmen; lauscht auf `127.0.0.1` (dritter Parameter: andere Adresse) |
+ 
+ `IEC104.jl` sucht die Library in dieser Reihenfolge:
+ 
+@@ -158,25 +158,61 @@ end
+ 
+ ## 7. Test-GUI im Browser
+ 
+-`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server). Es braucht nur Julia, keine Pakete.
++`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server), darunter lib60870 als fremde Leitstelle. Es braucht nur Julia, keine Pakete.
+ 
+ ```bash
+-julia julia/gui/iec104_gui.jl            # im Binärpaket; im Quellbaum examples/julia/gui/
++julia julia/gui/iec104_gui.jl [port] [adresse] [lib60870]   # im Binärpaket; im Quellbaum examples/julia/gui/
+ ```
+ 
+-Dann im Browser `http://localhost:8080` öffnen. Anderer Port: `julia julia/gui/iec104_gui.jl 8081`. Kommt unter WSL der Windows-Browser nicht an `localhost` heran: `bash gui.sh 8080 0.0.0.0` (Binärpaket) und die angezeigte Adresse der WSL öffnen.
++| Parameter | Default | Bedeutung |
++| --- | --- | --- |
++| `port` | 8080 | Port der GUI; 0 = freier Port, steht in der Startzeile |
++| `adresse` | `127.0.0.1` | GUI und ihre Station lauschen nur hier |
++| `lib60870` | Umgebungsvariable `IEC104_LIB60870` | Ordner `lib60870-C` (oder `lib60870` darüber) mit gebauten Beispielen, Abschnitt 7.1 |
++
++Dann im Browser `http://localhost:8080` öffnen. Kommt unter WSL der Windows-Browser nicht an `localhost` heran: `bash gui.sh 8080 0.0.0.0` (Binärpaket) und die angezeigte Adresse der WSL öffnen.
+ 
+ | Bereich | Funktionen |
+ | --- | --- |
+ | Leitstelle | Verbinden (Adresse, Port, Station, Timer, k, w, tolerant, TLS mit CA, Zertifikat, Schlüssel, Name), STARTDT, STOPDT, Trennen; Generalabfrage (Station, Gruppe 1–16), Zählerabfrage, Uhrzeit; Befehle 45–50 und 58–63 direkt oder mit Select/Execute |
+ | Tabelle | jeder empfangene Punkt mit Typ, Wert, Qualität, Ursache (negativ rot), Zeitmarke, Anzahl, Alter; frische Werte hervorgehoben |
+ | Station | Starten auf Port/Station, Datenpunkte anlegen (Typen 1, 3, 5, 9, 11, 13, 15), Wert ändern und spontan senden (+1 für schnelle Tests), Befehle annehmen oder ablehnen, Verbindungen |
+-| Ereignisse | Zustände, Befehle und ihr Ergebnis, TLS-Ereignisse, Fehler und Warnungen der Library |
++| Gegenstelle lib60870 | ein Leitstellen-Beispiel von lib60870 gegen die eigene Station starten und beenden (Abschnitt 7.1) |
++| Ereignisse | Zustände, Abfragen und Befehle an die Station, Befehlsergebnisse, TLS-Ereignisse, Fehler und Warnungen der Library, Ausgabe von lib60870 |
+ 
+ Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Punkt anlegen, Leitstelle auf `127.0.0.1:2404` verbinden, STARTDT, Generalabfrage.
+ 
+ | Hinweis | Grund |
+ | --- | --- |
+-| Die GUI lauscht nur auf `127.0.0.1` | sie hat keine Anmeldung und kann Befehle senden; eine andere Adresse nur bewusst als zweiter Parameter |
++| GUI und Station lauschen nur auf `127.0.0.1` | die GUI hat keine Anmeldung, kann Befehle senden und Programme starten; eine andere Adresse nur bewusst als zweiter Parameter |
++| Anfragen nur mit Host `localhost` oder IP-Adresse samt Port der GUI, `/api/` nur mit Kopfzeile `X-IEC104-GUI: 1`, nur GET, kein CORS, nicht einbettbar | eine fremde Webseite im selben Browser kann die GUI nicht steuern, auch nicht über DNS-Rebinding |
+ | Die GUI ist ein Testwerkzeug | eine Verbindung je Seite, kein Speichern der Einstellungen |
+ | Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`) und `index.html` (Seite) |
++| Test | `tests/gui/test_gui.sh`; in `ctest` (Preset `shared`) als `Julia.Gui`, mit `IEC104_LIB60870_DIR` auch `Julia.GuiLib60870` |
++
++### 7.1 Gegenstelle lib60870
++
++Die GUI startet ein unverändertes Beispielprogramm von lib60870-C als eigenen Prozess; gelinkt wird nichts. Es verbindet sich mit der Station der GUI. So läuft die Station im Browser gegen eine unabhängige Implementierung. lib60870 holen und bauen: README, Abschnitt „Gegen lib60870 testen“ (`build` ohne TLS genügt).
++
++```bash
++bash gui.sh 8080 127.0.0.1 ~/src/lib60870/lib60870-C                     # Binärpaket
++IEC104_LIB60870=~/src/lib60870/lib60870-C julia julia/gui/iec104_gui.jl   # gleichwertig
++```
++
++Ablauf: Station mit Station (CA) 1 starten, Datenpunkt anlegen, unter „Gegenstelle lib60870“ ein Programm wählen, Starten. Die Ausgabe von lib60870 erscheint unter Ereignisse („lib60870: …“), daneben die Sicht der Station (Verbindung, Generalabfrage, Testbefehl).
++
++| Programm | Ablauf | Ende |
++| --- | --- | --- |
++| `simple_client` | verbindet, STARTDT, nach 2 s Generalabfrage an Station 1, nach 5 s Testbefehl mit Zeitmarke (Typ 107) | von selbst nach etwa 9 s |
++| `cs104_client_async` | STARTDT, Generalabfrage an Station 1 sofort und alle 10 s, spontane Werte | Beenden |
++| `cs104_client_no_threads` | nur STARTDT, spontane Werte, Testrahmen nach 2 s Ruhe; die Meldung „Sending interrogation command...“ stimmt nicht, es sendet keine Abfrage | Beenden |
++
++| Regel | Grund |
++| --- | --- |
++| Ordner nur beim Start der GUI; die Seite wählt nur einen der drei Programmnamen | die Seite kann keinen Pfad und kein Argument übergeben |
++| Ziel ist immer `127.0.0.1` und der Port der eigenen Station; ohne laufende Station: „erst die Station starten“ | lib60870 verbindet sich nur mit dieser GUI |
++| lib60870 spricht Station 1 an (CA 1) | Station der GUI mit Station (CA) 1 starten, sonst negative Antworten (Ursache 46) |
++| Nur die Leitstellen-Beispiele | die Stations-Beispiele von lib60870 lauschen fest auf `0.0.0.0` (alle Schnittstellen) |
++| Eine Gegenstelle zur Zeit; Beenden schickt SIGINT, nach 3 s SIGKILL; endet die GUI, endet die Gegenstelle mit | kein Prozess bleibt zurück |
++| Ausgabe zeilenweise, Zeilen über 300 Zeichen gekürzt | mit `stdbuf` (coreutils) sofort, sonst erst beim Ende des Programms |
++| Prozess und Ausgabe laufen in normalen Julia-Tasks, nie in einem Callback | Regel aus Abschnitt 4 |
+diff --git a/docs/08_Interop.md b/docs/08_Interop.md
+index 7925334..4e631aa 100644
+--- a/docs/08_Interop.md
++++ b/docs/08_Interop.md
+@@ -11,30 +11,38 @@ Die Unit-Tests und der Selbsttest prüfen die Library gegen sich selbst. Fehler,
+ lib60870 holen und bauen: README, Abschnitt „Gegen lib60870 testen“. Dann:
+ 
+ ```bash
+-tools/interop/run_lib60870.sh ../lib60870/lib60870-C build/debug        # Ports 2404, 19998 frei
++tools/interop/run_lib60870.sh ../lib60870/lib60870-C build/debug                   # Standard
++tools/interop/run_lib60870.sh --mit-stationen ../lib60870/lib60870-C build/debug   # alle Fälle
+ ```
+ 
++| Lauf | Fälle | Lauscht | Feste Ports |
++| --- | --- | --- | --- |
++| Standard | 2, 6, 7, 8: lib60870 ist Leitstelle und verbindet sich mit den eigenen Servern | nur `127.0.0.1` | 19998 (TLS-Fälle) |
++| `--mit-stationen` | zusätzlich 1, 3, 4, 5 mit `cs104_server`, `cs104_redundancy_server`, `tls_server` | diese drei Beispiele auf `0.0.0.0` | zusätzlich 2404 |
++
++Die Stations-Beispiele von lib60870 binden fest an `0.0.0.0`, sind also während des Laufs über alle Netzwerkschnittstellen erreichbar; ohne Änderung an lib60870 geht das nicht anders. Deshalb laufen sie nur mit `--mit-stationen`.
++
+ | Ergebnis | Bedeutung |
+ | --- | --- |
+ | bestanden | Verhalten wie erwartet |
+ | Abweichung Gegenstelle | bekannter Fehler eines Beispielprogramms (Abschnitt 4); eigenes Verhalten korrekt |
+ | FEHLER | eigenes Verhalten falsch; Rückgabe 1, Log unter `build/debug/interop/` |
+-| übersprungen | lib60870 ohne TLS gebaut |
++| übersprungen | lib60870 ohne TLS gebaut, oder Fall mit lib60870-Station ohne `--mit-stationen` |
+ 
+-In `ctest`: `cmake --preset debug -DIEC104_LIB60870_DIR=../lib60870/lib60870-C`, Test `Interop.Lib60870`.
++In `ctest`: `cmake --preset debug -DIEC104_LIB60870_DIR=../lib60870/lib60870-C`, Test `Interop.Lib60870` (Standardlauf). Im Preset `shared` zusätzlich `Julia.GuiLib60870` (Abschnitt 6).
+ 
+ ## 3. Fälle und Ergebnis
+ 
+-| Nr. | Fall | Gegenstelle | Geprüft | Ergebnis |
+-| --- | --- | --- | --- | --- |
+-| 1 | Client → Server | `cs104_server` | STARTDT, Generalabfrage, Uhrzeit, Zählerabfrage (Ursache 44), TESTFR, STOPDT | bestanden |
+-| 2 | Server ← Client | `simple_client` gegen `hello_server` | STARTDT con, Ende der Initialisierung, Generalabfrage mit ACTCON/ACTTERM, Testbefehl 107 | bestanden |
+-| 3 | Umschaltung | `cs104_redundancy_server` | zwei Verbindungen, STOPDT/STARTDT, die gepufferte Reihe (IOA 110) läuft lückenlos weiter | bestanden; Abweichung Gegenstelle (ACTTERM) |
+-| 4 | TLS 1.3 Client → Server | `tls_server` | Handshake mit gegenseitiger Authentifizierung, Uhrzeit, TESTFR | bestanden; Abweichung Gegenstelle (ACTTERM) |
+-| 5 | TLS 1.2 Client → Server | `tls_server` | wie 4, dazu Renegotiation durch die Gegenstelle alle 2 s | bestanden (5 Renegotiations in 7 s); Abweichung Gegenstelle (ACTTERM) |
+-| 6 | TLS Server ← Client | `tls_client` | zwei Verbindungen nacheinander, Generalabfrage, Einzelbefehl, Uhrzeit | bestanden |
+-| 7 | TLS mit EC-Schlüsseln | `tls_client` | P-256-Zertifikate | Abweichung Gegenstelle (EC abgelehnt) |
+-| 8 | Abgelaufenes Zertifikat | `tls_client` mit seinen Original-Zertifikaten | Client-Zertifikat seit 2022 abgelaufen | bestanden: abgewiesen |
++| Nr. | Fall | Gegenstelle | Lauf | Geprüft | Ergebnis |
++| --- | --- | --- | --- | --- | --- |
++| 1 | Client → Server | `cs104_server` | `--mit-stationen` | STARTDT, Generalabfrage, Uhrzeit, Zählerabfrage (Ursache 44), TESTFR, STOPDT | bestanden |
++| 2 | Server ← Client | `simple_client` gegen `hello_server` | Standard | STARTDT con, Ende der Initialisierung, Generalabfrage mit ACTCON/ACTTERM, Testbefehl 107 | bestanden |
++| 3 | Umschaltung | `cs104_redundancy_server` | `--mit-stationen` | zwei Verbindungen, STOPDT/STARTDT, die gepufferte Reihe (IOA 110) läuft lückenlos weiter | bestanden; Abweichung Gegenstelle (ACTTERM) |
++| 4 | TLS 1.3 Client → Server | `tls_server` | `--mit-stationen` | Handshake mit gegenseitiger Authentifizierung, Uhrzeit, TESTFR | bestanden; Abweichung Gegenstelle (ACTTERM) |
++| 5 | TLS 1.2 Client → Server | `tls_server` | `--mit-stationen` | wie 4, dazu Renegotiation durch die Gegenstelle alle 2 s | bestanden (5 Renegotiations in 7 s); Abweichung Gegenstelle (ACTTERM) |
++| 6 | TLS Server ← Client | `tls_client` | Standard | zwei Verbindungen nacheinander, Generalabfrage, Einzelbefehl, Uhrzeit | bestanden |
++| 7 | TLS mit EC-Schlüsseln | `tls_client` | Standard | P-256-Zertifikate | Abweichung Gegenstelle (EC abgelehnt) |
++| 8 | Abgelaufenes Zertifikat | `tls_client` mit seinen Original-Zertifikaten | Standard | Client-Zertifikat seit 2022 abgelaufen | bestanden: abgewiesen |
+ 
+ ## 4. Befunde
+ 
+@@ -90,3 +98,20 @@ Alles Folgende steht in der Interoperabilitätsliste der Gegenstelle (Abschnitt
+ | Befehl ohne Ergebnis `NO_TERMINATION` | Gegenstelle sendet kein ACTTERM | `expect_termination = 0` |
+ | TLS: `peer certificate rejected` | CA, Ablaufdatum, Sperrliste, Name | Zertifikat mit `openssl x509 -noout -text -in …` |
+ | TLS: Handshake bricht ohne Grund ab | Schlüsseltyp oder Suite nicht unterstützt | RSA statt EC, `tls_ciphers` |
++
++## 6. Interaktiv in der Test-GUI
++
++Die Test-GUI (`docs/07_Julia.md`, Abschnitt 7.1) startet auf Knopfdruck ein Leitstellen-Beispiel von lib60870 gegen ihre eigene Station auf `127.0.0.1`. Datenpunkte, Werte und die Annahme von Befehlen werden in der GUI eingestellt; die Ausgabe von lib60870 steht unter Ereignisse neben den Meldungen der Station. Den Ordner bekommt die GUI beim Start:
++
++```bash
++bash gui.sh 8080 127.0.0.1 ../lib60870/lib60870-C                              # Binärpaket
++julia examples/julia/gui/iec104_gui.jl 8080 127.0.0.1 ../lib60870/lib60870-C   # Quellbaum
++```
++
++| Programm | Prüft an der eigenen Station |
++| --- | --- |
++| `simple_client` | Verbindungsaufbau, STARTDT, Ende der Initialisierung, Generalabfrage mit ACTCON, Werten und ACTTERM, Testbefehl 107 |
++| `cs104_client_async` | Generalabfrage sofort und alle 10 s, spontane Werte nach „Anlegen / senden“ |
++| `cs104_client_no_threads` | Dauerverbindung mit Testrahmen (t3 = 2 s), spontane Werte |
++
++Nur die Leitstellen-Beispiele sind wählbar, weil die Stations-Beispiele auf `0.0.0.0` lauschen. Automatisch: `tests/gui/test_gui.sh`, in `ctest` (Preset `shared`, `-DIEC104_LIB60870_DIR=…`) als `Julia.GuiLib60870`.
+diff --git a/docs/09_Interoperabilitaetsliste.md b/docs/09_Interoperabilitaetsliste.md
+index 5983cd2..c7bec8e 100644
+--- a/docs/09_Interoperabilitaetsliste.md
++++ b/docs/09_Interoperabilitaetsliste.md
+@@ -1,6 +1,6 @@
+ # Interoperabilitätsliste (IEC 60870-5-104, Abschnitt 9)
+ 
+-IEC 60870-5-104 Library 0.6.2 · Rolle: Station und Leitstelle · Parameter: Standardwerte
++IEC 60870-5-104 Library 0.7.0 · Rolle: Station und Leitstelle · Parameter: Standardwerte
+ 
+ Erzeugt mit `iec104_interop_list`. Gliederung und Bezeichnungen nach öffentlichen Wiedergaben der Checkliste (docs/02_Technik_und_Quellen.md, [ORA]); die Angaben stammen aus dem Code der Library. Eigene Parameter: `iec104_interop_list --config datei.conf`, zum Abgleich mit der Liste einer Gegenstelle `--format csv`.
+ 
+diff --git a/examples/hello_server.c b/examples/hello_server.c
+index a9a9d31..83755b7 100644
+--- a/examples/hello_server.c
++++ b/examples/hello_server.c
+@@ -12,7 +12,10 @@
+  * library answers a general interrogation by itself. Commands are logged
+  * and accepted.
+  *
+- *   hello_server [port]       default port 2404, 0 = any free port
++ *   hello_server [port] [address]
++ *     port     default 2404, 0 = any free port
++ *     address  default 127.0.0.1 (this computer only); 0.0.0.0 = all
++ *              addresses, only deliberately (the server accepts commands)
+  */
+ #include <iec104/iec104.h>
+ #include <signal.h>
+@@ -41,6 +44,7 @@ static void on_log(void* user, iec104_log_level level, uint32_t connection, cons
+ 
+ int main(int argc, char** argv) {
+     const uint16_t port = argc > 1 ? (uint16_t)atoi(argv[1]) : IEC104_DEFAULT_PORT;
++    const char* address = argc > 2 ? argv[2] : "127.0.0.1";
+ 
+     iec104_callbacks callbacks = {0};
+     callbacks.on_command = on_command;
+@@ -57,7 +61,7 @@ int main(int argc, char** argv) {
+     value.value = 0.0;
+     iec104_server_add_point(server, 1, &value, 0x0001); /* station 1, interrogation group 1 */
+ 
+-    iec104_status st = iec104_server_listen(server, NULL, port);
++    iec104_status st = iec104_server_listen(server, address, port);
+     if (st != IEC104_OK) {
+         fprintf(stderr, "listen: %s\n", iec104_status_string(st));
+         iec104_server_destroy(server);
+diff --git a/examples/julia/gui/iec104_gui.jl b/examples/julia/gui/iec104_gui.jl
+index 1a34b01..3042de5 100644
+--- a/examples/julia/gui/iec104_gui.jl
++++ b/examples/julia/gui/iec104_gui.jl
+@@ -4,18 +4,27 @@
+ # All rights reserved by SOPTIM AG.
+ #
+ # iec104_gui.jl - test GUI in the browser: controlling station (client) and
+-# controlled station (server) of the IEC 104 library, side by side.
++# controlled station (server) of the IEC 104 library, side by side, plus an
++# example program of lib60870 as independent controlling station.
+ #
+-#   julia iec104_gui.jl [port] [address]     default 8080 127.0.0.1
++#   julia iec104_gui.jl [port] [address] [lib60870]
++#     port      default 8080, 0 = any free port (printed in the start line)
++#     address   default 127.0.0.1; the GUI and its station listen there
++#     lib60870  folder lib60870-C (or its parent lib60870) with built
++#               examples; else environment variable IEC104_LIB60870
+ #   then open http://localhost:8080
+ #
+ # Only the Julia standard library is used (Sockets); the page is index.html
+-# next to this file. The GUI can send commands: it listens on 127.0.0.1 only,
+-# unless another address is given explicitly.
++# next to this file. The GUI can send commands and start programs: it listens
++# on 127.0.0.1 only, unless another address is given explicitly. Requests
++# must name this GUI in the Host header (localhost or an IP address, against
++# DNS rebinding) and /api/ requests must carry "X-IEC104-GUI: 1", which a
++# page of another site cannot send (no CORS, only GET).
+ #
+ # Design: one Julia thread. A poll task drives client and server every 20 ms;
+ # the library calls the callbacks inside that poll and they only store data.
+-# HTTP requests are handled in their own tasks between two polls.
++# HTTP requests, the output of lib60870 and its end are handled in their own
++# tasks between two polls (docs/07_Julia.md, section 4).
+ 
+ include(joinpath(@__DIR__, "..", "IEC104.jl"))
+ using .IEC104
+@@ -60,6 +69,36 @@ end
+ const GUI = Gui(C_NULL, IEC104.LINK_CLOSED, 0, 1, Dict(), C_NULL, 1, true, Dict(), Dict(), [], 0)
+ const LOG_MAX = 500
+ 
++# Address and port of the GUI, set by main(). The station listens on the same address.
++const GUI_ADDRESS = Ref("127.0.0.1")
++const GUI_PORT = Ref(0)
++
++"Counterpart lib60870: an unchanged example program as separate process (never linked)."
++mutable struct Peer
++    folder::String                          # lib60870-C, "" = not configured
++    process::Union{Base.Process,Nothing}    # running program
++    program::String                         # key of the last started program
++end
++
++const PEER = Peer("", nothing, "")
++
++# Programs the page may start: only a key of this table comes from the browser,
++# never a path or an argument. All are controlling stations (clients); the
++# lib60870 stations are not offered because they listen on all addresses.
++const PEER_PROGRAMS = [
++    (key = "simple_client", dir = "cs104_client", prog = "simple_client",
++     label = "verbindet, STARTDT, nach 2 s Generalabfrage an Station 1, nach 5 s Testbefehl " *
++             "mit Zeitmarke (Typ 107), endet nach etwa 9 s"),
++    (key = "cs104_client_async", dir = "cs104_client_async", prog = "cs104_client_async",
++     label = "bleibt verbunden: STARTDT, Generalabfrage an Station 1 sofort und alle 10 s; " *
++             "läuft bis Beenden"),
++    (key = "cs104_client_no_threads", dir = "cs104_client_no_threads",
++     prog = "cs104_client_no_threads",
++     label = "bleibt verbunden: nur STARTDT (sendet trotz seiner Meldung keine Abfrage), " *
++             "empfängt spontane Daten, Testrahmen nach 2 s Ruhe; läuft bis Beenden"),
++]
++const PEER_LINE_MAX = 300   # longer output lines are cut
++
+ note(text::AbstractString) = begin
+     GUI.log_seq += 1
+     push!(GUI.log, (GUI.log_seq, time(), String(text)))
+@@ -67,13 +106,43 @@ note(text::AbstractString) = begin
+     nothing
+ end
+ 
++# --- Plain German texts for the page --------------------------------------------
++
++"State of a connection in words (iec104_link_state)."
++state_text(state::Integer) = get(Dict(0 => "verbinde …",
++    1 => "verbunden, Datenübertragung aus (STARTDT fehlt)",
++    2 => "STARTDT gesendet, warte auf Bestätigung", 3 => "Datenübertragung läuft",
++    4 => "STOPDT gesendet, warte auf Bestätigung", 5 => "getrennt"), Int(state), "Zustand $state")
++
++"Hint for a close reason (iec104_close_reason), \"\" if none."
++close_hint(reason::Integer) = get(Dict(
++    1 => "von dieser Seite getrennt",
++    2 => "Gegenstelle hat die Verbindung beendet",
++    3 => "an Adresse und Port lauscht niemand – Station gestartet? Adresse und Port richtig?",
++    4 => "keine Antwort innerhalb t0 – Adresse im Netz erreichbar?",
++    5 => "Gegenstelle hat nicht rechtzeitig quittiert (t1) – Timer der Gegenstelle prüfen",
++    9 => "Rahmen im falschen Zustand oder in falscher Rolle",
++    11 => "TLS-Fehler, siehe TLS-Ereignis"), Int(reason), "")
++
++# Allowed values per type (time-tagged types like their base type).
++const RANGES = Dict(1 => "0 oder 1", 3 => "0…3 (1 = aus, 2 = ein)", 5 => "−64…63",
++    9 => "−1 bis knapp unter 1, z. B. 0.5", 11 => "−32768…32767", 13 => "beliebig",
++    15 => "ganze Zahl", 45 => "0 oder 1", 46 => "0…3 (1 = aus, 2 = ein)",
++    47 => "0…3 (1 = tiefer, 2 = höher)", 48 => "−1 bis knapp unter 1, z. B. 0.5",
++    49 => "−32768…32767", 50 => "beliebig")
++const BASE_TYPE = Dict(30 => 1, 31 => 3, 32 => 5, 34 => 9, 35 => 11, 36 => 13, 37 => 15,
++                       58 => 45, 59 => 46, 60 => 47, 61 => 48, 62 => 49, 63 => 50)
++range_text(type::Integer) = get(RANGES, get(BASE_TYPE, Int(type), Int(type)), "")
++
+ # --- Callbacks (run inside the poll, called from C: store only, no I/O) -------
+ 
+ function cb_client_state(::Ptr{Cvoid}, ::UInt32, state::Cint, reason::Cint)::Cvoid
+     GUI.client_state = state
+     GUI.client_reason = reason
+-    note("Leitstelle: " * IEC104.state_string(state) *
+-         (state == IEC104.LINK_CLOSED ? " (" * IEC104.close_reason_string(reason) * ")" : ""))
++    hint = state == IEC104.LINK_CLOSED ? close_hint(reason) : ""
++    note("Leitstelle: " * state_text(state) *
++         (state == IEC104.LINK_CLOSED ? " (" * IEC104.close_reason_string(reason) * ")" : "") *
++         (isempty(hint) ? "" : " – " * hint))
+     return nothing
+ end
+ 
+@@ -108,10 +177,12 @@ end
+ function cb_server_state(::Ptr{Cvoid}, conn::UInt32, state::Cint, reason::Cint)::Cvoid
+     if state == IEC104.LINK_CLOSED
+         delete!(GUI.connections, conn)
+-        note("Station: Verbindung $conn geschlossen (" * IEC104.close_reason_string(reason) * ")")
++        hint = close_hint(reason)
++        note("Station: Verbindung $conn getrennt (" * IEC104.close_reason_string(reason) * ")" *
++             (isempty(hint) ? "" : " – " * hint))
+     else
+         GUI.connections[conn] = state
+-        note("Station: Verbindung $conn " * IEC104.state_string(state))
++        note("Station: Verbindung $conn " * state_text(state))
+     end
+     return nothing
+ end
+@@ -125,6 +196,19 @@ function cb_server_command(::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd:
+     return Cint(GUI.accept_commands ? 1 : 0)
+ end
+ 
++# Requests the station answers by itself (no on_command), shown as events.
++const REQUESTS = Dict(100 => "Generalabfrage", 101 => "Zählerabfrage", 102 => "Lesebefehl",
++                      104 => "Testbefehl", 107 => "Testbefehl mit Zeitmarke")
++
++function cb_server_asdu(::Ptr{Cvoid}, conn::UInt32, asdu::Ptr{UInt8}, len::Csize_t)::Cvoid
++    len >= 3 || return nothing
++    type = unsafe_load(asdu, 1)
++    what = get(REQUESTS, Int(type), nothing)
++    what === nothing && return nothing
++    note("Station: $what (Typ $type, Ursache $(unsafe_load(asdu, 3) & 0x3f)) von Verbindung $conn")
++    return nothing
++end
++
+ function cb_security(::Ptr{Cvoid}, conn::UInt32, event::Cint, detail::Cstring)::Cvoid
+     note("TLS $conn: " * IEC104.security_event_string(event) * ": " * unsafe_string(detail))
+     return nothing
+@@ -195,32 +279,129 @@ function gui_server_listen(p)
+     GUI.server != C_NULL && (server_destroy(GUI.server); GUI.server = C_NULL)
+     empty!(GUI.connections)
+     cb = Callbacks(GUI;
++        on_asdu = @cfunction(cb_server_asdu, Cvoid, (Ptr{Cvoid}, UInt32, Ptr{UInt8}, Csize_t)),
+         on_state = @cfunction(cb_server_state, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cint)),
+         on_command = @cfunction(cb_server_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})),
+         on_security = @cfunction(cb_security, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cstring)))
+     GUI.server = server_create(LinkConfig(), cb)
+     server_set_log(GUI.server, 1, @cfunction(cb_log, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
+     GUI.server_station = UInt16(p_int(p, "station", 1))
+-    for o in values(GUI.points)
+-        server_add_point(GUI.server, GUI.server_station, o)
++    try
++        for o in values(GUI.points)
++            server_add_point(GUI.server, GUI.server_station, o)
++        end
++        # Same address as the GUI: 127.0.0.1 unless the GUI was started on another one.
++        IEC104.server_listen(GUI.server, p_int(p, "port", 2404); address = GUI_ADDRESS[])
++    catch
++        server_destroy(GUI.server)   # not listening: no half-started station
++        GUI.server = C_NULL
++        rethrow()
+     end
+-    IEC104.server_listen(GUI.server, p_int(p, "port", 2404))
+-    note("Station: lauscht auf Port $(server_port(GUI.server)), gemeinsame Adresse $(GUI.server_station)")
++    note("Station: lauscht auf $(GUI_ADDRESS[]):$(server_port(GUI.server)), " *
++         "gemeinsame Adresse $(GUI.server_station)")
+ end
+ 
+ function gui_server_point(p)
+     o = Object(p_int(p, "type", 13), p_int(p, "ioa", 100), p_num(p, "value", 0.0))
+-    known = haskey(GUI.points, o.ioa)
+-    GUI.points[o.ioa] = o
+-    GUI.server == C_NULL && return
+-    if known
+-        check(server_update(GUI.server, GUI.server_station, o))   # spontaneous
+-    else
+-        server_add_point(GUI.server, GUI.server_station, o)
+-        note("Station: Datenpunkt IOA $(o.ioa) Typ $(o.type) angelegt")
++    old = get(GUI.points, o.ioa, nothing)
++    old !== nothing && old.type != o.type &&
++        throw(ArgumentError("IOA $(o.ioa) ist schon als Typ $(old.type) angelegt; " *
++                            "für Typ $(o.type) eine andere IOA wählen"))
++    if GUI.server != C_NULL
++        if old !== nothing
++            check(server_update(GUI.server, GUI.server_station, o))   # spontaneous
++        else
++            server_add_point(GUI.server, GUI.server_station, o)
++            note("Station: Datenpunkt IOA $(o.ioa) Typ $(o.type) angelegt")
++        end
+     end
++    GUI.points[o.ioa] = o   # only after the library accepted it
++end
++
++# --- Counterpart lib60870 (process, normal tasks; never inside a callback) -----
++
++"lib60870-C folder from the start argument, else IEC104_LIB60870; the parent folder lib60870 is accepted."
++function peer_folder(arg::AbstractString)
++    folder = isempty(arg) ? get(ENV, "IEC104_LIB60870", "") : arg
++    isempty(folder) && return ""
++    folder = abspath(expanduser(folder))
++    isdir(joinpath(folder, "lib60870-C")) && (folder = joinpath(folder, "lib60870-C"))
++    return String(rstrip(normpath(folder), '/'))
+ end
+ 
++peer_path(x) = joinpath(PEER.folder, "build", "examples", x.dir, x.prog)
++peer_found(x) = !isempty(PEER.folder) && isfile(peer_path(x)) && Sys.isexecutable(peer_path(x))
++peer_running() = PEER.process !== nothing && process_running(PEER.process)
++
++"Every output line of the program becomes an event."
++function peer_read(out::Pipe)
++    try
++        for line in eachline(out)
++            line = rstrip(line)
++            isvalid(line) || (line = map(c -> isvalid(c) ? c : '?', line))
++            isempty(line) && continue
++            length(line) > PEER_LINE_MAX && (line = first(line, PEER_LINE_MAX) * " …")
++            note("lib60870: " * line)
++        end
++    catch e
++        e isa Base.IOError || note("lib60870: Ausgabe nicht lesbar: " * sprint(showerror, e))
++    finally
++        close(out)
++    end
++end
++
++"Waits for the end of the program and notes how it ended."
++function peer_wait(proc::Base.Process, key::String, reader::Task)
++    wait(proc)
++    PEER.process === proc && (PEER.process = nothing)
++    timedwait(() -> istaskdone(reader), 2.0)   # its last lines first
++    note("lib60870: $key beendet, " *
++         (proc.termsignal != 0 ? "Signal $(proc.termsignal)" : "Rückgabe $(proc.exitcode)"))
++end
++
++function gui_peer_start(p)
++    isempty(PEER.folder) && throw(ArgumentError("kein lib60870-Ordner (beim Start der GUI angeben)"))
++    i = findfirst(x -> x.key == p_str(p, "prog"), PEER_PROGRAMS)
++    i === nothing && throw(ArgumentError("unbekanntes Programm"))
++    x = PEER_PROGRAMS[i]
++    peer_found(x) || throw(ArgumentError("$(x.key) fehlt: $(peer_path(x))"))
++    peer_running() && throw(ArgumentError("Gegenstelle läuft bereits ($(PEER.program))"))
++    port = GUI.server == C_NULL ? 0 : server_port(GUI.server)
++    port == 0 && throw(ArgumentError("erst die Station starten"))
++    a = GUI_ADDRESS[]
++    a == "0.0.0.0" || a == "::" || startswith(a, "127.") ||
++        throw(ArgumentError("Gegenstelle verbindet sich mit 127.0.0.1, die Station lauscht auf $a"))
++    cmd = `$(peer_path(x)) 127.0.0.1 $port`
++    stdbuf = Sys.which("stdbuf")   # C stdio buffers blocks on a pipe; line by line instead
++    stdbuf === nothing || (cmd = `$stdbuf -oL -eL $cmd`)
++    out = Pipe()
++    proc = run(pipeline(Cmd(cmd; dir = mktempdir()); stdin = devnull, stdout = out, stderr = out);
++               wait = false)
++    close(out.in)
++    PEER.process = proc
++    PEER.program = x.key
++    note("lib60870: $(x.key) verbindet sich mit 127.0.0.1:$port (Prozess $(getpid(proc)))")
++    reader = @async peer_read(out)
++    @async peer_wait(proc, x.key, reader)
++    return nothing
++end
++
++"SIGINT; still running after 3 s: SIGKILL."
++function gui_peer_stop(p)
++    peer_running() || throw(ArgumentError("keine Gegenstelle aktiv"))
++    proc = PEER.process
++    note("lib60870: $(PEER.program) wird beendet")
++    kill(proc, Base.SIGINT)
++    @async begin
++        timedwait(() -> !process_running(proc), 3.0)
++        process_running(proc) && kill(proc, Base.SIGKILL)
++    end
++    return nothing
++end
++
++"At exit of the GUI: a running counterpart ends too."
++peer_kill() = (p = PEER.process; p !== nothing && process_running(p) && kill(p, Base.SIGKILL); nothing)
++
+ const ACTIONS = Dict{String,Function}(
+     "/api/client/connect" => gui_client_connect,
+     "/api/client/start" => p -> (need_client(); client_start(GUI.client)),
+@@ -236,6 +417,8 @@ const ACTIONS = Dict{String,Function}(
+                                 empty!(GUI.connections); note("Station: beendet")),
+     "/api/server/point" => gui_server_point,
+     "/api/server/accept" => p -> (GUI.accept_commands = get(p, "on", "1") == "1"),
++    "/api/peer/start" => gui_peer_start,
++    "/api/peer/stop" => gui_peer_stop,
+ )
+ 
+ # --- JSON (hand-made, the page needs little) -------------------------------------
+@@ -262,6 +445,8 @@ function state_json(since::Int)
+     io = IOBuffer()
+     print(io, "{\"client\":{\"state\":")
+     jstr(io, GUI.client == C_NULL ? "–" : IEC104.state_string(GUI.client_state))
++    print(io, ",\"text\":")
++    jstr(io, GUI.client == C_NULL ? "nicht verbunden" : state_text(GUI.client_state))
+     print(io, ",\"station\":", GUI.station, ",\"rows\":[")
+     rows = sort!(collect(values(GUI.rows)); by = r -> (r.station, r.ioa, r.type))
+     for (n, r) in enumerate(rows)
+@@ -283,7 +468,7 @@ function state_json(since::Int)
+     for (n, (id, st)) in enumerate(sort!(collect(GUI.connections)))
+         n > 1 && print(io, ',')
+         print(io, "{\"id\":", id, ",\"state\":")
+-        jstr(io, IEC104.state_string(st))
++        jstr(io, state_text(st))
+         print(io, '}')
+     end
+     print(io, "],\"points\":[")
+@@ -293,6 +478,19 @@ function state_json(since::Int)
+         jnum(io, o.value)
+         print(io, '}')
+     end
++    print(io, "]},\"peer\":{\"available\":", any(peer_found, PEER_PROGRAMS), ",\"folder\":")
++    jstr(io, PEER.folder)
++    print(io, ",\"running\":", peer_running(), ",\"program\":")
++    jstr(io, PEER.program)
++    print(io, ",\"programs\":[")
++    for (n, x) in enumerate(PEER_PROGRAMS)
++        n > 1 && print(io, ',')
++        print(io, "{\"key\":")
++        jstr(io, x.key)
++        print(io, ",\"label\":")
++        jstr(io, x.label)
++        print(io, ",\"available\":", peer_found(x), '}')
++    end
+     print(io, "]},\"log\":[")
+     first = true
+     for (seq, t, text) in GUI.log
+@@ -340,6 +538,32 @@ end
+ 
+ const PAGE = read(joinpath(@__DIR__, "index.html"), String)
+ 
++const ACTION_NAMES = Dict(
++    "/api/client/connect" => "Verbinden", "/api/client/start" => "STARTDT",
++    "/api/client/stop" => "STOPDT", "/api/client/close" => "Trennen",
++    "/api/client/gi" => "Generalabfrage", "/api/client/ci" => "Zählerabfrage",
++    "/api/client/clock" => "Uhrzeit setzen", "/api/client/command" => "Befehl",
++    "/api/server/listen" => "Station starten", "/api/server/point" => "Datenpunkt",
++    "/api/peer/start" => "Gegenstelle starten", "/api/peer/stop" => "Gegenstelle beenden")
++
++"Error message with a hint what to do."
++function error_text(e, path, p)
++    e isa Iec104Error || return e isa ArgumentError ? e.msg : sprint(showerror, e)
++    if e.status == -8   # IEC104_ERR_WRONG_STATE
++        startswith(path, "/api/client") || return e.msg
++        (GUI.client == C_NULL || GUI.client_state == IEC104.LINK_CLOSED) &&
++            return "$(e.msg) – erst verbinden"
++        GUI.client_state == IEC104.LINK_STARTED || return "$(e.msg) – erst STARTDT"
++        return e.msg
++    elseif e.status == -5   # IEC104_ERR_OUT_OF_RANGE
++        r = range_text(p_int(p, "type", 0))
++        return isempty(r) ? e.msg : "$(e.msg) – Typ $(p_str(p, "type")) erlaubt: $r"
++    elseif e.status == -9 && path == "/api/server/listen"   # IEC104_ERR_IO
++        return "$(e.msg) – Port $(p_str(p, "port")) belegt? anderen Port wählen"
++    end
++    return e.msg
++end
++
+ function route(path, p)
+     path == "/" && return ("200 OK", "text/html; charset=utf-8", PAGE)
+     path == "/api/state" && return ("200 OK", "application/json", state_json(p_int(p, "since", 0)))
+@@ -349,8 +573,8 @@ function route(path, p)
+         action(p)
+         return ("200 OK", "application/json", "{\"ok\":true}")
+     catch e
+-        msg = e isa Iec104Error ? e.msg : sprint(showerror, e)
+-        note("Fehler: $msg")
++        msg = error_text(e, path, p)
++        note("Fehler bei " * get(ACTION_NAMES, path, path) * ": " * msg)
+         io = IOBuffer()
+         print(io, "{\"ok\":false,\"error\":")
+         jstr(io, msg)
+@@ -359,17 +583,55 @@ function route(path, p)
+     end
+ end
+ 
++"Host header names this GUI: localhost or an IP address, with the GUI's port (no DNS name: DNS rebinding)."
++function host_allowed(host::AbstractString)
++    m = match(r"^(localhost|[0-9]{1,3}(?:\.[0-9]{1,3}){3}|\[[0-9A-Fa-f:.]+\]):([0-9]{1,5})$"i, host)
++    m === nothing && return false
++    name, port = m.captures
++    if startswith(name, '[')
++        try
++            parse(IPv6, name[2:end-1])
++        catch
++            return false
++        end
++    elseif lowercase(name) != "localhost"
++        all(o -> parse(Int, o) <= 255, split(name, '.')) || return false
++    end
++    return parse(Int, port) == GUI_PORT[]
++end
++
++const HEADERS_MAX = 100
++
+ function handle(sock)
+     try
+         request = readline(sock)
+-        while !isempty(strip(readline(sock))) end   # headers are not needed
++        headers = Dict{String,String}()
++        for _ in 1:HEADERS_MAX
++            line = readline(sock)
++            isempty(strip(line)) && break
++            kv = split(line, ':'; limit = 2)
++            length(kv) == 2 && (headers[lowercase(strip(kv[1]))] = strip(kv[2]))
++        end
+         parts = split(request)
+         length(parts) >= 2 || return
+-        target = parts[2]
++        method, target = parts[1], parts[2]
+         path, query = occursin('?', target) ? split(target, '?'; limit = 2) : (target, "")
+-        status, type, body = route(String(path), parse_query(query))
++        # No Access-Control-* headers ever: other sites get no CORS permission.
++        status, type, body =
++            if !host_allowed(get(headers, "host", ""))
++                ("403 Forbidden", "text/plain; charset=utf-8", "Zugriff verweigert: Host nicht erlaubt\n")
++            elseif method != "GET"
++                ("405 Method Not Allowed", "text/plain; charset=utf-8", "nur GET\n")
++            elseif startswith(path, "/api/") && get(headers, "x-iec104-gui", "") != "1"
++                ("403 Forbidden", "text/plain; charset=utf-8",
++                 "Zugriff verweigert: Kopfzeile X-IEC104-GUI fehlt\n")
++            else
++                route(String(path), parse_query(query))
++            end
++        allow = startswith(status, "405") ? "Allow: GET\r\n" : ""
+         write(sock, "HTTP/1.1 $status\r\nContent-Type: $type\r\nContent-Length: $(sizeof(body))\r\n" *
+-                    "Cache-Control: no-store\r\nConnection: close\r\n\r\n", body)
++                    "Cache-Control: no-store\r\nX-Frame-Options: DENY\r\n$(allow)Connection: close\r\n\r\n",
++              body)
+     catch e
+         e isa Base.IOError || @warn "request failed" exception = e
+     finally
+@@ -379,13 +641,22 @@ end
+ 
+ # --- Main ----------------------------------------------------------------------------
+ 
+-function main(port = 8080, address = "127.0.0.1")
++function main(port = 8080, address = "127.0.0.1", lib60870 = "")
+     address == "127.0.0.1" ||
+         @warn "Die GUI ist ohne Anmeldung von $address aus erreichbar und kann Befehle senden."
++    GUI_ADDRESS[] = address
++    PEER.folder = peer_folder(lib60870)
++    atexit(peer_kill)
+     server = listen(parse(IPAddr, address), port)
+-    println("IEC 104 Test-GUI (Library ", IEC104.version(), "): http://localhost:$port")
+-    flush(stdout)
++    GUI_PORT[] = Int(getsockname(server)[2])   # port 0: the one chosen by the system
++    println("IEC 104 Test-GUI (Library ", IEC104.version(), "): http://localhost:$(GUI_PORT[])")
++    flush(stdout)   # scripts wait for this line
+     note("GUI gestartet, Library " * IEC104.version())
++    if !isempty(PEER.folder)
++        found = [x.key for x in PEER_PROGRAMS if peer_found(x)]
++        note("Gegenstelle lib60870: $(PEER.folder), " *
++             (isempty(found) ? "keine Beispielprogramme unter build/examples" : join(found, ", ")))
++    end
+     @async while true   # poll task: the library runs here, callbacks included
+         GUI.client != C_NULL && client_poll(GUI.client, 0)
+         GUI.server != C_NULL && server_poll(GUI.server, 0)
+@@ -398,5 +669,5 @@ function main(port = 8080, address = "127.0.0.1")
+ end
+ 
+ if abspath(PROGRAM_FILE) == @__FILE__
+-    main(parse(Int, get(ARGS, 1, "8080")), get(ARGS, 2, "127.0.0.1"))
++    main(parse(Int, get(ARGS, 1, "8080")), get(ARGS, 2, "127.0.0.1"), get(ARGS, 3, ""))
+ end
+diff --git a/examples/julia/gui/index.html b/examples/julia/gui/index.html
+index b4402b9..7d35df6 100644
+--- a/examples/julia/gui/index.html
++++ b/examples/julia/gui/index.html
+@@ -36,6 +36,9 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+   #log { font: 12px ui-monospace, monospace; max-height: 220px; overflow: auto; white-space: pre-wrap; }
+   #err { color: #b02a2a; }
+   details { margin: 4px 0; }
++  .hint { font-size: 12px; color: #555; margin: 4px 0; }
++  code { font: 12px ui-monospace, monospace; background: #f0f2f5; padding: 0 3px; border-radius: 3px; }
++  option:disabled { color: #999; }
+ </style>
+ </head>
+ <body>
+@@ -79,9 +82,9 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+     <button onclick="act('client/clear')">Tabelle leeren</button>
+   </div>
+   <div class="row">
+-    <label>Befehl<select id="ctype"></select></label>
++    <label>Befehl<select id="ctype" onchange="ranges()"></select></label>
+     <label>IOA<input id="cioa" class="m" value="6000"></label>
+-    <label>Wert<input id="cvalue" class="s" value="1"></label>
++    <label>Wert <span id="crange" class="hint"></span><input id="cvalue" class="s" value="1"></label>
+     <label>Ablauf<select id="cmode"><option value="direct">direkt</option><option value="sbo">Select/Execute</option></select></label>
+     <label>&nbsp;<button class="main" onclick="command()">Senden</button></label>
+   </div>
+@@ -101,9 +104,9 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+     <label>Befehle annehmen<input id="accept" type="checkbox" checked onchange="act('server/accept', {on: this.checked ? 1 : 0})"></label>
+   </div>
+   <div class="row">
+-    <label>Datenpunkt<select id="ptype"></select></label>
++    <label>Datenpunkt<select id="ptype" onchange="ranges()"></select></label>
+     <label>IOA<input id="pioa" class="m" value="100"></label>
+-    <label>Wert<input id="pvalue" class="s" value="0"></label>
++    <label>Wert <span id="prange" class="hint"></span><input id="pvalue" class="s" value="0"></label>
+     <label>&nbsp;<button class="main" onclick="act('server/point', {type: v('ptype'), ioa: v('pioa'), value: v('pvalue')})">Anlegen / senden</button></label>
+   </div>
+   <div class="scroll"><table>
+@@ -113,6 +116,29 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+   <p>Verbindungen: <span id="conns">keine</span></p>
+ </section>
+ 
++<section class="wide">
++  <h2>Gegenstelle lib60870 (Leitstelle) <span id="pstate" class="state">–</span></h2>
++  <div id="peeron" hidden>
++    <div class="row">
++      <label>Programm<select id="pprog" onchange="peerHelp()"></select></label>
++      <label>&nbsp;<button class="main" onclick="act('peer/start', {prog: v('pprog')})">Starten</button></label>
++      <label>&nbsp;<button onclick="act('peer/stop')">Beenden</button></label>
++      <span id="phelp" class="hint"></span>
++    </div>
++    <p class="hint">Startet ein unverändertes Beispielprogramm von lib60870 als eigenen Prozess; es verbindet
++      sich mit der Station dieser GUI (127.0.0.1, Port der Station). Erst die Station starten. lib60870 spricht
++      Station 1 an: Station (CA) 1 verwenden. Ausgabe unter Ereignisse („lib60870: …“).
++      Ordner: <code id="pfolder"></code></p>
++  </div>
++  <div id="peeroff" class="hint" hidden>
++    <span id="pmissing">Kein lib60870-Ordner angegeben.</span> Der Ordner wird beim Start der GUI festgelegt:
++    <code>bash gui.sh 8080 127.0.0.1 /pfad/zu/lib60870-C</code> oder Umgebungsvariable
++    <code>IEC104_LIB60870=/pfad/zu/lib60870-C</code>. Erwartet werden die gebauten Beispiele unter
++    <code>build/examples/</code> (<code>simple_client</code>, <code>cs104_client_async</code>,
++    <code>cs104_client_no_threads</code>).
++  </div>
++</section>
++
+ <section class="wide">
+   <h2>Ereignisse</h2>
+   <div id="log"></div>
+@@ -143,12 +169,23 @@ const qoi = document.getElementById('qoi');
+ for (let g = 1; g <= 16; g++) qoi.add(new Option('Gruppe ' + g, 20 + g));
+ 
+ const v = id => document.getElementById(id).value;
++// Allowed values per type, shown next to the value fields.
++const RANGE = {1: '0/1', 3: '0…3 (1 aus, 2 ein)', 5: '−64…63', 9: '−1…<1', 11: '−32768…32767', 13: 'beliebig',
++  15: 'ganzzahlig', 45: '0/1', 46: '0…3 (1 aus, 2 ein)', 47: '0…3 (1 tiefer, 2 höher)', 48: '−1…<1',
++  49: '−32768…32767', 50: 'beliebig', 58: '0/1', 59: '0…3 (1 aus, 2 ein)', 61: '−1…<1', 62: '−32768…32767',
++  63: 'beliebig'};
++function ranges() {
++  document.getElementById('crange').textContent = RANGE[v('ctype')] || '';
++  document.getElementById('prange').textContent = RANGE[v('ptype')] || '';
++}
++// Every request names the GUI; pages of other sites cannot send this header.
++const GUI_HEADER = {headers: {'X-IEC104-GUI': '1'}};
+ const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+ const typeName = t => TYPES[t] ? TYPES[t].split(' ')[0] : t;
+ 
+ async function act(path, params = {}) {
+-  const r = await fetch('/api/' + path + '?' + new URLSearchParams(params));
+-  const j = await r.json();
++  const r = await fetch('/api/' + path + '?' + new URLSearchParams(params), GUI_HEADER);
++  const j = r.ok ? await r.json() : {ok: false, error: await r.text()};
+   document.getElementById('err').textContent = j.ok ? '' : j.error;
+   refresh();
+ }
+@@ -166,13 +203,50 @@ function sendPoint(ioa, type, delta) {
+   act('server/point', {ioa, type, value});
+ }
+ 
++let programs = [];
++function peerHelp() {
++  const p = programs.find(x => x.key === v('pprog'));
++  document.getElementById('phelp').textContent = p ? p.label : '';
++}
++function showPeer(peer) {
++  document.getElementById('peeron').hidden = !peer.available;
++  document.getElementById('peeroff').hidden = peer.available;
++  document.getElementById('pmissing').textContent = peer.folder
++    ? 'Im Ordner ' + peer.folder + ' sind keine gebauten Beispiele.' : 'Kein lib60870-Ordner angegeben.';
++  document.getElementById('pfolder').textContent = peer.folder;
++  const sel = document.getElementById('pprog');
++  if (sel.options.length === 0 && peer.available) {
++    programs = peer.programs;
++    for (const p of programs) {
++      const o = new Option(p.key + (p.available ? '' : ' (fehlt)'), p.key);
++      o.disabled = !p.available;
++      sel.add(o);
++    }
++    const first = programs.find(p => p.available);
++    if (first) sel.value = first.key;
++    peerHelp();
++  }
++  const ps = document.getElementById('pstate');
++  ps.textContent = peer.running ? 'läuft: ' + peer.program : 'aus';
++  ps.className = 'state ' + (peer.running ? 'started' : '');
++}
++
+ let since = 0;
++let refreshing = false;
+ async function refresh() {
++  if (refreshing) return;   // the next interval catches up; avoids duplicate log lines
++  refreshing = true;
++  try { await update(); } finally { refreshing = false; }
++}
++async function update() {
+   let s;
+-  try { s = await (await fetch('/api/state?since=' + since)).json(); }
+-  catch (e) { document.getElementById('err').textContent = 'GUI-Programm nicht erreichbar'; return; }
++  try {
++    const r = await fetch('/api/state?since=' + since, GUI_HEADER);
++    if (!r.ok) { document.getElementById('err').textContent = await r.text(); return; }
++    s = await r.json();
++  } catch (e) { document.getElementById('err').textContent = 'GUI-Programm nicht erreichbar'; return; }
+   const cs = document.getElementById('cstate');
+-  cs.textContent = s.client.state;
++  cs.textContent = s.client.text || s.client.state;
+   cs.className = 'state ' + (s.client.state === 'started' ? 'started' : s.client.state === 'closed' ? 'closed' : '');
+   document.getElementById('rows').innerHTML = s.client.rows.map(r =>
+     `<tr class="${r.age < 2 ? 'fresh' : ''}"><td>${r.station}</td><td class="num">${r.ioa}</td>` +
+@@ -191,10 +265,16 @@ async function refresh() {
+       `<button onclick="sendPoint(${p.ioa}, ${p.type}, 1)">+1</button></td></tr>`).join('');
+   document.getElementById('conns').textContent =
+     s.server.connections.map(c => c.id + ': ' + c.state).join(', ') || 'keine';
++  showPeer(s.peer);
+   const log = document.getElementById('log');
+-  for (const e of s.log) { log.textContent += e.time + '  ' + e.text + '\n'; since = e.seq; }
++  for (const e of s.log) {
++    if (e.seq <= since) continue;
++    log.textContent += e.time + '  ' + e.text + '\n';
++    since = e.seq;
++  }
+   if (s.log.length) log.scrollTop = log.scrollHeight;
+ }
++ranges();
+ setInterval(refresh, 500);
+ refresh();
+ </script>
+diff --git a/examples/julia/server.jl b/examples/julia/server.jl
+index 84bee6c..656f628 100644
+--- a/examples/julia/server.jl
++++ b/examples/julia/server.jl
+@@ -9,7 +9,11 @@
+ # every second and is sent spontaneously; the library answers a general
+ # interrogation by itself. Commands are printed and accepted.
+ #
+-#   julia server.jl [port] [seconds] [address]      address default: all
++#   julia server.jl [port] [seconds] [address]
++#     port      default 2404, 0 = any free port
++#     seconds   run time, default 0 = until Ctrl-C
++#     address   default 127.0.0.1 (this computer only); 0.0.0.0 = all
++#               addresses, only deliberately (the station accepts commands)
+ 
+ include(joinpath(@__DIR__, "IEC104.jl"))
+ using .IEC104
+@@ -25,7 +29,7 @@ function on_command(user::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd::Pt
+     return Cint(1)   # 1 = accept (positive confirmation), 0 = reject
+ end
+ 
+-function main(port = IEC104.DEFAULT_PORT, seconds = 0, address = nothing)
++function main(port = IEC104.DEFAULT_PORT, seconds = 0, address = "127.0.0.1")
+     st = ServerState(Tuple{UInt32,AsduInfo,Object}[])
+     cb = Callbacks(st;
+         on_command = @cfunction(on_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})))
+@@ -34,8 +38,7 @@ function main(port = IEC104.DEFAULT_PORT, seconds = 0, address = nothing)
+         try
+             value = 0.0
+             server_add_point(server, 1, Object(13, 100, value))   # M_ME_NC_1, group 1
+-            address === nothing ? server_listen(server, port) :
+-                                  server_listen(server, port; address = address)
++            server_listen(server, port; address = address)
+             println("listening on port ", server_port(server))
+             flush(stdout)   # stdout to a file is buffered; scripts wait for this line
+             t_end = seconds > 0 ? time() + seconds : Inf
+@@ -62,5 +65,5 @@ end
+ if abspath(PROGRAM_FILE) == @__FILE__
+     port = parse(Int, get(ARGS, 1, string(IEC104.DEFAULT_PORT)))
+     seconds = parse(Int, get(ARGS, 2, "0"))
+-    main(port, seconds, get(ARGS, 3, nothing))
++    main(port, seconds, get(ARGS, 3, "127.0.0.1"))
+ end
+diff --git a/include/iec104/iec104.h b/include/iec104/iec104.h
+index fd526ef..e6141f3 100644
+--- a/include/iec104/iec104.h
++++ b/include/iec104/iec104.h
+@@ -61,9 +61,9 @@ extern "C" {
+ /** @brief Major version of this header. Incompatible API changes increment it. */
+ #define IEC104_VERSION_MAJOR 0
+ /** @brief Minor version of this header. Compatible additions increment it. */
+-#define IEC104_VERSION_MINOR 6
++#define IEC104_VERSION_MINOR 7
+ /** @brief Patch version of this header. Fixes without API change increment it. */
+-#define IEC104_VERSION_PATCH 2
++#define IEC104_VERSION_PATCH 0
+ 
+ /**
+  * @brief Default TCP port of an IEC 60870-5-104 connection without TLS.
+diff --git a/packaging/README-binary.md b/packaging/README-binary.md
+index bd6249a..e203a33 100644
+--- a/packaging/README-binary.md
++++ b/packaging/README-binary.md
+@@ -18,6 +18,7 @@ Geteilte Library für Linux x86-64 (Release, mit TLS).
+ bash pruefen.sh        # alles bereit?
+ bash gui.sh            # Test-GUI, dann http://localhost:8080 im Browser
+ bash gui.sh 8080 0.0.0.0   # WSL: wenn Windows localhost nicht erreicht; angezeigte Adresse öffnen
++bash gui.sh 8080 127.0.0.1 ~/src/lib60870/lib60870-C   # dazu lib60870 als fremde Leitstelle gegen die Station der GUI
+ bash beispiel.sh       # Station und Leitstelle in Julia gegeneinander
+ ```
+ 
+diff --git a/packaging/gui.sh b/packaging/gui.sh
+index b343efb..5750026 100755
+--- a/packaging/gui.sh
++++ b/packaging/gui.sh
+@@ -5,15 +5,24 @@
+ # All rights reserved by SOPTIM AG.
+ # gui.sh – startet die Test-GUI (Leitstelle und Station im Browser).
+ #
+-# Aufruf: bash gui.sh [port] [adresse]
+-#   port     Default 8080
+-#   adresse  Default 127.0.0.1 (nur dieser Rechner). Unter WSL kommt der
+-#            Windows-Browser manchmal nicht an 127.0.0.1 der WSL heran; dann
+-#            "bash gui.sh 8080 0.0.0.0" und die angezeigte Adresse öffnen.
+-#            Achtung: die GUI hat keine Anmeldung und kann Befehle senden.
++# Aufruf: bash gui.sh [port] [adresse] [lib60870]
++#   port      Default 8080
++#   adresse   Default 127.0.0.1 (nur dieser Rechner). Unter WSL kommt der
++#             Windows-Browser manchmal nicht an 127.0.0.1 der WSL heran; dann
++#             "bash gui.sh 8080 0.0.0.0" und die angezeigte Adresse öffnen.
++#             Achtung: die GUI hat keine Anmeldung und kann Befehle senden.
++#   lib60870  Ordner lib60870-C mit gebauten Beispielen (build/examples), sonst
++#             Umgebungsvariable IEC104_LIB60870; dann kann die GUI deren
++#             Leitstellen-Beispiele gegen ihre Station starten.
+ # Beenden mit Strg-C. Der erste Start nach einer Julia-Installation dauert
+ # länger (Julia übersetzt einmalig).
+ 
++# Ordner von lib60870 absolut machen, bevor in den Paketordner gewechselt wird.
++LIB60870="${3:-${IEC104_LIB60870:-}}"
++if [ -n "$LIB60870" ]; then
++    DIR="$(cd "$LIB60870" 2>/dev/null && pwd)" || { echo "lib60870-Ordner fehlt: $LIB60870"; exit 1; }
++    LIB60870="$DIR"
++fi
+ cd "$(dirname "$0")" || exit 1
+ PORT="${1:-8080}"
+ ADDR="${2:-127.0.0.1}"
+@@ -25,4 +34,5 @@ else
+     echo "Test-GUI startet auf $ADDR. Im Browser öffnen: http://${IP:-<adresse dieses Rechners>}:$PORT"
+ fi
+ echo "Bereit ist sie, sobald die Zeile \"IEC 104 Test-GUI ...\" erscheint (Strg-C beendet)."
+-exec julia --startup-file=no julia/gui/iec104_gui.jl "$PORT" "$ADDR"
++[ -n "$LIB60870" ] && echo "Gegenstelle lib60870: $LIB60870"
++exec julia --startup-file=no julia/gui/iec104_gui.jl "$PORT" "$ADDR" ${LIB60870:+"$LIB60870"}
+diff --git a/tests/gui/test_gui.sh b/tests/gui/test_gui.sh
+new file mode 100755
+index 0000000..3c6f0fc
+--- /dev/null
++++ b/tests/gui/test_gui.sh
+@@ -0,0 +1,203 @@
++#!/usr/bin/env bash
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++# test_gui.sh – prüft die Test-GUI (examples/julia/gui/iec104_gui.jl) über HTTP.
++#
++# Aufruf: tests/gui/test_gui.sh LIBRARY [LIB60870_C]
++#
++#   LIBRARY     geteilte Library (libiec104.so.0), wird der GUI als IEC104_LIB übergeben
++#   LIB60870_C  optional, sonst Umgebungsvariable IEC104_LIB60870: Ordner lib60870-C
++#               mit gebauten Beispielen; dann zusätzlich die Gegenstelle lib60870
++#   JULIA, CURL Programme, Default aus dem Suchpfad
++#
++# Alles läuft auf 127.0.0.1 mit Port 0: GUI und Station wählen freie Ports.
++# Geprüft: Host- und Kopfzeilenschutz, nur GET; Station mit Datenpunkt (nur auf
++# 127.0.0.1); Leitstelle der GUI mit STARTDT und Generalabfrage. Mit lib60870:
++# simple_client gegen die Station (Verbindung, Generalabfrage, Ende von selbst),
++# cs104_client_async starten und beenden. Die GUI wird am Ende immer beendet,
++# danach darf nichts mehr auf ihren Ports lauschen.
++# Rückgabe: 0 bestanden, 1 Fehler, 2 Voraussetzung fehlt.
++
++set -u
++
++LIB="${1:?Library fehlt (libiec104.so.0)}"
++LIB60870="${2:-${IEC104_LIB60870:-}}"
++ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
++GUI="$ROOT/examples/julia/gui/iec104_gui.jl"
++JULIA="${JULIA:-julia}"
++CURL="${CURL:-curl}"
++command -v "$JULIA" > /dev/null 2>&1 || { echo "julia fehlt" >&2; exit 2; }
++command -v "$CURL" > /dev/null 2>&1 || { echo "curl fehlt" >&2; exit 2; }
++[ -r "$LIB" ] || { echo "Library fehlt: $LIB" >&2; exit 2; }
++
++WORK="$(mktemp -d)"
++LOG="$WORK/gui.log"
++GPID=""
++PORT=""
++SPORT=""
++RC=0
++
++listening() { ss -ltn 2>/dev/null | grep -q -E "[:.]$1[[:space:]]"; }
++
++cleanup() {
++    if [ -n "$GPID" ] && kill -0 "$GPID" 2> /dev/null; then
++        local children
++        children="$(ps -o pid= --ppid "$GPID" 2> /dev/null)"
++        kill -INT "$GPID" 2> /dev/null   # atexit der GUI beendet eine laufende Gegenstelle
++        for _ in $(seq 1 50); do
++            kill -0 "$GPID" 2> /dev/null || break
++            sleep 0.1
++        done
++        kill -0 "$GPID" 2> /dev/null && kill -KILL "$GPID" 2> /dev/null
++        wait "$GPID" 2> /dev/null
++        for c in $children; do
++            kill -0 "$c" 2> /dev/null && { echo "Kindprozess $c lief noch" >&2; kill -KILL "$c"; RC=1; }
++        done
++    fi
++    for p in $PORT $SPORT; do
++        sleep 0.2
++        listening "$p" && { echo "FEHLER: Port $p lauscht nach dem Ende noch" >&2; RC=1; }
++    done
++    if [ "$RC" -ne 0 ]; then
++        echo "--- Ausgabe der GUI (Ende) ---" >&2
++        tail -n 40 "$LOG" >&2
++    fi
++    rm -rf "$WORK"
++    exit "$RC"
++}
++trap cleanup EXIT
++
++fail() { echo "FEHLER: $*" >&2; RC=1; exit 1; }
++ok() { echo "ok: $*"; }
++url() { echo "http://127.0.0.1:$PORT$1"; }
++api() { "$CURL" -sS --max-time 5 -H 'X-IEC104-GUI: 1' "$(url "/api/$1")"; }
++status() { "$CURL" -s -o /dev/null --max-time 5 -w '%{http_code}' "$@"; }
++last_seq() { api 'state?since=0' | grep -o '"seq":[0-9]*' | tail -n 1 | grep -o '[0-9]*$'; }
++
++# Aktion muss {"ok":true} liefern.
++act() {
++    local r
++    r="$(api "$1")"
++    case "$r" in *'"ok":true'*) ;; *) fail "$1: $r" ;; esac
++}
++# Aktion muss mit diesem Text abgelehnt werden.
++act_rejected() {
++    local r
++    r="$(api "$1")"
++    case "$r" in *'"ok":false'*"$2"*) ok "$1 abgelehnt: $2" ;; *) fail "$1: erwartet '$2', erhalten $r" ;; esac
++}
++# Wartet bis zu N Sekunden, bis der Zustand (ab Ereignis SINCE) alle Muster enthält.
++wait_state() { # Sekunden, Beschreibung, since, Muster...
++    local t="$1" what="$2" since="$3" end s p missing
++    shift 3
++    end=$((SECONDS + t))
++    while :; do
++        s="$(api "state?since=$since")"
++        missing=""
++        for p in "$@"; do
++            printf '%s' "$s" | grep -q -E -- "$p" || { missing="$p"; break; }
++        done
++        [ -z "$missing" ] && { ok "$what"; return 0; }
++        [ "$SECONDS" -lt "$end" ] || fail "$what: fehlt nach $t s: $missing"
++        sleep 0.25
++    done
++}
++
++# --- GUI starten ---------------------------------------------------------------
++IEC104_LIB="$LIB" IEC104_LIB60870="" "$JULIA" --startup-file=no "$GUI" 0 127.0.0.1 \
++    ${LIB60870:+"$LIB60870"} < /dev/null > "$LOG" 2>&1 &
++GPID=$!
++for _ in $(seq 1 1200); do   # der erste Julia-Start übersetzt einmalig
++    PORT="$(sed -n 's|^IEC 104 Test-GUI .*http://localhost:\([0-9]*\)$|\1|p' "$LOG")"
++    [ -n "$PORT" ] && break
++    kill -0 "$GPID" 2> /dev/null || fail "GUI läuft nicht"
++    sleep 0.25
++done
++[ -n "$PORT" ] || fail "GUI meldet keinen Port"
++ok "GUI auf Port $PORT"
++ss -ltn 2> /dev/null | grep -q -E "127\.0\.0\.1:$PORT[[:space:]]" || fail "GUI lauscht nicht nur auf 127.0.0.1"
++
++# --- Schutz: Host, Kopfzeile, Methode --------------------------------------------
++[ "$(status "$(url /api/state)")" = 403 ] || fail "ohne X-IEC104-GUI nicht 403"
++ok "ohne X-IEC104-GUI: 403"
++[ "$(status -H 'X-IEC104-GUI: 1' -H "Host: evil.example:$PORT" "$(url /api/state)")" = 403 ] ||
++    fail "fremder Host nicht 403"
++[ "$(status -H "Host: evil.example:$PORT" "$(url /)")" = 403 ] || fail "Seite mit fremdem Host nicht 403"
++[ "$(status -H 'X-IEC104-GUI: 1' -H "Host: localhost:1" "$(url /api/state)")" = 403 ] ||
++    fail "falscher Port im Host nicht 403"
++ok "fremder Host, falscher Port: 403"
++R="$("$CURL" -sS --max-time 5 -H 'X-IEC104-GUI: 1' -H "Host: localhost:$PORT" -w '\n%{http_code}' \
++    "$(url /api/state)")"
++case "$R" in '{"client":'*$'\n'200) ok "Host localhost:$PORT: 200 JSON" ;; *) fail "Host localhost: $R" ;; esac
++[ "$(status -X POST -H 'X-IEC104-GUI: 1' "$(url /api/state)")" = 405 ] || fail "POST nicht 405"
++H="$("$CURL" -s -i --max-time 5 -X OPTIONS -H 'Origin: http://evil.example' \
++    -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: x-iec104-gui' \
++    "$(url /api/state)")"
++case "$H" in HTTP/1.1\ 405*) ;; *) fail "OPTIONS nicht 405" ;; esac
++printf '%s' "$H" | grep -q -i '^access-control' && fail "Access-Control-Kopfzeile gesendet"
++ok "POST, OPTIONS: 405 ohne Access-Control"
++"$CURL" -sS --max-time 5 -H "Host: localhost:$PORT" "$(url /)" | grep -q "X-IEC104-GUI" ||
++    fail "Seite sendet X-IEC104-GUI nicht"
++ok "Seite mit Kopfzeile X-IEC104-GUI"
++
++# --- Gegenstelle ohne Station / ohne Ordner ---------------------------------------
++if [ -n "$LIB60870" ]; then
++    wait_state 5 "lib60870-Programme gefunden" 0 '"peer":\{"available":true' \
++        '"key":"simple_client","label":"[^"]*","available":true' \
++        '"key":"cs104_client_async","label":"[^"]*","available":true'
++    act_rejected 'peer/start?prog=simple_client' 'erst die Station starten'
++    act_rejected 'peer/start?prog=/bin/true' 'unbekanntes Programm'
++else
++    wait_state 5 "ohne lib60870-Ordner" 0 '"peer":\{"available":false,"folder":"","running":false'
++    act_rejected 'peer/start?prog=simple_client' 'kein lib60870-Ordner'
++fi
++
++# --- Station und Leitstelle der GUI ------------------------------------------------
++act 'server/listen?port=0&station=1'
++SPORT="$(api state | grep -o '"server":{"running":true,"port":[0-9]*' | grep -o '[0-9]*$')"
++[ -n "$SPORT" ] && [ "$SPORT" -gt 0 ] || fail "Station meldet keinen Port"
++ss -ltn 2> /dev/null | grep -q -E "127\.0\.0\.1:$SPORT[[:space:]]" || fail "Station lauscht nicht auf 127.0.0.1"
++ok "Station auf 127.0.0.1:$SPORT"
++act 'server/point?type=13&ioa=100&value=42.5'
++wait_state 5 "Datenpunkt angelegt" 0 '"points":\[\{"ioa":100,"type":13,"value":42.5\}\]'
++
++act "client/connect?host=127.0.0.1&port=$SPORT&station=1"
++wait_state 10 "Leitstelle verbunden" 0 '"client":\{"state":"stopped"'
++act 'client/start'
++wait_state 10 "STARTDT" 0 '"client":\{"state":"started"'
++act 'client/gi?qoi=20'
++wait_state 10 "Generalabfrage: Punkt in der Tabelle" 0 \
++    '\{"station":1,"ioa":100,"type":13,"cause":20,"negative":false,"value":42.5,' \
++    'Station: Generalabfrage \(Typ 100, Ursache 6\)'
++act 'client/close'
++
++# --- Gegenstelle lib60870 ---------------------------------------------------------------
++if [ -n "$LIB60870" ]; then
++    S="$(last_seq)"
++    act 'peer/start?prog=simple_client'
++    wait_state 20 "simple_client: Verbindung, STARTDT, Generalabfrage" "$S" \
++        '"text":"lib60870: Connected!"' '"text":"lib60870: Received STARTDT_CON"' \
++        '"text":"Station: Verbindung [0-9]+ Datenübertragung läuft"' \
++        '"text":"Station: Generalabfrage \(Typ 100, Ursache 6\) von Verbindung [0-9]+"' \
++        '"text":"lib60870: RECVD ASDU type: M_ME_NC_1\(13\)' \
++        '"text":"Station: Testbefehl mit Zeitmarke \(Typ 107'
++    wait_state 15 "simple_client endet von selbst" "$S" '"peer":\{[^}]*"running":false' \
++        '"text":"lib60870: simple_client beendet, Rückgabe 0"'
++
++    S="$(last_seq)"
++    act 'peer/start?prog=cs104_client_async'
++    act_rejected 'peer/start?prog=simple_client' 'Gegenstelle läuft bereits'
++    wait_state 15 "cs104_client_async: STARTDT, Generalabfrage" "$S" \
++        '"peer":\{[^}]*"running":true,"program":"cs104_client_async"' \
++        '"text":"lib60870: Received STARTDT_CON"' \
++        '"text":"Station: Generalabfrage \(Typ 100, Ursache 6\) von Verbindung [0-9]+"'
++    act 'peer/stop'
++    wait_state 8 "cs104_client_async beendet" "$S" '"peer":\{[^}]*"running":false' \
++        '"text":"lib60870: cs104_client_async beendet, '
++    [ -z "$(ps -o pid= --ppid "$GPID" 2> /dev/null)" ] || fail "Gegenstelle läuft noch als Prozess"
++    act_rejected 'peer/stop' 'keine Gegenstelle aktiv'
++fi
++
++echo "test_gui: bestanden"
+diff --git a/tools/interop/run_lib60870.sh b/tools/interop/run_lib60870.sh
+index 2ce31f1..ecef04b 100755
+--- a/tools/interop/run_lib60870.sh
++++ b/tools/interop/run_lib60870.sh
+@@ -5,25 +5,43 @@
+ # All rights reserved by SOPTIM AG.
+ # run_lib60870.sh – Interop-Tests gegen lib60870-C als fremde Gegenstelle.
+ #
+-# Aufruf: tools/interop/run_lib60870.sh LIB60870_C BUILD [AUSGABE]
++# Aufruf: tools/interop/run_lib60870.sh [--mit-stationen] LIB60870_C BUILD [AUSGABE]
+ #
+ #   LIB60870_C  Ordner lib60870-C einer gebauten lib60870 (v2.4.1 geprüft):
+ #               build/examples      ohne TLS (Pflicht)
+ #               build-tls/examples  mit mbedTLS 3.6 (optional, sonst ohne TLS-Fälle)
+ #   BUILD       eigener Build-Ordner (Selbsttest-Programme, examples/hello_server)
+ #   AUSGABE     Logs und Mitschnitte, Default BUILD/interop
++#   --mit-stationen  auch die Fälle mit einer lib60870-Station (cs104_server,
++#               cs104_redundancy_server, tls_server). Diese Beispiele lauschen
++#               fest auf 0.0.0.0, also auf allen Netzwerkschnittstellen; ohne
++#               Änderung an lib60870 geht das nicht anders. Ohne die Option
++#               laufen nur die Fälle, in denen lib60870 die Leitstelle ist und
++#               sich mit den eigenen Servern auf 127.0.0.1 verbindet; die
++#               übrigen stehen in der Tabelle als "übersprungen".
+ #
+ # lib60870 ist nur Gegenstelle: Es laufen die unveränderten Beispielprogramme
+-# über TCP, nichts wird gelinkt. Die Beispiele nutzen feste Ports (2404, 19998);
+-# die müssen frei sein. Die TLS-Beispiele lesen ihre Zertifikate unter festen
+-# Namen aus dem Arbeitsordner; das Skript legt dort die RSA-Test-PKI ab
+-# (tools/make_test_certs.sh ... rsa).
++# über TCP, nichts wird gelinkt. Feste Ports der Beispiele: 19998 (TLS-Fälle),
++# mit --mit-stationen zusätzlich 2404; die müssen frei sein. Die TLS-Beispiele
++# lesen ihre Zertifikate unter festen Namen aus dem Arbeitsordner; das Skript
++# legt dort die RSA-Test-PKI ab (tools/make_test_certs.sh ... rsa).
+ #
+ # Ergebnis je Fall: bestanden | Abweichung Gegenstelle (bekannter Fehler des
+-# Beispielprogramms, eigenes Verhalten korrekt) | FEHLER. Rückgabe 1 bei FEHLER.
++# Beispielprogramms, eigenes Verhalten korrekt) | übersprungen | FEHLER.
++# Rückgabe 1 bei FEHLER.
+ 
+ set -u
+ 
++STATIONS=0
++ARGS=()
++for a in "$@"; do
++    case "$a" in
++        --mit-stationen) STATIONS=1 ;;
++        -*) echo "Unbekannte Option: $a" >&2; exit 2 ;;
++        *) ARGS+=("$a") ;;
++    esac
++done
++set -- "${ARGS[@]}"
+ LIB="${1:?Ordner lib60870-C fehlt}"
+ BUILD="$(cd "${2:?Build-Ordner fehlt}" && pwd)"
+ OUT="${3:-$BUILD/interop}"
+@@ -34,7 +52,7 @@ SERVER="$BUILD/iec104_selftest_server"
+ CLIENT="$BUILD/iec104_selftest_client"
+ HELLO="$BUILD/examples/hello_server"
+ 
+-[ -x "$PLAIN/cs104_server/cs104_server" ] || { echo "lib60870 nicht gebaut: $PLAIN" >&2; exit 2; }
++[ -x "$PLAIN/cs104_client/simple_client" ] || { echo "lib60870 nicht gebaut: $PLAIN" >&2; exit 2; }
+ [ -x "$CLIENT" ] || { echo "Selbsttest nicht gebaut: $BUILD" >&2; exit 2; }
+ mkdir -p "$OUT"
+ 
+@@ -47,10 +65,15 @@ result() { # Fall, Ergebnis, Notiz
+ has() { grep -q -E -- "$2" "$1"; }
+ count() { grep -c -E -- "$2" "$1"; }
+ 
++# Nur lesend prüfen, ob die festen Ports frei sind.
+ port_free() { ! ss -ltn 2>/dev/null | grep -q -E "[:.]$1[[:space:]]"; }
+-for p in 2404 2441 19998; do
++PORTS=()
++[ "$STATIONS" = 1 ] && PORTS+=(2404)
++[ -x "$TLS/tls_client/tls_client" ] && PORTS+=(19998)
++for p in "${PORTS[@]}"; do
+     port_free "$p" || { echo "Port $p ist belegt (läuft noch eine Gegenstelle?)" >&2; exit 2; }
+ done
++SKIP_NOTE="lib60870-Station lauscht auf 0.0.0.0 (--mit-stationen)"
+ 
+ PID=""
+ start_peer() { # Ordner, Programm, Log, Argumente...
+@@ -68,20 +91,30 @@ stop_peer() {
+ trap stop_peer EXIT
+ 
+ # --- 1. Eigener Client gegen lib60870-Server ---------------------------------
+-start_peer "$OUT" "$PLAIN/cs104_server/cs104_server" "$OUT/1_peer.log"
+-"$CLIENT" --port 2404 --foreign --idle 3 --t3 1 --timeout 5 --log trace > "$OUT/1_client.log" 2>&1
+-stop_peer
+-if has "$OUT/1_client.log" '^result: PASSED'; then
+-    result "Client -> Server" "bestanden" "GA, Uhrzeit, Zähler (Ursache 44), TESTFR, STOPDT"
++if [ "$STATIONS" = 1 ]; then
++    start_peer "$OUT" "$PLAIN/cs104_server/cs104_server" "$OUT/1_peer.log"
++    "$CLIENT" --port 2404 --foreign --idle 3 --t3 1 --timeout 5 --log trace > "$OUT/1_client.log" 2>&1
++    stop_peer
++    if has "$OUT/1_client.log" '^result: PASSED'; then
++        result "Client -> Server" "bestanden" "GA, Uhrzeit, Zähler (Ursache 44), TESTFR, STOPDT"
++    else
++        result "Client -> Server" "FEHLER" "$OUT/1_client.log"
++    fi
+ else
+-    result "Client -> Server" "FEHLER" "$OUT/1_client.log"
++    result "Client -> Server" "übersprungen" "$SKIP_NOTE"
+ fi
+ 
+ # --- 2. lib60870-Client gegen eigenen Server -----------------------------------
+-"$HELLO" 2441 < /dev/null > "$OUT/2_server.log" 2>&1 &
++# hello_server auf 127.0.0.1 mit freiem Port (0); der Port steht in seiner Ausgabe.
++"$HELLO" 0 127.0.0.1 < /dev/null > "$OUT/2_server.log" 2>&1 &
+ PID=$!
+-sleep 0.5
+-timeout 30 "$PLAIN/cs104_client/simple_client" 127.0.0.1 2441 > "$OUT/2_peer.log" 2>&1
++HPORT=""
++for _ in $(seq 1 100); do
++    HPORT="$(sed -n 's/^listening on port \([0-9]*\)$/\1/p' "$OUT/2_server.log")"
++    [ -n "$HPORT" ] && break
++    sleep 0.05
++done
++timeout 30 "$PLAIN/cs104_client/simple_client" 127.0.0.1 "${HPORT:-0}" > "$OUT/2_peer.log" 2>&1
+ stop_peer
+ if has "$OUT/2_peer.log" 'Received STARTDT_CON' && has "$OUT/2_peer.log" 'M_EI_NA_1\(70\)' &&
+    [ "$(count "$OUT/2_peer.log" 'C_IC_NA_1\(100\)')" -ge 2 ] && has "$OUT/2_peer.log" 'C_TS_TA_1\(107\)'; then
+@@ -93,19 +126,23 @@ fi
+ # --- 3. Umschaltung gegen lib60870-Redundanzserver ----------------------------
+ # Server puffert den zyklischen Wert IOA 110 je Gruppe; nach STOPDT/STARTDT
+ # muss die Reihe lückenlos weitergehen.
+-start_peer "$OUT" "$PLAIN/cs104_redundancy_server/cs104_redundancy_server" "$OUT/3_peer.log"
+-"$CLIENT" --port 2404 --foreign --switchover --series-ioa 110 --expect 5 --timeout 8 \
+-    > "$OUT/3_client.log" 2>&1
+-stop_peer
+-if has "$OUT/3_client.log" 'switch-over.*values before' && ! has "$OUT/3_client.log" 'switch-over.*FAILED' &&
+-   has "$OUT/3_client.log" 'series after switch-over.*in order' && ! has "$OUT/3_client.log" 'series after.*FAILED'; then
+-    if has "$OUT/3_client.log" 'no termination'; then
+-        result "Umschaltung (Redundanz)" "Abweichung Gegenstelle" "Reihe lückenlos; GA ohne gültiges ACTTERM (Typ 0)"
++if [ "$STATIONS" = 1 ]; then
++    start_peer "$OUT" "$PLAIN/cs104_redundancy_server/cs104_redundancy_server" "$OUT/3_peer.log"
++    "$CLIENT" --port 2404 --foreign --switchover --series-ioa 110 --expect 5 --timeout 8 \
++        > "$OUT/3_client.log" 2>&1
++    stop_peer
++    if has "$OUT/3_client.log" 'switch-over.*values before' && ! has "$OUT/3_client.log" 'switch-over.*FAILED' &&
++       has "$OUT/3_client.log" 'series after switch-over.*in order' && ! has "$OUT/3_client.log" 'series after.*FAILED'; then
++        if has "$OUT/3_client.log" 'no termination'; then
++            result "Umschaltung (Redundanz)" "Abweichung Gegenstelle" "Reihe lückenlos; GA ohne gültiges ACTTERM (Typ 0)"
++        else
++            result "Umschaltung (Redundanz)" "bestanden" "Reihe lückenlos"
++        fi
+     else
+-        result "Umschaltung (Redundanz)" "bestanden" "Reihe lückenlos"
++        result "Umschaltung (Redundanz)" "FEHLER" "$OUT/3_client.log"
+     fi
+ else
+-    result "Umschaltung (Redundanz)" "FEHLER" "$OUT/3_client.log"
++    result "Umschaltung (Redundanz)" "übersprungen" "$SKIP_NOTE"
+ fi
+ 
+ # --- TLS ----------------------------------------------------------------------
+@@ -130,6 +167,10 @@ else
+ 
+     # 4./5. Eigener TLS-Client gegen lib60870-TLS-Server (er verhandelt alle 2 s neu).
+     for V in 1.3 1.2; do
++        if [ "$STATIONS" != 1 ]; then
++            result "TLS $V Client -> Server" "übersprungen" "$SKIP_NOTE"
++            continue
++        fi
+         N="tls${V/./}"
+         start_peer "$SRVDIR" "$TLS/tls_server/tls_server" "$OUT/${N}_peer.log"
+         "$CLIENT" --port 19998 --foreign "${OWN[@]}" --tls-version "$V" --idle 7 --t3 2 \
+diff --git a/tools/wsl_ausprobieren.sh b/tools/wsl_ausprobieren.sh
+index b6bc66f..72e48f6 100755
+--- a/tools/wsl_ausprobieren.sh
++++ b/tools/wsl_ausprobieren.sh
+@@ -7,10 +7,12 @@
+ # (gedacht für WSL, läuft auf jedem Linux).
+ #
+ # Aufruf, z. B. aus dem Windows-Checkout heraus:
+-#   bash /mnt/c/<pfad>/<repo>/tools/wsl_ausprobieren.sh [ZIEL] [--ohne-bauen]
++#   bash /mnt/c/<pfad>/<repo>/tools/wsl_ausprobieren.sh [ZIEL] [--ohne-bauen] [--mit-lib60870]
+ #
+-#   ZIEL          Arbeitsordner, Default ~/src/iee104
+-#   --ohne-bauen  nur die fertig gebaute Library prüfen, nicht aus den Quellen bauen
++#   ZIEL            Arbeitsordner, Default ~/src/iee104
++#   --ohne-bauen    nur die fertig gebaute Library prüfen, nicht aus den Quellen bauen
++#   --mit-lib60870  lib60870-C v2.4.1 (fremde Gegenstelle für die Test-GUI) neben ZIEL
++#                   holen (GitHub, Variable LIB60870_GIT) und ohne TLS bauen
+ #
+ # Schritte:
+ #   1. Repo nach ZIEL holen (git clone) bzw. aktualisieren (git pull);
+@@ -18,7 +20,8 @@
+ #   2. Voraussetzungen prüfen; fehlende Pakete als apt-Befehl ausgeben
+ #   3. fertig gebaute Library aus dist/: pruefen.sh und beispiel.sh
+ #   4. aus den Quellen bauen und alle Tests (ctest) laufen lassen
+-#   5. ausgeben, wie Test-GUI und Selbsttest starten
++#   5. optional lib60870 holen und bauen
++#   6. ausgeben, wie Test-GUI und Selbsttest starten
+ #
+ # Das Skript ändert nichts am System; Pakete installiert es nicht selbst.
+ 
+@@ -27,10 +30,12 @@ set -u
+ SRC="$(cd "$(dirname "$0")/.." && pwd)"
+ ZIEL="$HOME/src/iee104"
+ BAUEN=1
++LIB60870=0
+ for arg in "$@"; do
+     case "$arg" in
+         --ohne-bauen) BAUEN=0 ;;
+-        -h|--help) sed -n '6,22p' "$0"; exit 0 ;;
++        --mit-lib60870) LIB60870=1 ;;
++        -h|--help) sed -n '6,25p' "$0"; exit 0 ;;
+         *) ZIEL="$arg" ;;
+     esac
+ done
+@@ -152,11 +157,36 @@ else
+     fi
+ fi
+ 
+-# --- 5. Wie weiter ------------------------------------------------------------------------
+-step "5. Ausprobieren"
++# --- 5. lib60870 als fremde Gegenstelle (optional) --------------------------------------
++L60870="$(dirname "$ZIEL")/lib60870/lib60870-C"
++if [ "$LIB60870" = 1 ]; then
++    step "5. lib60870 nach $(dirname "$L60870")"
++    if [ -x "$L60870/build/examples/cs104_client/simple_client" ]; then
++        echo "  schon gebaut"
++    else
++        # Nur Gegenstelle: Die Beispielprogramme laufen als eigene Prozesse, nichts wird gelinkt.
++        [ -d "$(dirname "$L60870")/.git" ] ||
++            git clone -q --depth 1 --branch v2.4.1 "${LIB60870_GIT:-https://github.com/mz-automation/lib60870.git}" \
++                "$(dirname "$L60870")" || { FEHLER=1; echo "  git clone fehlgeschlagen (Netz/Proxy?)"; }
++        if [ -d "$L60870" ] && cmake -S "$L60870" -B "$L60870/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
++                > lib60870-build.log 2>&1 && cmake --build "$L60870/build" >> lib60870-build.log 2>&1; then
++            echo "  gebaut: $L60870/build/examples"
++        else
++            FEHLER=1
++            echo "  Bau fehlgeschlagen, Einzelheiten: $ZIEL/lib60870-build.log"
++        fi
++    fi
++fi
++
++# --- 6. Wie weiter ------------------------------------------------------------------------
++step "6. Ausprobieren"
+ if [ -n "$PAKET" ]; then
+     echo "  Test-GUI:     bash $ZIEL/$PAKET/gui.sh     dann http://localhost:8080 im Browser"
+     echo "                (kommt der Windows-Browser nicht durch: bash $ZIEL/$PAKET/gui.sh 8080 0.0.0.0)"
++    if [ -x "$L60870/build/examples/cs104_client/simple_client" ]; then
++        echo "  mit lib60870: bash $ZIEL/$PAKET/gui.sh 8080 127.0.0.1 $L60870"
++        echo "                (Windows-Browser: bash $ZIEL/$PAKET/gui.sh 8080 0.0.0.0 $L60870)"
++    fi
+ fi
+ if [ -x build/debug/iec104_selftest_server ]; then
+     echo "  Selbsttest:   cd $ZIEL && tools/selftest/run_selftest.sh build/debug/iec104_selftest_server build/debug/iec104_selftest_client"
