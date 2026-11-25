@@ -75,7 +75,7 @@ Abschnittsnummern stammen aus `03`. Wo sie dort nicht belegt sind, steht „unbe
 | A3 | Code-Kommentare | Verweise auf deutsche Abschnittstitel, z. B. „section ‚Sechs Oktette APCI‘“ | Durch Dateiverweis plus englische Beschreibung ersetzen |
 | A4 | `asdu_header.hpp` | `kBroadcastCa` definiert, aber nicht genutzt; CA 0 nicht geprüft | In TASK-001/003 nach N10 klären |
 | A5 | `asdu_header.cpp` | VSQ mit Anzahl 0 wird ohne Prüfung angenommen | Nach N9 in TASK-001 |
-| A6 | `cp56time2a` | RES1 bleibt erhalten, RES2–RES4 werden verworfen. Gewollt, aber nicht begründet | Begründung im Kommentar (A1) |
+| A6 | `cp56time2a` | RES1 bleibt erhalten, RES2–RES4 werden verworfen. Gewollt, aber nicht begründet | Erledigt in TASK-001: verlustfreies Dekodieren, RES1–RES4 bleiben erhalten |
 | A7 | `iec104.h` | Unter Windows fehlt `__declspec(dllimport)` für Nutzer der DLL | Nur nötig, falls Windows Zielplattform wird (Frage F7) |
 | A8 | `CLAUDE.md`, `README.md` | Bezüge auf Projekt und Firma | Neutral umformulieren, Abschnitt 6 von TASK-000 ergänzen (DoD) |
 | A9 | `tools/setup_tools.sh` | Distributionsname eines Hardwareherstellers, Name eines Fremd-Repos im Kommentar | Neutral formulieren |

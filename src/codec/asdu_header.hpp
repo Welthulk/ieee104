@@ -20,9 +20,8 @@
  * parameters (AsduProfile), with the IEC 104 values as default
  * (docs/02, "ASDU-Profil").
  *
- * This file only converts the header fields. Which cause of transmission is
- * allowed for which type id (standard, clause 9.5) and the information objects
- * themselves are part of TASK-001.
+ * This file only converts the header fields. The information objects are in
+ * asdu.hpp, the per-type structure in type_table.hpp.
  *
  * Sources: docs/03, ASDU section (field layout and bit masks, citing the
  * Wireshark IEC 104 dissector); reference bytes in
@@ -33,6 +32,7 @@
  */
 #pragma once
 
+#include "codec/apci.hpp"
 #include "iec104/iec104.h"
 
 #include <cstddef>
@@ -41,16 +41,36 @@
 namespace iec104::codec {
 
 /**
- * @brief Field lengths of the data unit identifier and the IOA.
+ * @brief ASDU profile: field lengths, maximum ASDU length, strict or tolerant.
  *
- * Default-constructed, the profile has the IEC 104 values (2, 2, 3). Other
- * values only exist for peers outside the standard and must be configured
- * explicitly.
+ * Default-constructed, the profile has the IEC 104 values (2, 2, 3, 249,
+ * strict). Other values only exist for peers outside the standard and must be
+ * configured explicitly (docs/02, "ASDU-Profil").
+ *
+ * The header functions in this file only use the three lengths; max_asdu_length
+ * and strict are used by the ASDU codec (asdu.hpp).
  */
 struct AsduProfile {
     std::uint8_t cot_length{2}; ///< 1..2 octets. 2 = cause octet + originator address octet.
     std::uint8_t ca_length{2};  ///< 1..2 octets.
     std::uint8_t ioa_length{3}; ///< 1..3 octets.
+    /**
+     * @brief Largest ASDU this side sends, 1..249 octets.
+     *
+     * 249 = 253 (largest APDU length field) - 4 control octets (docs/03).
+     * Some peers accept less; the encoder then splits object lists into
+     * several ASDUs (encode_asdu_fitting()). Received ASDUs are not checked
+     * against this value: what the APCI framing accepts is decoded.
+     */
+    std::uint8_t max_asdu_length{static_cast<std::uint8_t>(kMaxAsduLength)};
+    /**
+     * @brief Strict (default) or tolerant handling of deviations from IEC 104.
+     *
+     * Strict: the IEC 101 types with CP24Time2a are rejected with
+     * IEC104_ERR_UNSUPPORTED, an ASDU with 0 objects is IEC104_ERR_MALFORMED.
+     * Tolerant: both are accepted (docs/04_Analyse.md, N4 and N9).
+     */
+    bool strict{true};
 };
 
 /** @brief The IEC 60870-5-104 profile: COT 2, CA 2, IOA 3 octets. */
@@ -115,7 +135,8 @@ struct AsduHeader {
  * @brief Checks that all lengths of @p profile are inside their allowed ranges.
  *
  * @param profile Profile to check.
- * @return true if cot_length is 1..2, ca_length 1..2 and ioa_length 1..3.
+ * @return true if cot_length is 1..2, ca_length 1..2, ioa_length 1..3 and
+ *         max_asdu_length 1..249.
  */
 bool is_valid(const AsduProfile& profile) noexcept;
 
@@ -168,6 +189,16 @@ iec104_status encode_asdu_header(const AsduHeader& header, const AsduProfile& pr
 iec104_status decode_asdu_header(const std::uint8_t* data, std::size_t size,
                                  const AsduProfile& profile, AsduHeader& out,
                                  std::size_t& consumed) noexcept;
+
+/**
+ * @brief Largest information object address that fits into ioa_length octets.
+ *
+ * Example: ioa_length 3 -> 16777215, ioa_length 2 -> 65535.
+ *
+ * @param profile A valid profile.
+ * @return 2^(8 * ioa_length) - 1.
+ */
+std::uint32_t max_ioa(const AsduProfile& profile) noexcept;
 
 /**
  * @brief Encodes an information object address (IOA).

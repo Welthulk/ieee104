@@ -67,22 +67,25 @@ struct Cp56Time2a {
     std::uint8_t year{0};    ///< 0..99, the century is not transmitted.
     bool invalid{false};     ///< IV: the time is not valid (e.g. clock not synchronised).
     bool summer_time{false}; ///< SU: the time is summer (daylight saving) time.
-    /**
-     * @brief RES1 bit of the minute octet, preserved as received.
-     *
-     * RES2..RES4 are dropped on decoding and written as 0. Why RES1 is treated
-     * differently is not documented in the sources of this repository
-     * (docs/04_Analyse.md, A6).
-     * TODO(norm): meaning of RES1, clause unknown.
+    /*
+     * Reserved bits, kept as received so that decoding and re-encoding gives
+     * identical octets (lossless decoding, see elements.hpp). A sender that
+     * does not set them leaves them 0. Some implementations give RES1 a
+     * meaning of their own; this library attaches none.
+     * TODO(norm): meaning of the reserved bits, clause unknown.
      */
-    bool res1{false};
+    bool res1{false};     ///< RES1, minute octet bit 6.
+    std::uint8_t res2{0}; ///< RES2, hour octet bits 5..6, 0..3.
+    std::uint8_t res3{0}; ///< RES3, month octet bits 4..7, 0..15.
+    bool res4{false};     ///< RES4, year octet bit 7.
 
-    /** @brief Field-wise equality, including IV, SU and RES1. */
+    /** @brief Field-wise equality, including IV, SU and the reserved bits. */
     friend bool operator==(const Cp56Time2a& a, const Cp56Time2a& b) noexcept {
         return a.milliseconds == b.milliseconds && a.minute == b.minute && a.hour == b.hour &&
                a.day_of_month == b.day_of_month && a.day_of_week == b.day_of_week &&
                a.month == b.month && a.year == b.year && a.invalid == b.invalid &&
-               a.summer_time == b.summer_time && a.res1 == b.res1;
+               a.summer_time == b.summer_time && a.res1 == b.res1 && a.res2 == b.res2 &&
+               a.res3 == b.res3 && a.res4 == b.res4;
     }
     /** @brief Negation of operator==. */
     friend bool operator!=(const Cp56Time2a& a, const Cp56Time2a& b) noexcept { return !(a == b); }
@@ -91,7 +94,8 @@ struct Cp56Time2a {
 /**
  * @brief Checks every field against its range.
  *
- * Only the ranges listed at the struct members are checked. Calendar validity
+ * Only the ranges listed at the struct members are checked (including the
+ * widths of RES2 and RES3). Calendar validity
  * (e.g. 31 February) and the consistency of the day of week are not checked,
  * because the year is only known modulo 100.
  *
@@ -122,8 +126,9 @@ iec104_status encode_cp56time2a(const Cp56Time2a& t, std::uint8_t* out,
  *
  * Decoding is tolerant: field values are taken as received without range
  * check, so that a peer's time tag can still be inspected and logged. Callers
- * that need strict handling call validate() on the result. RES2..RES4 are
- * ignored.
+ * that need strict handling call validate() on the result. The reserved bits
+ * RES1..RES4 are kept, so encode_cp56time2a() reproduces the input octets
+ * whenever validate() succeeds.
  *
  * @param data Start of the time tag. Must not be NULL.
  * @param size Number of octets available at @p data.

@@ -6,7 +6,7 @@
  */
 /**
  * @file fuzz_codec.cpp
- * @brief libFuzzer target for the codec layer (APCI, ASDU header, CP56Time2a).
+ * @brief libFuzzer target for the codec layer (APCI, ASDU header, ASDUs, CP56Time2a).
  *
  * The fuzzer feeds arbitrary bytes into the decoders. Besides crashes and
  * sanitizer findings (ASan/UBSan are enabled in the 'fuzz' preset) it checks
@@ -14,18 +14,24 @@
  *   - APCI: whatever decodes successfully re-encodes to the identical 6 octets;
  *   - ASDU header (IEC 104 profile): whatever decodes successfully behind an
  *     I-frame re-encodes to the identical octets;
- *   - CP56Time2a: a decoded, valid time tag survives encode -> decode
- *     unchanged. Bytes are not compared, because RES2..RES4 are dropped on
- *     purpose (see cp56time2a.hpp).
+ *   - complete ASDU (decoding is lossless, see elements.hpp): whatever decodes
+ *     successfully re-encodes to the identical octets, unless an element value
+ *     lies outside its range (e.g. minute 63 in a time tag), in which case the
+ *     encoder must report IEC104_ERR_OUT_OF_RANGE and nothing else. Checked
+ *     behind an I-frame (strict IEC 104 profile) and on the raw input, where
+ *     the first octet selects the profile (see select_profile());
+ *   - CP56Time2a: a decoded, valid time tag re-encodes to the identical octets.
  *
  * Build:  cmake --preset fuzz && cmake --build --preset fuzz
+ * Seeds:  tools/make_fuzz_seeds.sh (APDUs and ASDUs from tests/data/)
  * Run:    ./build/fuzz/fuzz_codec -max_total_time=300 fuzz/corpus
- * Seeds:  the APDUs of tests/data/lib60870_capture.txt are good starting inputs.
  */
 #include "codec/apci.hpp"
+#include "codec/asdu.hpp"
 #include "codec/asdu_header.hpp"
 #include "codec/cp56time2a.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -33,6 +39,48 @@
 #include <cstring>
 
 using namespace iec104::codec;
+
+namespace {
+
+// Profile for the raw-input ASDU check, chosen by the first input octet.
+// The seeds produced by tools/make_fuzz_seeds.sh use the same numbering.
+AsduProfile select_profile(std::uint8_t selector) {
+    AsduProfile p{};
+    switch (selector % 3U) {
+    case 0: // strict IEC 104 profile (default)
+        break;
+    case 1: // tolerant IEC 104 profile (CP24 types, empty ASDUs)
+        p.strict = false;
+        break;
+    default: // tolerant, COT 1 / CA 1 / IOA 2 octets
+        p = AsduProfile{1, 1, 2};
+        p.strict = false;
+        break;
+    }
+    return p;
+}
+
+// Decodes one ASDU and checks the round-trip invariant (see file comment).
+void check_asdu(const std::uint8_t* asdu, std::size_t size, const AsduProfile& profile) {
+    std::array<InformationObject, kMaxObjects> objects{};
+    DecodedAsdu d{};
+    if (decode_asdu(asdu, size, profile, objects.data(), objects.size(), d) != IEC104_OK ||
+        d.type == nullptr || d.object_count == 0U) {
+        return; // rejected input, private type or empty ASDU: nothing to re-encode
+    }
+    std::array<std::uint8_t, kMaxAsduLength> out{};
+    std::size_t written = 0;
+    const iec104_status st = encode_asdu(d.header, objects.data(), d.object_count, profile,
+                                         out.data(), out.size(), written);
+    if (st == IEC104_ERR_OUT_OF_RANGE) {
+        return; // a received value outside its range; decoding keeps it, encoding refuses it
+    }
+    if (st != IEC104_OK || written != size || std::memcmp(out.data(), asdu, size) != 0) {
+        std::abort();
+    }
+}
+
+} // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
     // APCI: decode -> encode must give back the input octets.
@@ -56,8 +104,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
             std::abort();
         }
 
-        // ASDU header behind an I-frame. apci.asdu_length is bounded by the
-        // length octet, which decode_apci() checked against 'size'.
+        // ASDU header and complete ASDU behind an I-frame. apci.asdu_length is
+        // bounded by the length octet, which decode_apci() checked against 'size'.
         if (apci.format == FrameFormat::I) {
             const std::uint8_t* asdu = data + kApciLength;
             AsduHeader h{};
@@ -72,16 +120,22 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
                     std::abort();
                 }
             }
+            check_asdu(asdu, apci.asdu_length, kIec104Profile);
         }
+    }
+
+    // Complete ASDU on the raw input: first octet selects the profile, the
+    // rest (at most the largest ASDU) is the ASDU.
+    if (size >= 2U) {
+        check_asdu(data + 1, std::min(size - 1U, kMaxAsduLength), select_profile(data[0]));
     }
 
     // CP56Time2a on the raw input (independent of the APCI result).
     Cp56Time2a t{};
     if (decode_cp56time2a(data, size, t) == IEC104_OK && validate(t) == IEC104_OK) {
         std::array<std::uint8_t, kCp56Time2aLength> tb{};
-        Cp56Time2a back{};
         if (encode_cp56time2a(t, tb.data(), tb.size()) != IEC104_OK ||
-            decode_cp56time2a(tb.data(), tb.size(), back) != IEC104_OK || !(back == t)) {
+            std::memcmp(tb.data(), data, kCp56Time2aLength) != 0) {
             std::abort();
         }
     }

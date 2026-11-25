@@ -21,7 +21,7 @@ Werkzeuge einmalig installieren: `./tools/setup_tools.sh`
 ```bash
 cmake --preset debug && cmake --build --preset debug && ctest --preset debug
 cmake --preset asan  && cmake --build --preset asan  && ctest --preset asan
-cmake --preset fuzz  && cmake --build --preset fuzz  && ./build/fuzz/fuzz_codec -max_total_time=300
+cmake --preset fuzz  && cmake --build --preset fuzz  && tools/make_fuzz_seeds.sh && ./build/fuzz/fuzz_codec -max_total_time=300 fuzz/corpus
 ```
 
 Vor jedem Commit: `./tools/check_neutral.sh` (Begriffsliste außerhalb des Repos, siehe Kopf des Skripts).
@@ -34,6 +34,6 @@ Rechteinhaber und Lizenztexte: `LICENSES/`. Der öffentliche Header `include/iec
 
 | Modul | Stand |
 | --- | --- |
-| `codec` | APCI (I/S/U), ASDU-Kopf, IOA, CP56Time2a mit Tests. Informationselemente und ASDUs: `tasks/TASK-001_codec.md` |
+| `codec` | APCI (I/S/U), ASDU-Kopf, IOA, CP56Time2a, Informationselemente, Typtabelle (59 Typen), vollständige ASDUs mit SQ 0/1, Aufteilen, strikt/tolerant (`tasks/TASK-001_codec.md`) |
 | `apci`, `session`, `transport` | offen |
 | C-API | Version und Statuscodes |

@@ -17,6 +17,7 @@ cmake --preset debug && cmake --build --preset debug && ctest --preset debug
 cmake --preset asan  && cmake --build --preset asan  && ctest --preset asan    # vor jedem Commit
 cmake --preset clang && cmake --build --preset clang                           # clang-tidy
 cmake --preset fuzz  && cmake --build --preset fuzz
+tools/make_fuzz_seeds.sh   # Startdateien aus tests/data/ nach fuzz/corpus
 ./build/fuzz/fuzz_codec -max_total_time=300 fuzz/corpus
 ```
 

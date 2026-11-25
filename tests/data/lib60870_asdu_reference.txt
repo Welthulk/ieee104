@@ -1,0 +1,162 @@
+# Reference ASDUs of every type in scope, encoded by a foreign implementation.
+#
+# Source:   lib60870-C v2.4.1 (external test peer only, not linked, no code copied).
+#           A small generator program outside this repository built each ASDU with
+#           the public lib60870 API (CS101_ASDU_create, <Type>_create,
+#           CS101_ASDU_addInformationObject) and wrote the octets of
+#           CS101_ASDU_encode() as hex.
+# Check:    every ASDU in the IEC 104 profile was wrapped into an I-frame
+#           (68 <len> 00 00 00 00), converted with text2pcap and decoded with
+#           Wireshark 3.4.10 (tshark -V). The comment above each line states the
+#           values given to lib60870 and how far Wireshark confirms them.
+# Date:     2026-11-25
+# Profiles: iec104         = COT 2 (originator 3), CA 2 (= 1), IOA 3 octets
+#           cot1_ca1_ioa2  = COT 1, CA 1 (= 1), IOA 2 octets
+# Format:   ASDU <type name> <profile> SQ<0|1>: <octets in hex>
+#
+# Used by tests/test_asdu_reference.cpp. Do not edit.
+#
+# COT 3; IOA 100 on; IOA 101 off IV BL; Wireshark: field by field
+ASDU M_SP_NA_1 iec104 SQ0: 01 02 03 03 01 00 64 00 00 01 65 00 00 90
+# COT 20; IOA 200 on; 201 off NT; 202 on SB; Wireshark: field by field
+ASDU M_SP_NA_1 iec104 SQ1: 01 83 14 03 01 00 c8 00 00 01 40 21
+# COT 3; IOA 100 DPI 2 (on); IOA 101 DPI 3 IV; Wireshark: field by field
+ASDU M_DP_NA_1 iec104 SQ0: 03 02 03 03 01 00 64 00 00 02 65 00 00 83
+# COT 20; IOA 200 DPI 1 (off); 201 DPI 2; 202 DPI 0 NT; Wireshark: field by field
+ASDU M_DP_NA_1 iec104 SQ1: 03 83 14 03 01 00 c8 00 00 01 02 40
+# COT 3; IOA 100 VTI 5; IOA 101 VTI -64 transient, QDS OV; Wireshark: field by field
+ASDU M_ST_NA_1 iec104 SQ0: 05 02 03 03 01 00 64 00 00 05 00 65 00 00 c0 01
+# COT 20; IOA 200 VTI 63; 201 VTI -1; 202 VTI 0 transient, QDS IV; Wireshark: field by field
+ASDU M_ST_NA_1 iec104 SQ1: 05 83 14 03 01 00 c8 00 00 3f 00 7f 00 80 80
+# COT 3; IOA 100 BSI 0x12345678; IOA 101 BSI 0xFFFFFFFF; Wireshark: field by field
+ASDU M_BO_NA_1 iec104 SQ0: 07 02 03 03 01 00 64 00 00 78 56 34 12 00 65 00 00 ff ff ff ff 00
+# COT 20; IOA 200 BSI 0x00000001; 201 0x80000000; 202 0xDEADBEEF; Wireshark: field by field
+ASDU M_BO_NA_1 iec104 SQ1: 07 83 14 03 01 00 c8 00 00 01 00 00 00 00 00 00 00 80 00 ef be ad de 00
+# COT 3; IOA 100 NVA 0.5 (0x4000); IOA 101 NVA -1.0 (0x8000) QDS OV; Wireshark: field by field
+ASDU M_ME_NA_1 iec104 SQ0: 09 02 03 03 01 00 64 00 00 00 40 00 65 00 00 00 80 01
+# COT 20; IOA 200 NVA 0; 201 NVA 0.25 (0x2000); 202 NVA -0.5 (0xC000) QDS IV; Wireshark: field by field
+ASDU M_ME_NA_1 iec104 SQ1: 09 83 14 03 01 00 c8 00 00 00 00 00 00 20 00 00 c0 80
+# COT 3; IOA 100 SVA 4711; IOA 101 SVA -32768 QDS OV; Wireshark: field by field
+ASDU M_ME_NB_1 iec104 SQ0: 0b 02 03 03 01 00 64 00 00 67 12 00 65 00 00 00 80 01
+# COT 20; IOA 200 SVA 32767; 201 SVA -1; 202 SVA 0 QDS SB; Wireshark: field by field
+ASDU M_ME_NB_1 iec104 SQ1: 0b 83 14 03 01 00 c8 00 00 ff 7f 00 ff ff 00 00 00 20
+# COT 3; IOA 100 R32 1.5; IOA 101 R32 -230.25 QDS IV; Wireshark: field by field
+ASDU M_ME_NC_1 iec104 SQ0: 0d 02 03 03 01 00 64 00 00 00 00 c0 3f 00 65 00 00 00 40 66 c3 80
+# COT 20; IOA 200 R32 0.0; 201 R32 50.0; 202 R32 1.0e6 QDS NT; Wireshark: field by field
+ASDU M_ME_NC_1 iec104 SQ1: 0d 83 14 03 01 00 c8 00 00 00 00 00 00 00 00 00 48 42 00 00 24 74 49 40
+# COT 37; IOA 100 BCR 123456 seq 7 CY; IOA 101 BCR -2 seq 31 CA IV; Wireshark: field by field
+ASDU M_IT_NA_1 iec104 SQ0: 0f 02 25 03 01 00 64 00 00 40 e2 01 00 27 65 00 00 fe ff ff ff df
+# COT 37; IOA 200 BCR 1 seq 0; 201 BCR 2147483647 seq 1; 202 BCR -2147483648 seq 2 IV; Wireshark: field by field
+ASDU M_IT_NA_1 iec104 SQ1: 0f 83 25 03 01 00 c8 00 00 01 00 00 00 00 ff ff ff 7f 01 00 00 00 80 82
+# COT 3; IOA 100 SCD octets 01 80 03 00; IOA 101 SCD ff 00 00 ff QDS IV; Wireshark: type and framing only (objects shown as raw data)
+ASDU M_PS_NA_1 iec104 SQ0: 14 02 03 03 01 00 64 00 00 01 80 03 00 00 65 00 00 ff 00 00 ff 80
+# COT 20; IOA 200 SCD 0; 201 SCD 0f f0 0f f0; 202 SCD 55 aa 00 01 QDS BL; Wireshark: type and framing only (objects shown as raw data)
+ASDU M_PS_NA_1 iec104 SQ1: 14 83 14 03 01 00 c8 00 00 00 00 00 00 00 0f f0 0f f0 00 55 aa 00 01 10
+# COT 3; IOA 100 NVA 0.5 (0x4000); IOA 101 NVA -0.25 (0xE000); Wireshark: field by field
+ASDU M_ME_ND_1 iec104 SQ0: 15 02 03 03 01 00 64 00 00 00 40 65 00 00 00 e0
+# COT 20; IOA 200 NVA 0; 201 NVA 0.75 (0x6000); 202 NVA -1.0 (0x8000); Wireshark: field by field
+ASDU M_ME_ND_1 iec104 SQ1: 15 83 14 03 01 00 c8 00 00 00 00 00 60 00 80
+# COT 3; IOA 100 on; IOA 101 off IV; both time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU M_SP_TB_1 iec104 SQ0: 1e 02 03 03 01 00 64 00 00 01 2b 17 01 0b 19 0b 1a 65 00 00 80 2b 17 01 0b 19 0b 1a
+# COT 3; IOA 100 DPI 2; IOA 101 DPI 1 BL; both time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU M_DP_TB_1 iec104 SQ0: 1f 02 03 03 01 00 64 00 00 02 2b 17 01 0b 19 0b 1a 65 00 00 11 2b 17 01 0b 19 0b 1a
+# COT 3; IOA 100 VTI -3 transient; IOA 101 VTI 17 QDS OV; both time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU M_ST_TB_1 iec104 SQ0: 20 02 03 03 01 00 64 00 00 fd 00 2b 17 01 0b 19 0b 1a 65 00 00 11 01 2b 17 01 0b 19 0b 1a
+# COT 3; IOA 100 BSI 0xA5A5A5A5; IOA 101 BSI 0x00000100; both time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU M_BO_TB_1 iec104 SQ0: 21 02 03 03 01 00 64 00 00 a5 a5 a5 a5 00 2b 17 01 0b 19 0b 1a 65 00 00 00 01 00 00 00 2b 17 01 0b 19 0b 1a
+# COT 3; IOA 100 NVA 0.5; IOA 101 NVA -0.5 QDS IV; both time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU M_ME_TD_1 iec104 SQ0: 22 02 03 03 01 00 64 00 00 00 40 00 2b 17 01 0b 19 0b 1a 65 00 00 00 c0 80 2b 17 01 0b 19 0b 1a
+# COT 3; IOA 100 SVA 1000; IOA 101 SVA -1000 QDS NT; both time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU M_ME_TE_1 iec104 SQ0: 23 02 03 03 01 00 64 00 00 e8 03 00 2b 17 01 0b 19 0b 1a 65 00 00 18 fc 40 2b 17 01 0b 19 0b 1a
+# COT 3; IOA 100 R32 49.95; IOA 101 R32 -0.125 QDS SB; both time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU M_ME_TF_1 iec104 SQ0: 24 02 03 03 01 00 64 00 00 cd cc 47 42 00 2b 17 01 0b 19 0b 1a 65 00 00 00 00 00 be 20 2b 17 01 0b 19 0b 1a
+# COT 3; IOA 100 BCR 99999 seq 3; IOA 101 BCR 0 seq 4 CY CA IV; both time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU M_IT_TB_1 iec104 SQ0: 25 02 03 03 01 00 64 00 00 9f 86 01 00 03 2b 17 01 0b 19 0b 1a 65 00 00 00 00 00 00 e4 2b 17 01 0b 19 0b 1a
+# COT 3; IOA 100 SEP ES 2 (on); IOA 101 SEP ES 1 (off) EI IV; both CP16 1500 ms, time 2026-11-25 11:01:05.931; Wireshark: type and framing only (objects shown as raw data)
+ASDU M_EP_TD_1 iec104 SQ0: 26 02 03 03 01 00 64 00 00 02 dc 05 2b 17 01 0b 19 0b 1a 65 00 00 89 dc 05 2b 17 01 0b 19 0b 1a
+# COT 3; IOA 100 SPE GS SL2, QDP 0; IOA 101 SPE SRD, QDP EI; both CP16 1500 ms, time 2026-11-25 11:01:05.931; Wireshark: type and framing only (objects shown as raw data)
+ASDU M_EP_TE_1 iec104 SQ0: 27 02 03 03 01 00 64 00 00 05 00 dc 05 2b 17 01 0b 19 0b 1a 65 00 00 20 08 dc 05 2b 17 01 0b 19 0b 1a
+# COT 3; IOA 100 OCI GC CL3, QDP 0; IOA 101 OCI CL1, QDP BL; both CP16 1500 ms, time 2026-11-25 11:01:05.931; Wireshark: type and framing only (objects shown as raw data)
+ASDU M_EP_TF_1 iec104 SQ0: 28 02 03 03 01 00 64 00 00 09 00 dc 05 2b 17 01 0b 19 0b 1a 65 00 00 02 10 dc 05 2b 17 01 0b 19 0b 1a
+# COT 3; IOA 100 on; time 05.931 s, minute 1; Wireshark: field by field
+ASDU M_SP_TA_1 iec104 SQ0: 02 01 03 03 01 00 64 00 00 01 2b 17 01
+# COT 3; IOA 100 DPI 1; time 05.931 s, minute 1; Wireshark: field by field
+ASDU M_DP_TA_1 iec104 SQ0: 04 01 03 03 01 00 64 00 00 01 2b 17 01
+# COT 3; IOA 100 VTI 12; time 05.931 s, minute 1; Wireshark: field by field
+ASDU M_ST_TA_1 iec104 SQ0: 06 01 03 03 01 00 64 00 00 0c 00 2b 17 01
+# COT 3; IOA 100 BSI 0x01020304; time 05.931 s, minute 1; Wireshark: field by field
+ASDU M_BO_TA_1 iec104 SQ0: 08 01 03 03 01 00 64 00 00 04 03 02 01 00 2b 17 01
+# COT 3; IOA 100 NVA 0.5; time 05.931 s, minute 1; Wireshark: field by field
+ASDU M_ME_TA_1 iec104 SQ0: 0a 01 03 03 01 00 64 00 00 00 40 00 2b 17 01
+# COT 3; IOA 100 SVA -7; time 05.931 s, minute 1; Wireshark: field by field
+ASDU M_ME_TB_1 iec104 SQ0: 0c 01 03 03 01 00 64 00 00 f9 ff 00 2b 17 01
+# COT 3; IOA 100 R32 2.5; time 05.931 s, minute 1; Wireshark: field by field
+ASDU M_ME_TC_1 iec104 SQ0: 0e 01 03 03 01 00 64 00 00 00 00 20 40 00 2b 17 01
+# COT 3; IOA 100 BCR 42 seq 1; time 05.931 s, minute 1; Wireshark: field by field
+ASDU M_IT_TA_1 iec104 SQ0: 10 01 03 03 01 00 64 00 00 2a 00 00 00 01 2b 17 01
+# COT 3; IOA 100 SEP ES 2; CP16 1500 ms; time 05.931 s, minute 1; Wireshark: type unknown
+ASDU M_EP_TA_1 iec104 SQ0: 11 01 03 03 01 00 64 00 00 02 dc 05 2b 17 01
+# COT 3; IOA 100 SPE GS, QDP 0; CP16 1500 ms; time 05.931 s, minute 1; Wireshark: type unknown
+ASDU M_EP_TB_1 iec104 SQ0: 12 01 03 03 01 00 64 00 00 01 00 dc 05 2b 17 01
+# COT 3; IOA 100 OCI GC, QDP 0; CP16 1500 ms; time 05.931 s, minute 1; Wireshark: type unknown
+ASDU M_EP_TC_1 iec104 SQ0: 13 01 03 03 01 00 64 00 00 01 00 dc 05 2b 17 01
+# COT 6; IOA 5000 SCS on, QU 0, select; Wireshark: field by field
+ASDU C_SC_NA_1 iec104 SQ0: 2d 01 06 03 01 00 88 13 00 81
+# COT 6; IOA 5001 DCS 1 (off), QU 2, execute; Wireshark: field by field
+ASDU C_DC_NA_1 iec104 SQ0: 2e 01 06 03 01 00 89 13 00 09
+# COT 6; IOA 5002 RCS 2 (higher), QU 1, execute; Wireshark: field by field
+ASDU C_RC_NA_1 iec104 SQ0: 2f 01 06 03 01 00 8a 13 00 06
+# COT 6; IOA 5003 NVA 0.5 (0x4000), QL 0, select; Wireshark: field by field
+ASDU C_SE_NA_1 iec104 SQ0: 30 01 06 03 01 00 8b 13 00 00 40 80
+# COT 6; IOA 5004 SVA -1234, QL 0, execute; Wireshark: field by field
+ASDU C_SE_NB_1 iec104 SQ0: 31 01 06 03 01 00 8c 13 00 2e fb 00
+# COT 6; IOA 5005 R32 12.75, QL 0, execute; Wireshark: field by field
+ASDU C_SE_NC_1 iec104 SQ0: 32 01 06 03 01 00 8d 13 00 00 00 4c 41 00
+# COT 6; IOA 5006 BSI 0xCAFE0001; Wireshark: field by field
+ASDU C_BO_NA_1 iec104 SQ0: 33 01 06 03 01 00 8e 13 00 01 00 fe ca
+# COT 6; IOA 5000 SCS off, QU 1, execute; time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU C_SC_TA_1 iec104 SQ0: 3a 01 06 03 01 00 88 13 00 04 2b 17 01 0b 19 0b 1a
+# COT 6; IOA 5001 DCS 2 (on), QU 0, select; time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU C_DC_TA_1 iec104 SQ0: 3b 01 06 03 01 00 89 13 00 82 2b 17 01 0b 19 0b 1a
+# COT 6; IOA 5002 RCS 1 (lower), QU 3, execute; time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU C_RC_TA_1 iec104 SQ0: 3c 01 06 03 01 00 8a 13 00 0d 2b 17 01 0b 19 0b 1a
+# COT 6; IOA 5003 NVA -0.25 (0xE000), QL 0, execute; time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU C_SE_TA_1 iec104 SQ0: 3d 01 06 03 01 00 8b 13 00 00 e0 00 2b 17 01 0b 19 0b 1a
+# COT 6; IOA 5004 SVA 300, QL 0, select; time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU C_SE_TB_1 iec104 SQ0: 3e 01 06 03 01 00 8c 13 00 2c 01 80 2b 17 01 0b 19 0b 1a
+# COT 6; IOA 5005 R32 -3.5, QL 0, execute; time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU C_SE_TC_1 iec104 SQ0: 3f 01 06 03 01 00 8d 13 00 00 00 60 c0 00 2b 17 01 0b 19 0b 1a
+# COT 6; IOA 5006 BSI 0x0000FFFF; time 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU C_BO_TA_1 iec104 SQ0: 40 01 06 03 01 00 8e 13 00 ff ff 00 00 2b 17 01 0b 19 0b 1a
+# COT 4; IOA 0 COI cause 1 (local manual reset) + change of local parameters (0x81); Wireshark: field by field
+ASDU M_EI_NA_1 iec104 SQ0: 46 01 04 03 01 00 00 00 00 81
+# COT 6; IOA 0 QOI 20 (station interrogation); Wireshark: field by field
+ASDU C_IC_NA_1 iec104 SQ0: 64 01 06 03 01 00 00 00 00 14
+# COT 6; IOA 0 QCC RQT 5 (general), FRZ 2 (freeze with reset); Wireshark: type and framing only (objects shown as raw data)
+ASDU C_CI_NA_1 iec104 SQ0: 65 01 06 03 01 00 00 00 00 85
+# COT 5; IOA 4711, no information element; Wireshark: field by field
+ASDU C_RD_NA_1 iec104 SQ0: 66 01 05 03 01 00 67 12 00
+# COT 6; IOA 0 clock 2026-11-25 11:01:05.931; Wireshark: field by field
+ASDU C_CS_NA_1 iec104 SQ0: 67 01 06 03 01 00 00 00 00 2b 17 01 0b 19 0b 1a
+# COT 6; IOA 0 FBP (fixed test bit pattern) octets aa 55; Wireshark: type unknown
+ASDU C_TS_NA_1 iec104 SQ0: 68 01 06 03 01 00 00 00 00 aa 55
+# COT 6; IOA 0 QRP 1 (general reset); Wireshark: field by field
+ASDU C_RP_NA_1 iec104 SQ0: 69 01 06 03 01 00 00 00 00 01
+# COT 6; IOA 0 CP16 1500 ms; Wireshark: type unknown
+ASDU C_CD_NA_1 iec104 SQ0: 6a 01 06 03 01 00 00 00 00 dc 05
+# COT 6; IOA 0 TSC 0x1234; time 2026-11-25 11:01:05.931; Wireshark: type and framing only (objects shown as raw data)
+ASDU C_TS_TA_1 iec104 SQ0: 6b 01 06 03 01 00 00 00 00 34 12 2b 17 01 0b 19 0b 1a
+# COT 6; IOA 6000 NVA 0.25 (0x2000), QPM KPA 1; Wireshark: field by field
+ASDU P_ME_NA_1 iec104 SQ0: 6e 01 06 03 01 00 70 17 00 00 20 01
+# COT 6; IOA 6001 SVA 250, QPM KPA 3 LPC; Wireshark: field by field
+ASDU P_ME_NB_1 iec104 SQ0: 6f 01 06 03 01 00 71 17 00 fa 00 43
+# COT 6; IOA 6002 R32 0.001, QPM KPA 4 POP; Wireshark: field by field
+ASDU P_ME_NC_1 iec104 SQ0: 70 01 06 03 01 00 72 17 00 6f 12 83 3a 84
+# COT 6; IOA 6003 QPA 3; Wireshark: field by field
+ASDU P_AC_NA_1 iec104 SQ0: 71 01 06 03 01 00 73 17 00 03
+# COT 3 (no originator octet), CA 1; IOA 100 SVA 4711; IOA 101 SVA -2 QDS IV; Wireshark: not checked (fixed IEC 104 field lengths)
+ASDU M_ME_NB_1 cot1_ca1_ioa2 SQ0: 0b 02 03 01 64 00 67 12 00 65 00 fe ff 80
+# COT 20, CA 1; IOA 300 on; 301 off; Wireshark: not checked (fixed IEC 104 field lengths)
+ASDU M_SP_NA_1 cot1_ca1_ioa2 SQ1: 01 82 14 01 2c 01 01 00
+# COT 6, CA 1; IOA 400 SCS on, QU 0, execute; time 2026-11-25 11:01:05.931; Wireshark: not checked (fixed IEC 104 field lengths)
+ASDU C_SC_TA_1 cot1_ca1_ioa2 SQ0: 3a 01 06 01 90 01 01 2b 17 01 0b 19 0b 1a

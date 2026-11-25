@@ -67,8 +67,11 @@ endfunction()
 add_library(iec104
     src/api/iec104.cpp
     src/codec/apci.cpp
+    src/codec/asdu.cpp
     src/codec/asdu_header.cpp
-    src/codec/cp56time2a.cpp)
+    src/codec/cp56time2a.cpp
+    src/codec/elements.cpp
+    src/codec/type_table.cpp)
 add_library(iec104::iec104 ALIAS iec104)
 
 target_include_directories(iec104
@@ -102,9 +105,13 @@ if(IEC104_BUILD_TESTS)
     add_executable(iec104_tests
         tests/test_api.cpp
         tests/test_apci.cpp
+        tests/test_asdu.cpp
         tests/test_asdu_header.cpp
+        tests/test_asdu_reference.cpp
         tests/test_capture.cpp
-        tests/test_cp56time2a.cpp)
+        tests/test_cp56time2a.cpp
+        tests/test_elements.cpp
+        tests/test_type_table.cpp)
     # Tests use the internal C++ headers directly (sans-I/O, no network)
     target_include_directories(iec104_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
     # Reference data (captures of foreign implementations), read at run time

@@ -1,6 +1,6 @@
 # TASK-001: Codec vervollständigen (Informationselemente und ASDUs)
 
-Status: offen · Modul: `src/codec` · Grundlage: `docs/02_Konzept` (Architektur, ASDU-Profil), `docs/03_Recherchebericht` (Typkennungen, COT, Elemente)
+Status: erledigt (25.11.2026) · Modul: `src/codec` · Grundlage: `docs/02_Konzept` (Architektur, ASDU-Profil), `docs/03_Recherchebericht` (Typkennungen, COT, Elemente)
 
 ## Ausgangslage
 
@@ -28,13 +28,42 @@ Jede Typkennung des Umfangs Version 1 lässt sich als komplette ASDU kodieren un
 
 ## Definition of Done
 
-- [ ] Alle Typen aus Punkt 2 mit Roundtrip-Test (SQ = 0 und SQ = 1, wo zulässig).
-- [ ] Je Typgruppe mindestens ein Referenz-Hexdump mit Quellenangabe im Kommentar (Wireshark-Dissector, Herstellerdoku). Keine selbst erfundenen „Referenzen“.
-- [ ] Negativtests: zu kurze Puffer, Objektanzahl passt nicht zur Länge, unbekannte Typkennung, CP24 im strikten Modus.
-- [ ] `ctest --preset debug` und `ctest --preset asan` grün, `clang`-Preset ohne clang-tidy-Befunde in neuem Code.
-- [ ] Fuzzer läuft 10 Minuten ohne Befund.
-- [ ] Offene Normfragen in diesem Dokument unter „Offen“ eingetragen.
+- [x] Alle Typen aus Punkt 2 mit Roundtrip-Test (SQ = 0 und SQ = 1, wo zulässig).
+- [x] Je Typgruppe mindestens ein Referenz-Hexdump mit Quellenangabe im Kommentar (Wireshark-Dissector, Herstellerdoku). Keine selbst erfundenen „Referenzen“.
+- [x] Negativtests: zu kurze Puffer, Objektanzahl passt nicht zur Länge, unbekannte Typkennung, CP24 im strikten Modus.
+- [x] `ctest --preset debug` und `ctest --preset asan` grün, `clang`-Preset ohne clang-tidy-Befunde in neuem Code.
+- [x] Fuzzer läuft 10 Minuten ohne Befund (600 s, 210 Mio. Eingaben, Korpus aus `tools/make_fuzz_seeds.sh`).
+- [x] Offene Normfragen in diesem Dokument unter „Offen“ eingetragen.
+
+## Umsetzung (Stand 25.11.2026)
+
+| Datei | Inhalt |
+| --- | --- |
+| `src/codec/elements.hpp/.cpp` | Elemente als Structs bzw. Bitmasken, Kodieren/Dekodieren/Bereichsprüfung |
+| `src/codec/type_table.hpp/.cpp` | 59 Typen (Umfang Punkt 2 plus CP24-Typen), Elementliste, Zeitmarke, Richtung; leere Matrix 9.5 |
+| `src/codec/asdu.hpp/.cpp` | `decode_asdu`, `encode_asdu`, `encode_asdu_fitting` (Aufteilen), strikt/tolerant, private Typen roh |
+| `src/codec/asdu_header.hpp` | `AsduProfile` um `max_asdu_length` (Default 249) und `strict` (Default an) erweitert |
+| `tests/data/lib60870_asdu_reference.txt` | 72 Referenz-ASDUs aller Typen (SQ 0/1, abweichendes Profil), kodiert von lib60870-C 2.4.1, gegengeprüft mit Wireshark 3.4.10 |
+| `tests/test_elements.cpp`, `test_type_table.cpp`, `test_asdu.cpp`, `test_asdu_reference.cpp` | 41 neue Tests; `test_capture.cpp` prüft jetzt auch vollständige ASDUs |
+| `fuzz/fuzz_codec.cpp`, `tools/make_fuzz_seeds.sh` | vollständige ASDUs in drei Profilen; Seeds aus `tests/data/` |
+
+Entwurfsentscheidungen:
+
+- **Verlustfreies Dekodieren:** Jedes empfangene Bit bleibt erhalten, auch reservierte Bits. Nur so gilt die Fuzz-Invariante „Dekodieren → Kodieren → identische Bytes“. Folge: CP56Time2a behält jetzt RES1..RES4 (vorher wurden RES2..RES4 verworfen, `docs/04` A6).
+- **Dekodieren tolerant, Kodieren streng:** Werte außerhalb des Bereichs (z. B. Minute 63) werden dekodiert, beim Kodieren aber mit `IEC104_ERR_OUT_OF_RANGE` abgelehnt, nie abgeschnitten.
+- **Strikt** lehnt CP24-Typen ab (`UNSUPPORTED`) und ASDUs mit 0 Objekten (`MALFORMED`); tolerant nimmt beides an.
+- **Unbekannte Typen** ergeben `IEC104_ERR_UNSUPPORTED` (Grundlage für COT 44 in der Session). Private Typen 136–255 werden nur dekodiert (roh); Kodieren privater Typen ist noch nicht vorgesehen.
+- Der Generator der Referenz-ASDUs linkt lib60870 (GPL) und liegt deshalb nicht im Repo; Vorgehen und Eingabewerte stehen im Kopf und je Zeile der Datendatei.
 
 ## Offen
 
-- (wird beim Bearbeiten gefüllt)
+| Nr. | Thema | Stand im Code |
+| --- | --- | --- |
+| O1 | Wireshark 3.4.10 kennt die Typen 17, 18, 19, 104, 106 nicht und zeigt 20, 38–40, 101, 107 nur als Rohdaten. Für SCD, SEP, SPE, OCI, QDP, QCC, FBP, TSC ist lib60870 die einzige Quelle der Bitpositionen. | Prüfen mit neuerer Wireshark-Version oder Normtext |
+| O2 | Matrix Typ/COT (9.5) | leere Tabelle, `TODO(norm): 9.5`, alles erlaubt (N3) |
+| O3 | SQ = 1: für welche Typen zulässig | Codec erlaubt SQ = 1 für alle Typen, `TODO(norm)` in `asdu.hpp` |
+| O4 | CP24-Typen in 104 (N4), Typen 104 und 106 in 104 (N5), VSQ 0 (N9) | wie in `docs/04` angenommen, jeweils `TODO(norm)` |
+| O5 | Wertebedeutungen QU 4..31, COI 3..127, KPA 3..63, QCC, Nummerierung ST/CD in SCD | nur Rohwerte, `TODO(norm)` in `elements.hpp` |
+| O6 | Wertebereich CP16Time2a | jeder 16-Bit-Wert wird geschrieben, `TODO(norm)` in `asdu.cpp` |
+| O7 | Bedeutung der reservierten Bits (z. B. RES1 der Zeitmarke) | erhalten, ohne Bedeutung |
+| O8 | Abschnittsnummern der Elemente und der Typtabelle | `TODO(norm): clause unknown` |

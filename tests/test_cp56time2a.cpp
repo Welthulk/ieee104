@@ -93,14 +93,28 @@ TEST(Cp56Time2a, FlagsRoundTrip) {
     EXPECT_EQ(d, t);
 }
 
-// Rule: RES2..RES4 are ignored on decoding (tolerant decoding).
+// Rule: RES1..RES4 are kept on decoding and written back on encoding
+// (lossless decoding), without disturbing the neighbouring fields.
 // Source: layout; reserved bits set by hand on the EncodeKnownBytes octets.
-TEST(Cp56Time2a, DecodeIgnoresReservedBits) {
-    // RES2 (hour bits 5-6), RES3 (month bits 4-7), RES4 (year bit 7) set
-    const Bytes7 in{0xAB, 0x75, 0x30, 0x09 | 0x60, 0x79, 0x0B | 0xF0, 0x1A | 0x80};
+TEST(Cp56Time2a, ReservedBitsRoundTrip) {
+    // RES1 (minute bit 6), RES2 (hour bits 5-6), RES3 (month bits 4-7), RES4 (year bit 7)
+    const Bytes7 in{0xAB, 0x75, 0x30 | 0x40, 0x09 | 0x60, 0x79, 0x0B | 0xF0, 0x1A | 0x80};
     Cp56Time2a d{};
     ASSERT_EQ(decode_cp56time2a(in.data(), in.size(), d), IEC104_OK);
-    EXPECT_EQ(d, sample());
+    Cp56Time2a expected = sample();
+    expected.res1 = true;
+    expected.res2 = 3;
+    expected.res3 = 15;
+    expected.res4 = true;
+    EXPECT_EQ(d, expected);
+
+    Bytes7 out{};
+    ASSERT_EQ(encode_cp56time2a(d, out.data(), out.size()), IEC104_OK);
+    EXPECT_EQ(out, in);
+
+    // A reserved field wider than its bits is a caller error, not truncated.
+    expected.res3 = 16;
+    EXPECT_EQ(validate(expected), IEC104_ERR_OUT_OF_RANGE);
 }
 
 // Rule: validate() rejects each field just above (or below) its range, and

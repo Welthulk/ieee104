@@ -34,7 +34,8 @@ std::uint32_t max_value(std::size_t octets) noexcept {
 
 bool is_valid(const AsduProfile& profile) noexcept {
     return profile.cot_length >= 1U && profile.cot_length <= 2U && profile.ca_length >= 1U &&
-           profile.ca_length <= 2U && profile.ioa_length >= 1U && profile.ioa_length <= 3U;
+           profile.ca_length <= 2U && profile.ioa_length >= 1U && profile.ioa_length <= 3U &&
+           profile.max_asdu_length >= 1U && profile.max_asdu_length <= kMaxAsduLength;
 }
 
 std::size_t header_length(const AsduProfile& profile) noexcept {
@@ -109,6 +110,10 @@ iec104_status decode_asdu_header(const std::uint8_t* data, std::size_t size,
     out = h;
     consumed = pos;
     return IEC104_OK;
+}
+
+std::uint32_t max_ioa(const AsduProfile& profile) noexcept {
+    return max_value(profile.ioa_length);
 }
 
 iec104_status encode_ioa(std::uint32_t ioa, const AsduProfile& profile, std::uint8_t* out,

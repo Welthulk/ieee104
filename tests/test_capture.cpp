@@ -11,10 +11,12 @@
  * tests/data/lib60870_capture.txt holds every APDU exchanged between the
  * lib60870-C v2.4.1 example client and server (external test peer only, not
  * linked). This test checks that the codec accepts all of them and produces
- * byte-identical APCIs and ASDU headers when re-encoding the decoded values.
+ * byte-identical APCIs, ASDU headers and complete ASDUs when re-encoding the
+ * decoded values.
  * New frames added to the capture are covered automatically.
  */
 #include "codec/apci.hpp"
+#include "codec/asdu.hpp"
 #include "codec/asdu_header.hpp"
 
 #include <algorithm>
@@ -111,5 +113,20 @@ TEST(Capture, EveryApduRoundTrips) {
         EXPECT_EQ(written, consumed);
         EXPECT_TRUE(
             std::equal(hb.begin(), hb.begin() + static_cast<std::ptrdiff_t>(written), asdu));
+
+        // Complete ASDU (strict IEC 104 profile): decode and re-encode.
+        std::array<InformationObject, 127> objects{};
+        DecodedAsdu d{};
+        ASSERT_EQ(
+            decode_asdu(asdu, apci.asdu_length, kIec104Profile, objects.data(), objects.size(), d),
+            IEC104_OK);
+        std::array<std::uint8_t, kMaxAsduLength> ab{};
+        std::size_t asdu_written = 0;
+        ASSERT_EQ(encode_asdu(d.header, objects.data(), d.object_count, kIec104Profile, ab.data(),
+                              ab.size(), asdu_written),
+                  IEC104_OK);
+        ASSERT_EQ(asdu_written, apci.asdu_length);
+        EXPECT_TRUE(
+            std::equal(ab.begin(), ab.begin() + static_cast<std::ptrdiff_t>(asdu_written), asdu));
     }
 }
