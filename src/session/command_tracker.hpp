@@ -15,8 +15,8 @@
  *                         ->  termination (cause 10), for executed commands
  *
  * The tracker matches the answers by common address, type and IOA, watches
- * two time limits (confirmation, termination; set separately, intern/02:
- * "Befehls-Timeout") and reports one result per command. Some peers send no
+ * two time limits (confirmation, termination; set separately, because peers
+ * differ in how long they take to execute) and reports one result per command. Some peers send no
  * termination (e.g. for set points); then expect_termination = false makes
  * the positive confirmation the final result.
  *
@@ -48,7 +48,7 @@ enum class CommandResult : std::uint8_t {
 
 /** @brief Time limits and expectations of the controlling station. */
 struct CommandTimeouts {
-    std::uint32_t confirmation_ms{10000}; ///< Activation -> confirmation (intern/02: 10 s).
+    std::uint32_t confirmation_ms{10000}; ///< Activation -> confirmation (10 s).
     std::uint32_t termination_ms{10000};  ///< Confirmation -> termination.
     bool expect_termination{true};        ///< false: a positive confirmation is final.
 };

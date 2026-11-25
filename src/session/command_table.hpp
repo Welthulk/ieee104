@@ -15,9 +15,9 @@
  *     controlling station first selects, then executes the same command);
  *   - for select before operate, how long a selection stays valid.
  *
- * The model per point is a parameter of the station (intern/02: "Befehlsmodell
- * je IOA"). An empty table means that the application decides about every
- * command itself (behaviour without command points).
+ * The model per point is a parameter of the station
+ * (docs/05_Normfragen_und_Festlegungen.md, E7). An empty table means that the application decides
+ * about every command itself (behaviour without command points).
  * TODO(norm): select and execute procedure, clause 7 (docs/05_Normfragen_und_Festlegungen.md, N8).
  *
  * Layer: session (no I/O).

@@ -318,7 +318,7 @@ void ServerSession::answer_command(const codec::DecodedAsdu& d, const codec::Inf
         answer_point_command(d, o, *point, station, handler, asdu, length);
         return;
     }
-    // Without command points the application alone decides (TASK-004 behaviour).
+    // Without command points the application alone decides about every command.
     if (h.cause == kCotDeactivation && command) {
         push_ready(mirror(asdu, length, kCotDeactivationCon, false));
         return;
