@@ -1,0 +1,3387 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 2c3ac77..5a8d08e 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,20 @@
+ # Änderungen
+ 
++## 0.4.0 (25.11.2026)
++
++| Bereich | Änderung |
++| --- | --- |
++| Redundanz | Redundanzgruppen (`iec104_server_add_group`): eine aktive Verbindung je Gruppe, Umschaltung per STOPDT/STARTDT, Übernahme durch STARTDT auf einer zweiten Verbindung |
++| Pufferung | Ereignispuffer je Gruppe: Ereignis bleibt bis zur Quittung, nach Abbruch oder Umschaltung erneut gesendet; Überlauf: älteste verwerfen oder ablehnen |
++| Pufferung | ohne Gruppen: jede Verbindung puffert während STOPDT (`event_buffer_size`, `overflow` in `iec104_server_options`) |
++| Zuordnung | neue Verbindungen nach IP-Adresse der Leitstelle; unbekannte Adressen werden abgewiesen |
++| Betrieb | `iec104_server_get_group_stats`, `iec104_server_connection_group`; Log bei Übernahme und Überlauf |
++| Konfiguration | Schlüssel `group`, `event_buffer_size`, `overflow` |
++| Selbsttest | Server `--group`, `--buffer`, `--overflow`, `--broadcast`; Client `--switchover`; ctest `SelfTest.SwitchOver` |
++| Festlegung | E10: Redundanzgruppen |
++| Lieferung | fertig gebaute Library auf das Nötigste reduziert: `lib/libiec104.so.0`, Header, Lizenzen, Julia-Anbindung, Kurzanleitung |
++| Julia | `examples/julia/IEC104.jl` (Anbindung per `ccall`), Client- und Server-Beispiel; Anleitung `docs/07_Julia.md` |
++
+ ## 0.3.0 (25.11.2026)
+ 
+ | Bereich | Änderung |
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 33deb8b..186e4a5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,7 @@
+ cmake_minimum_required(VERSION 3.21)
+ 
+ project(iec104
+-    VERSION 0.3.0
++    VERSION 0.4.0
+     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
+     LANGUAGES C CXX)
+ 
+@@ -86,6 +86,7 @@ add_library(iec104_objects OBJECT
+     src/session/command_table.cpp
+     src/session/command_tracker.cpp
+     src/session/process_image.cpp
++    src/session/redundancy_group.cpp
+     src/session/server_session.cpp
+     src/transport/link.cpp
+     src/transport/tcp.cpp
+@@ -160,6 +161,7 @@ if(IEC104_BUILD_TESTS)
+         tests/test_cp56time2a.cpp
+         tests/test_elements.cpp
+         tests/test_operation.cpp
++        tests/test_redundancy.cpp
+         tests/test_session.cpp
+         tests/test_tcp_loopback.cpp
+         tests/test_tls.cpp
+@@ -208,6 +210,11 @@ if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
+             COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
+                     $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>)
+         set_tests_properties(SelfTest.ServerAndClientOverTcp PROPERTIES TIMEOUT 90)
++        add_test(NAME SelfTest.SwitchOver
++            COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
++                    $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>
++                    --switchover)
++        set_tests_properties(SelfTest.SwitchOver PROPERTIES TIMEOUT 90)
+         if(IEC104_TLS)
+             add_test(NAME SelfTest.ServerAndClientOverTls
+                 COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
+diff --git a/README.md b/README.md
+index bf0a3ff..ff726da 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
+ 
+-Stand: 25.11.2026, Version 0.3.0, Linux x86-64.
++Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
+ 
+ ## Stand
+ 
+@@ -17,7 +17,7 @@ Stand: 25.11.2026, Version 0.3.0, Linux x86-64.
+ | Befehle | Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout), maximale Befehlsverzögerung für Befehle mit Zeitmarke, Befehlsverfolgung am Client mit Ergebnis je Befehl und getrennten Timeouts |
+ | Betrieb | Log-Callback mit Stufen und APDU-Trace, Statistik je Verbindung, Konfigurationsdatei, `find_package(iec104)`, statisch oder geteilt |
+ | TLS | IEC 62351-3: gegenseitige Authentifizierung mit X.509, Sperrlisten, Name oder Fingerprint der Gegenstelle, Key Update und Renegotiation nach Zeit, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse |
+-| in Arbeit | Pufferung, Redundanzgruppen |
++| Redundanz | Redundanzgruppen nach Edition 2: eine aktive Verbindung je Gruppe, Ereignispuffer je Gruppe bis zur Quittung, erneutes Senden nach Abbruch, Überlaufstrategie, Zuordnung über die Adresse der Leitstelle |
+ 
+ ## Unterlagen
+ 
+@@ -27,8 +27,9 @@ Stand: 25.11.2026, Version 0.3.0, Linux x86-64.
+ | `docs/02_Technik_und_Quellen.md` | Architektur, Protokollaufbau, Parameter, Typkennungen, Elemente, Quellen |
+ | `docs/03_Quellen_APCI.md` | Öffentliche Belege für die Regeln der Verbindungssteuerung |
+ | `docs/04_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
+-| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E9), auf die der Code verweist |
+-| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, TLS, Regeln |
++| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E10), auf die der Code verweist |
++| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Redundanz, TLS, Regeln |
++| `docs/07_Julia.md` | Library aus Julia verwenden: Schnellstart, Typen, Callbacks, Beispiele |
+ 
+ ## Verzeichnisse
+ 
+@@ -37,12 +38,12 @@ Stand: 25.11.2026, Version 0.3.0, Linux x86-64.
+ | `include/iec104/` | öffentlicher C-Header, die einzige Schnittstelle für Anwender |
+ | `src/codec/` | reine Funktionen auf Byte-Puffern, kein I/O, keine Allokation |
+ | `src/apci/` | Zustandsmaschine: Bytes und Zeit rein, Bytes und Ereignisse raus |
+-| `src/session/` | Anwendungsabläufe der gesteuerten Station, Prozessabbild |
++| `src/session/` | Anwendungsabläufe der gesteuerten Station, Prozessabbild, Redundanzgruppen |
+ | `src/transport/` | Sockets, Verbindungsaufbau, Zeitbasis, TLS-Backend |
+ | `src/api/` | Implementierung der C-Schnittstelle |
+ | `tests/` | Unit-Tests (GoogleTest), Referenzdaten unter `tests/data/` |
+ | `fuzz/` | libFuzzer-Ziele für Codec und Zustandsmaschine |
+-| `examples/` | Hello World: kleinster Server und Client |
++| `examples/` | Hello World: kleinster Server und Client; `examples/julia/` für Julia |
+ | `tools/selftest/` | Selbsttest-Programme und Testskript |
+ | `tools/` | Installation der Werkzeuge, Startdateien für den Fuzzer, Test-PKI für TLS |
+ 
+@@ -76,6 +77,8 @@ build/debug/iec104_selftest_client --host 127.0.0.1 --port 2404 --idle 25
+ build/debug/iec104_selftest_client --host <Gerät> --foreign --ca <Adresse> --idle 60     # fremder Server
+ tools/selftest/run_selftest.sh build/debug/iec104_selftest_server \
+     build/debug/iec104_selftest_client --tls build/debug/tls                            # über TLS
++tools/selftest/run_selftest.sh build/debug/iec104_selftest_server \
++    build/debug/iec104_selftest_client --switchover                                     # Umschaltung
+ ```
+ 
+ Der Client meldet jeden Schritt mit `ok` oder `FAILED` und endet mit `result: PASSED` (Exit-Code 0) oder `result: FAILED` (Exit-Code 1). `ctest` lässt beide Programme automatisch über Loopback gegeneinander laufen. Testfälle gegen fremde Geräte, Fehlerfälle und alle Optionen: `docs/04_Selbsttest.md`.
+@@ -125,7 +128,7 @@ Befehlspunkte legt der Server mit `iec104_server_add_command` fest (direkt oder
+ 
+ Der Client funktioniert entsprechend: `iec104_client_create`, `iec104_client_connect(client, host, port)`, nach dem Zustand `IEC104_LINK_STOPPED` `iec104_client_start`, danach zum Beispiel `iec104_client_interrogation(client, 1, 20)`; die Antworten kommen als Objekte über `on_object`. Befehle sendet `iec104_client_send_command` oder, zweistufig, `iec104_client_select_execute`; das Ergebnis jedes Befehls (ausgeführt, abgelehnt, keine Bestätigung, …) meldet `on_command_result`. Alle Funktionen liefern einen `iec104_status`; `iec104_status_string()` gibt einen lesbaren Text dazu.
+ 
+-TLS: `iec104_server_set_tls` bzw. `iec104_client_set_tls` mit CA, Zertifikat und Schlüssel vor `listen`/`connect`, sonst ändert sich nichts (`docs/06_Anleitung.md`, Abschnitt 6).
++TLS: `iec104_server_set_tls` bzw. `iec104_client_set_tls` mit CA, Zertifikat und Schlüssel vor `listen`/`connect`, sonst ändert sich nichts (`docs/06_Anleitung.md`, Abschnitt 7).
+ 
+ ## Lizenz
+ 
+diff --git a/docs/02_Technik_und_Quellen.md b/docs/02_Technik_und_Quellen.md
+index 7d46dca..e1beeec 100644
+--- a/docs/02_Technik_und_Quellen.md
++++ b/docs/02_Technik_und_Quellen.md
+@@ -128,6 +128,16 @@ Bit-Layouts: `src/codec/elements.hpp`, bestätigt durch die Referenz-ASDUs in `t
+ 
+ UTC oder Ortszeit ist nicht genormt, sondern Teil der Interoperabilitätsliste. Der Codec trägt keine Zeitzone; IV, SU und Wochentag sind eigene Felder. Die Library rechnet in UTC (N13).
+ 
++## Redundanz
++
++| Punkt | Stand |
++| --- | --- |
++| Redundante Verbindungen | Abschnitt 10 der Norm, neu seit Edition 2 |
++| Gruppe | mehrere Verbindungen einer Leitstelle; genau eine überträgt Daten (STARTDT), die anderen stehen in STOPDT bereit und werden mit TESTFR überwacht |
++| Umschalten | Leitstelle sendet STOPDT auf der alten, STARTDT auf der neuen Verbindung, danach üblicherweise eine Generalabfrage |
++| Ereignispuffer | gehört der Gruppe, puffert auch ohne gestartete Verbindung; Modelle in [LIB]: eine Gruppe für alle, Gruppe je Verbindung, mehrere Gruppen nach Adresse |
++| Umsetzung | `src/session/redundancy_group.hpp`; Festlegungen docs/05, N7 und E10 |
++
+ ## Sicherheit
+ 
+ | Punkt | Stand |
+@@ -159,4 +169,4 @@ UTC oder Ortszeit ist nicht genormt, sondern Teil der Interoperabilitätsliste.
+ | [AMD1] | IEC 60870-5-104:2006/AMD1:2016, Leseprobe: https://cdn.standards.iteh.ai/samples/22910/722bcd41d12f48898e3b0b642418b49d/IEC-60870-5-104-2006-AMD1-2016.pdf |
+ | [CON] | IEC 60870-5-104 Ed. 2.1, Vorschau mit Inhaltsverzeichnis: https://vde-verlag.de/iec-normen/preview-pdf/info_iec60870-5-104{ed2.1}b.pdf |
+ | [62351] | IEC 62351-3 Ed. 2.0, Vorschau: https://assets.vde-verlag.de/iec-normen/preview-pdf/info_iec62351-3%7Bed2.0%7Db.pdf |
+-| [LIB] | lib60870 (nur externe Testgegenstelle, weder gelinkt noch Code übernommen): https://github.com/mz-automation/lib60870 |
++| [LIB] | lib60870 (nur externe Testgegenstelle, weder gelinkt noch Code übernommen): https://github.com/mz-automation/lib60870, Servermodi: https://github.com/mz-automation/lib60870/blob/master/user_guide.adoc |
+diff --git a/docs/04_Selbsttest.md b/docs/04_Selbsttest.md
+index 34e4f2f..7b0e95e 100644
+--- a/docs/04_Selbsttest.md
++++ b/docs/04_Selbsttest.md
+@@ -95,7 +95,7 @@ Die Programme liegen danach unter `build/debug/iec104_selftest_server` und `buil
+ 2. startet den Client gegen diesen Port mit kurzem t3 (1 s) und 3 s Ruhe, damit auch der Verbindungstest mit TESTFR läuft,
+ 3. wertet die Exit-Codes beider Programme aus.
+ 
+-Ein zweiter Lauf macht dasselbe über TLS mit gegenseitiger Authentifizierung, Sperrliste, Namensprüfung und Schlüsselerneuerung alle 2 s.
++Ein zweiter Lauf macht dasselbe über TLS mit gegenseitiger Authentifizierung, Sperrliste, Namensprüfung und Schlüsselerneuerung alle 2 s. Ein dritter prüft die Umschaltung einer Redundanzgruppe (`--switchover`, Abschnitt 4.7).
+ 
+ Von Hand:
+ 
+@@ -209,7 +209,34 @@ Gegenprobe ohne eigene Software, mit OpenSSL als Client (sendet STARTDT act und
+ 
+ `openssl s_client … -tls1_2 -msg` zeigt bei `--tls-renewal 1` am Server jede Sekunde HelloRequest und den neuen Handshake.
+ 
+-### 4.7 Mitschnitt mit Wireshark
++### 4.7 Redundanz und Umschaltung
++
++Der Server sendet die Messreihe mit `--broadcast` als gemeinsame Ereignisse durch den Puffer der Redundanzgruppe, nicht je Verbindung. Der Client öffnet mit `--switchover` eine zweite Verbindung als Reserve und schaltet um, während die Reihe läuft (STOPDT auf der ersten, STARTDT auf der Reserve):
++
++```bash
++iec104_selftest_server --group 127.0.0.1 --broadcast --count 300 --interval 50 --stats
++iec104_selftest_client --switchover --expect 300 --idle 5
++```
++
++```
++  standby connection (stopped) ......... ok
++  switch-over (STOPDT, STARTDT standby)  109 values before
++  spontaneous values ................... 300/300, in order
++  idle connection still open ........... ok
++```
++
++Am Server zeigt `--stats` am Ende die Zähler der Gruppe (Ereignisse, verworfen, erneut gesendet, Umschaltungen).
++
++| Test | Vorgehen | Erwartung |
++| --- | --- | --- |
++| Umschaltung | wie oben | Reihe lückenlos und geordnet, doppelte Werte werden gezählt („repeated“) |
++| fremde Leitstelle mit zwei Verbindungen | Server mit `--group <Adresse 1>,<Adresse 2> --broadcast --count 100000 --interval 1000 --log info`, an der Leitstelle umschalten | Log `group 1: active, N buffered events` bei jedem STARTDT; IOA 100 zählt ohne Lücke weiter |
++| Umschalten ohne STOPDT | Leitstelle startet die zweite Verbindung, ohne die erste zu stoppen | Log `takes over from connection …`, Daten nur noch auf der zweiten |
++| Abbruch | aktive Verbindung trennen (Kabel, `kill`), danach die Reserve starten | unquittierte Werte kommen auf der Reserve erneut |
++| Pufferüberlauf | Server mit `--broadcast --buffer 10 --interval 1000 --log info`; Leitstelle startet, stoppt nach einigen Werten, startet nach 20 s wieder | Log `event buffer full`; nach STARTDT nur die letzten 10 Werte (Lücke von etwa 10) |
++| unbekannte Adresse | Server mit `--group 192.0.2.1`, Client von einer anderen Adresse | Server-Log `rejected: not in any redundancy group`; Client `connect … ok`, dann `STARTDT … FAILED (closed by peer)` |
++
++### 4.8 Mitschnitt mit Wireshark
+ 
+ Wireshark dekodiert IEC 104 auf Port 2404 von selbst. Für einen anderen Port: *Analyze → Decode As… → TCP port → IEC 60870-5-104*. Mitschnitt ohne Oberfläche:
+ 
+@@ -230,6 +257,10 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
+ | `--duration S` | Laufzeit, 0 = bis Strg-C | 0 |
+ | `--once` | nach der ersten Verbindung beenden, Exit-Code wie beim Client | aus |
+ | `--port-file F` | tatsächlichen Port in Datei F schreiben | – |
++| `--broadcast` | Messreihe als gemeinsame, gepufferte Ereignisse für alle Verbindungen | aus (Reihe je Verbindung) |
++| `--group ADR,ADR` | Redundanzgruppe für diese Adressen der Leitstelle, `*` = jede; mehrfach möglich | keine (jede Verbindung eigene Gruppe) |
++| `--buffer N` | Ereignispuffer je Gruppe | 1000 |
++| `--overflow W` | voller Puffer: `drop_oldest` oder `reject` | `drop_oldest` |
+ 
+ ### Client
+ 
+@@ -243,6 +274,7 @@ tshark -i lo -f "tcp port 2404" -w selbsttest.pcapng
+ | `--expect N` | erwartete spontane Messwerte | 100 |
+ | `--idle S` | Ruhephase vor STOPDT, größer als t3 wählen | 0 |
+ | `--timeout S` | Grenze je Schritt | 20 |
++| `--switchover` | zweite Verbindung als Reserve, Umschaltung während der Messreihe (Server mit `--broadcast`) | aus |
+ 
+ ### Beide
+ 
+@@ -279,4 +311,4 @@ Ebenfalls abgedeckt: Befehlsmodelle je IOA (direkt, Select/Execute mit Zeitüber
+ 
+ Ebenfalls abgedeckt: TLS mit gegenseitiger Authentifizierung, Sperrliste, Namensprüfung und Schlüsselerneuerung. Negativfälle (fremde CA, abgelaufen, gesperrt, Fingerprint, Handshake-Timeout, Klartext gegen TLS) prüfen die Unit-Tests `Tls.*`.
+ 
+-Noch nicht abgedeckt: Pufferung bei unterbrochener Verbindung, Redundanzgruppen.
++Ebenfalls abgedeckt: Redundanzgruppe mit zwei Verbindungen, Umschaltung per STOPDT/STARTDT während laufender Daten. Abbruch mit unquittierten Ereignissen, Übernahme ohne STOPDT, Überlauf und Abweisung prüfen die Unit-Tests `Redundancy.*`.
+diff --git a/docs/05_Normfragen_und_Festlegungen.md b/docs/05_Normfragen_und_Festlegungen.md
+index d287bf8..3c7289a 100644
+--- a/docs/05_Normfragen_und_Festlegungen.md
++++ b/docs/05_Normfragen_und_Festlegungen.md
+@@ -1,6 +1,6 @@
+ # Normfragen und Festlegungen
+ 
+-Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stellen zu N1–N13 sind mit `TODO(norm)` markiert; E1–E9 sind technische Festlegungen. Belege: `docs/02_Technik_und_Quellen.md`, `docs/03_Quellen_APCI.md`.
++Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stellen zu N1–N13 sind mit `TODO(norm)` markiert; E1–E10 sind technische Festlegungen. Belege: `docs/02_Technik_und_Quellen.md`, `docs/03_Quellen_APCI.md`.
+ 
+ ## Normfragen
+ 
+@@ -12,7 +12,7 @@ Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stell
+ | N4 | Typen mit CP24Time2a (2–16 gerade, 17–19) in IEC 104 | codec | Ablehnen oder dekodieren | Strikt: `IEC104_ERR_UNSUPPORTED`. Tolerant: dekodieren und kodieren |
+ | N5 | Typen 104 (Testbefehl ohne Zeitmarke) und 106 in IEC 104 | codec | Unterstützung | Beide in der Typtabelle; ob 104 in IEC 104 durch 107 ersetzt ist, ist nicht belegt |
+ | N6 | Maximale Befehlsverzögerung (AMD1, Abschnitt 6) | session | Zu spät eintreffende Befehle werden verworfen | Nur für Befehle mit CP56Time2a (58–64, 107), Default aus; Vergleich mit der UTC-Uhr des Servers; eine ungültige Zeitmarke (IV) wird bei eingeschalteter Prüfung ebenfalls verworfen; Zeitmarken in der Zukunft werden nicht geprüft |
+-| N7 | Redundanzgruppen (Abschnitt 10) | session | Umschalten mit unquittierten I-Rahmen | Ereignispuffer gehört der Gruppe; Unquittiertes wird auf der neuen Verbindung erneut gesendet |
++| N7 | Redundanzgruppen (Abschnitt 10) | session | Umschalten mit unquittierten I-Rahmen | Ereignispuffer gehört der Gruppe; ein Ereignis bleibt darin, bis die Gegenstelle es quittiert (N(R)). Nach Abbruch oder Umschaltung geht Unquittiertes auf der nächsten aktiven Verbindung erneut hinaus: doppelt möglich, kein Verlust. Gepuffert werden alle Ursachen außer zyklisch (1) und Hintergrund (2) |
+ | N8 | Abläufe Generalabfrage, Befehle, Initialisierung (Abschnitt 7) | session | Reihenfolge ACTCON / Daten / ACTTERM, Typ 70 nach Neustart, Typen der Antwort | Übliche Lesart: Aktivierung, Bestätigung, Daten, Beendigung; Antworten auf eine Abfrage ohne Zeitmarke; Typ 70 mit COT 4 nach dem ersten STARTDT einer Verbindung (abschaltbar); Freeze/Reset der Zählerabfrage nur bestätigt |
+ | N9 | ASDU mit 0 Objekten (VSQ = 0) | codec | Dekodieren | Strikt: `IEC104_ERR_MALFORMED`. Tolerant: angenommen, wenn keine Objektoktette folgen. Kodieren mit 0 Objekten ist nie möglich |
+ | N10 | Gemeinsame Adresse 0 und 65535 (Broadcast) | session | Annahme von Generalabfrage und Uhrzeit als Broadcast | 65535 (bei 1-Oktett-CA 255) nur bei 100, 101, 103, 105, beantwortet je Station mit deren Adresse; andere unbekannte Adressen negativ mit Ursache 46 |
+@@ -33,3 +33,4 @@ Stand: 25.11.2026 · Normstand IEC 60870-5-104 Ed. 2.1 mit AMD1:2016. Code-Stell
+ | E7 | Befehlsmodell je IOA: ohne Befehlspunkte entscheidet die Anwendung allein; mit Befehlspunkten prüft die Library IOA, Typ, Select/Execute und Auswahl-Timeout, bevor die Anwendung gefragt wird. Eine Auswahl gilt je Verbindung | Bekannte Anforderungen von Gegenstellen (Select/Execute je Datenpunkt, nur Befehle mit Zeitmarke) werden Parameter statt Anwendungslogik |
+ | E8 | Laufzeitmodell: kein interner Thread; die Anwendung ruft `*_poll()` in ihrem Thread, dort laufen auch alle Callbacks. Ein Handle gehört einem Thread | keine Sperren in der Library, vorhersagbares Verhalten; die Anwendung wählt selbst, ob Poll in einem eigenen Thread läuft |
+ | E9 | TLS: Der Handshake fällt unter t0, auf Client und Server. Ein Fehler im Handshake oder in der TLS-Schicht schließt die Verbindung (`IEC104_CLOSE_TLS`) und wird als Sicherheitsereignis gemeldet (`on_security`). Neue TLS-Einstellungen gelten für neue Verbindungen, offene behalten ihre Sitzung | t0 begrenzt den Verbindungsaufbau; ohne Grenze hält eine Gegenstelle, die nur TCP öffnet, Ressourcen des Servers fest. Zertifikate lassen sich so ohne Neustart wechseln |
++| E10 | Redundanzgruppen: Aktiv ist die zuletzt mit STARTDT gestartete Verbindung; STARTDT auf einer zweiten Verbindung übernimmt (Warnung im Log), STOPDT der aktiven übergibt an eine andere noch gestartete. Zuordnung neuer Verbindungen über die IP-Adresse der Leitstelle, sonst an die Gruppe ohne Adressliste, sonst abgewiesen. Ohne konfigurierte Gruppen ist jede Verbindung ihre eigene Gruppe. Puffer 1000 Ereignisse, bei Überlauf wird das älteste verworfen (umstellbar auf Ablehnen) | Eine Leitstelle, die ohne STOPDT umschaltet, verliert keine Daten. Die Adressliste wirkt zugleich als Absenderprüfung. Ohne Gruppen bleibt das bisherige Verhalten erhalten, ergänzt um Pufferung während STOPDT |
+diff --git a/docs/06_Anleitung.md b/docs/06_Anleitung.md
+index 230d2a0..fb0ba14 100644
+--- a/docs/06_Anleitung.md
++++ b/docs/06_Anleitung.md
+@@ -1,6 +1,6 @@
+ # Anleitung: Library verwenden
+ 
+-Stand: 25.11.2026 · Schnittstelle: `include/iec104/iec104.h` · Beispiele: `examples/`
++Stand: 25.11.2026 · Schnittstelle: `include/iec104/iec104.h` · Beispiele: `examples/` · Julia: `docs/07_Julia.md`
+ 
+ ## 1. Einbinden
+ 
+@@ -17,12 +17,33 @@ cmake --install build/release --prefix /opt/iec104
+ | geteilt (`libiec104.so`) | `-DBUILD_SHARED_LIBS=ON` oder Preset `shared` |
+ | ohne TLS (ohne OpenSSL) | `-DIEC104_TLS=OFF`; `*_set_tls()` liefert dann `IEC104_ERR_UNSUPPORTED` |
+ 
+-Fertig gebaut: `iec104-<version>-linux-x86_64.zip` enthält dieselbe Struktur wie `/opt/iec104` (geteilte Library, Header, CMake-Dateien, Selbsttest). Läuft auf Linux x86-64 mit glibc ab 2.34 und OpenSSL 3, z. B. AlmaLinux 9, Ubuntu ab 22.04, auch unter WSL2.
++### Fertig gebaute Library
++
++`iec104-<version>-linux-x86_64.zip` enthält nur das Nötigste zum Verwenden, ohne selbst zu bauen:
++
++| Datei | Inhalt |
++| --- | --- |
++| `lib/libiec104.so.0` | geteilte Library (Release, mit TLS), eine Datei ohne Symlinks |
++| `include/iec104/iec104.h` | Header |
++| `LICENSES/` | Lizenztexte |
++| `README.md` | Voraussetzungen, Übersetzen, Starten |
++
++| Voraussetzung | Mindestens |
++| --- | --- |
++| System | Linux x86-64: AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12, auch unter WSL2 |
++| glibc, libstdc++ | 2.34, GCC 11 |
++| OpenSSL | 3.0 (`libssl.so.3`, auf diesen Systemen vorhanden) |
++
++```bash
++gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app
++```
++
++Für `-liec104` einmal `ln -s libiec104.so.0 lib/libiec104.so` anlegen. `find_package(iec104)` braucht die installierte Variante (oben), nicht das Zip.
+ 
+ Eigenes CMake-Projekt:
+ 
+ ```cmake
+-find_package(iec104 0.3 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
++find_package(iec104 0.4 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
+ target_link_libraries(meine_app PRIVATE iec104::iec104)
+ ```
+ 
+@@ -195,7 +216,62 @@ iec104_client_connect(client, cfg.host, cfg.port);
+ 
+ Alle Schlüssel: Kommentar zu `iec104_config_load()` im Header. Zeiten in Sekunden.
+ 
+-## 6. TLS
++## 6. Redundanz und Pufferung
++
++Eine Leitstelle hält zur Station oft zwei oder mehr Verbindungen: eine überträgt, die anderen stehen bereit. Diese Verbindungen bilden eine Redundanzgruppe. Spontane Daten (`iec104_server_update()`, `iec104_server_send()` an alle) laufen durch den Ereignispuffer der Gruppe und bleiben dort, bis die Leitstelle sie quittiert hat.
++
++```c
++iec104_group_config g;
++iec104_group_config_init(&g);                   /* 1000 Ereignisse, älteste verwerfen */
++strcpy(g.peers[0], "10.0.1.10");                /* Leitstelle, Rechner 1 */
++strcpy(g.peers[1], "10.0.2.10");                /* Leitstelle, Rechner 2 */
++uint32_t gruppe;
++iec104_server_add_group(server, &g, &gruppe);   /* vor iec104_server_listen() */
++```
++
++| Situation | Verhalten |
++| --- | --- |
++| keine Verbindung gestartet | Ereignisse sammeln sich im Puffer |
++| STARTDT auf einer Verbindung | sie wird aktiv und erhält zuerst den Puffer, danach laufende Ereignisse |
++| STOPDT, dann STARTDT auf einer anderen | Umschaltung ohne Verlust; die Leitstelle macht danach üblicherweise eine Generalabfrage |
++| STARTDT auf einer zweiten, ohne STOPDT auf der ersten | die zweite übernimmt (Warnung im Log) |
++| Abbruch der aktiven Verbindung | Unquittiertes geht auf der nächsten aktiven erneut hinaus (doppelt möglich, nie verloren) |
++| Puffer voll | ältestes Ereignis verwerfen, oder mit `IEC104_OVERFLOW_REJECT` das neue ablehnen (`IEC104_ERR_WOULD_BLOCK`) |
++| zyklische Daten (Ursache 1, 2) | nicht gepuffert, nur an aktive Verbindungen |
++| Verbindung von unbekannter Adresse | abgewiesen, sofern keine Gruppe ohne Adressliste existiert |
++| keine Gruppe angelegt | jede Verbindung ist ihre eigene Gruppe: Pufferung während STOPDT, endet mit der Verbindung |
++
++| Aufgabe | Aufruf |
++| --- | --- |
++| Zustand und Zähler einer Gruppe | `iec104_server_get_group_stats(server, gruppe, &s)`: aktive Verbindung, Füllstand, verworfen, erneut gesendet, Umschaltungen |
++| Gruppe einer Verbindung | `iec104_server_connection_group(server, verbindung)` |
++| Puffer ohne Gruppen | `iec104_server_options.event_buffer_size`, `.overflow` |
++
++Auf der Seite der Leitstelle sind zwei Client-Handles nötig, je eines pro Verbindung:
++
++```c
++iec104_client_connect(haupt, "10.0.0.5", 2404);
++iec104_client_connect(reserve, "10.0.0.5", 2404);   /* bleibt in STOPDT, TESTFR läuft */
++iec104_client_start(haupt);
++/* ... Umschalten: */
++iec104_client_stop(haupt);                          /* STOPDT con kommt, wenn alles quittiert ist */
++iec104_client_start(reserve);                       /* sobald haupt STOPPED meldet */
++iec104_client_interrogation(reserve, 1, 20);
++```
++
++In der Konfigurationsdatei eine Zeile je Gruppe (`*` = jede Adresse):
++
++```ini
++group = 10.0.1.10, 10.0.2.10
++event_buffer_size = 5000
++overflow = drop_oldest
++```
++
++```c
++for (uint32_t i = 0; i < cfg.group_count; ++i) iec104_server_add_group(server, &cfg.groups[i], NULL);
++```
++
++## 7. TLS
+ 
+ IEC 104 selbst ist ungeschützt. Mit TLS nach IEC 62351-3 laufen dieselben APDUs verschlüsselt und beide Seiten weisen sich mit Zertifikat aus. Standardport mit TLS: 19998 (`IEC104_DEFAULT_TLS_PORT`).
+ 
+@@ -251,7 +327,7 @@ tls_peer_name = leitstelle.example
+ if (cfg.use_tls) iec104_client_set_tls(client, &cfg.tls);
+ ```
+ 
+-## 7. Regeln
++## 8. Regeln
+ 
+ | Regel | Grund |
+ | --- | --- |
+diff --git a/docs/07_Julia.md b/docs/07_Julia.md
+new file mode 100644
+index 0000000..e6cc518
+--- /dev/null
++++ b/docs/07_Julia.md
+@@ -0,0 +1,157 @@
++# Anleitung: Library aus Julia verwenden
++
++Stand: 25.11.2026 · geprüft mit Julia 1.13 · Dateien: `examples/julia/` (im Binärpaket `julia/`)
++
++Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu installieren und nichts zu übersetzen: Die fertig gebaute Library und die Datei `IEC104.jl` genügen.
++
++## 1. Schnellstart
++
++Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
++
++```bash
++cd iec104-0.4.0-linux-x86_64
++julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
++julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
++```
++
++Ausgabe des Clients:
++
++```
++type 70  cause 4  station 1  IOA 0  value 0.0       Ende der Initialisierung
++type 100  cause 7  station 1  IOA 0  value 0.0      Generalabfrage bestätigt
++type 13  cause 20  station 1  IOA 100  value 30.0   Wert aus der Abfrage
++type 100  cause 10  station 1  IOA 0  value 0.0     Generalabfrage beendet
++type 13  cause 3  station 1  IOA 100  value 31.0    spontan
++```
++
++| Datei | Inhalt |
++| --- | --- |
++| `IEC104.jl` | Modul `IEC104`: Typen wie im Header, Funktionen für Server und Client |
++| `client.jl` | Leitstelle: verbinden, STARTDT, Generalabfrage, Werte ausgeben |
++| `server.jl` | Station: ein Messwert, spontane Meldung jede Sekunde, Befehle annehmen |
++
++`IEC104.jl` sucht die Library in dieser Reihenfolge:
++
++| Ort | Wann |
++| --- | --- |
++| Umgebungsvariable `IEC104_LIB` | z. B. `IEC104_LIB=/opt/iec104/lib/libiec104.so.0 julia app.jl` |
++| `../lib/libiec104.so.0` neben `IEC104.jl` | Aufbau des Binärpakets |
++| Suchpfad des Systems | `LD_LIBRARY_PATH` oder installiert |
++
++## 2. Eigenes Programm
++
++```julia
++include("julia/IEC104.jl")
++using .IEC104
++
++println(IEC104.version(), ", TLS: ", IEC104.tls_available())
++
++config = LinkConfig()        # Normwerte (iec104_link_config_init)
++config.t1_ms = 250_000       # Felder lassen sich ändern, z. B. lange Timer einer Gegenstelle
++```
++
++## 3. Typen
++
++Die Julia-Typen in `IEC104.jl` haben dieselben Felder in derselben Reihenfolge wie die C-Strukturen; `IEC104.jl` prüft die Größen beim Laden.
++
++| C | Julia | Hinweis |
++| --- | --- | --- |
++| `uint8_t`, `uint16_t`, `uint32_t`, `int64_t` | `UInt8`, `UInt16`, `UInt32`, `Int64` | |
++| `int`, Enums (`iec104_status`, `iec104_link_state`, …) | `Cint` | Werte als Konstanten, z. B. `IEC104.LINK_STARTED` |
++| `double` | `Float64` | |
++| `const char*` | `Cstring` | Julia-Strings werden automatisch übergeben |
++| `iec104_server*`, `iec104_client*` | `Ptr{Cvoid}` | Handle; mit `*_destroy` freigeben |
++| `iec104_link_config` | `mutable struct LinkConfig` | änderbar, als `Ref{LinkConfig}` übergeben |
++| `iec104_object`, `iec104_asdu_info`, `iec104_time` | `struct Object`, `AsduInfo`, `IecTime` | `Object(13, 100, 1.5)` = Typ, IOA, Wert |
++| `iec104_callbacks` | `mutable struct Callbacks` | Funktionszeiger aus `@cfunction` |
++| `char feld[N]` | `NTuple{N,UInt8}` | für Strukturen, die `IEC104.jl` nicht enthält |
++
++Jede Funktion des Headers lässt sich nach demselben Muster aufrufen, auch wenn `IEC104.jl` sie nicht kennt:
++
++```julia
++# iec104_status iec104_client_clock_sync(iec104_client*, uint16_t, const iec104_time*);
++t = Ref{IecTime}()
++ccall((:iec104_time_from_unix_ms, IEC104.LIB), Cint, (Int64, Ref{IecTime}),
++      round(Int64, time() * 1000), t)
++IEC104.check(ccall((:iec104_client_clock_sync, IEC104.LIB), Cint,
++                   (Ptr{Cvoid}, UInt16, Ref{IecTime}), client, 1, t))
++```
++
++`IEC104.check(status)` wirft bei einem Fehler `Iec104Error` mit dem Text aus `iec104_status_string`.
++
++## 4. Callbacks
++
++Die Library ruft Julia-Funktionen auf, während `client_poll` bzw. `server_poll` läuft. Drei Regeln:
++
++| Regel | Grund |
++| --- | --- |
++| Callbacks nur Daten speichern lassen, ausgeben und verarbeiten nach dem Poll | `println`, `sleep`, Kanäle oder `@async` können in Julia einen Taskwechsel auslösen; innerhalb eines Aufrufs aus C führt das zum Absturz („GC error“) |
++| Das Objekt hinter `user` mit `GC.@preserve` am Leben halten | C kennt nur den Zeiger, der GC sieht ihn nicht |
++| Signatur in `@cfunction` exakt wie im Header | falsche Typen fallen nicht auf, sondern lesen falsche Daten |
++
++Muster aus `client.jl`:
++
++```julia
++mutable struct ClientState
++    state::Cint
++    received::Vector{Tuple{AsduInfo,Object}}
++end
++
++function on_object(user::Ptr{Cvoid}, ::UInt32, info::Ptr{AsduInfo}, obj::Ptr{Object})::Cvoid
++    s = unsafe_pointer_to_objref(user)::ClientState
++    push!(s.received, (unsafe_load(info), unsafe_load(obj)))   # nur speichern
++    return nothing
++end
++
++st = ClientState(0, [])
++cb = Callbacks(st; on_object = @cfunction(on_object, Cvoid,
++                   (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})))
++GC.@preserve st begin
++    client = client_create(LinkConfig(), cb)
++    client_connect(client, "127.0.0.1", 2404)
++    while true
++        client_poll(client, 100)
++        for (i, o) in st.received                # hier ausgeben, rechnen, speichern
++            println("IOA $(o.ioa) = $(o.value)")
++        end
++        empty!(st.received)
++        # ... STARTDT, Abfragen, Abbruchbedingung wie in client.jl
++    end
++end
++```
++
++| Callback | Signatur für `@cfunction` | Rückgabe |
++| --- | --- | --- |
++| `on_state` | `(Ptr{Cvoid}, UInt32, Cint, Cint)` | `Cvoid` |
++| `on_object` | `(Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})` | `Cvoid` |
++| `on_command` (Server) | `(Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})` | `Cint`: 1 annehmen, 0 ablehnen |
++| `on_command_result` (Client) | `(Ptr{Cvoid}, UInt16, Ptr{Object}, Cint)` | `Cvoid` |
++| `on_asdu` | `(Ptr{Cvoid}, UInt32, Ptr{UInt8}, Csize_t)` | `Cvoid` |
++| `on_security` | `(Ptr{Cvoid}, UInt32, Cint, Cstring)` | `Cvoid` |
++
++`on_command` muss sofort entscheiden. Die Entscheidung selbst (z. B. Wertebereich prüfen) ist erlaubt, nur keine Ausgabe und kein Warten.
++
++## 5. Server
++
++Kern von `server.jl`:
++
++```julia
++server = server_create(LinkConfig(), cb)
++server_add_point(server, 1, Object(13, 100, 0.0))   # Station 1, M_ME_NC_1, Abfragegruppe 1
++server_listen(server, 2404)
++value = 0.0
++while true
++    server_poll(server, 100)                         # Abfragen beantwortet die Library selbst
++    value += 1
++    server_update(server, 1, Object(13, 100, value)) # Wert ändern und spontan senden
++end
++```
++
++## 6. Regeln
++
++| Regel | Grund |
++| --- | --- |
++| Ein Handle nur in einem Task benutzen; Poll, Senden und Auswerten in derselben Schleife | die Library hat keine Sperren (docs/05, E8) |
++| `try … finally *_destroy(handle) end` | schließt Verbindungen auch nach Strg-C oder Fehler |
++| `IEC104.jl` und Library aus derselben Version verwenden | Strukturen können sich zwischen Versionen ändern; `IEC104.jl` prüft die Größen beim Laden |
++| Typen, Ursachen und Qualitätsbits: Tabellen in `include/iec104/iec104.h` | Kommentar zu `iec104_object` |
+diff --git a/examples/julia/IEC104.jl b/examples/julia/IEC104.jl
+new file mode 100644
+index 0000000..80f21f1
+--- /dev/null
++++ b/examples/julia/IEC104.jl
+@@ -0,0 +1,178 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# IEC104.jl - thin Julia binding of the C API (include/iec104/iec104.h) via ccall.
++#
++# Only the types and functions the examples need; every other function of
++# the header is called the same way (see docs/07_Julia.md). The library is
++# taken from the environment variable IEC104_LIB (path of libiec104.so.0),
++# else from ../lib next to this file (layout of the binary package), else
++# from the normal search path (LD_LIBRARY_PATH).
++
++module IEC104
++
++export LinkConfig, IecTime, Object, AsduInfo, Callbacks, Iec104Error
++export version, tls_available, check
++export server_create, server_listen, server_port, server_add_point, server_update,
++       server_poll, server_destroy
++export client_create, client_connect, client_start, client_stop, client_poll,
++       client_interrogation, client_destroy
++
++const LIB = let packaged = normpath(joinpath(@__DIR__, "..", "lib", "libiec104.so.0"))
++    get(ENV, "IEC104_LIB", isfile(packaged) ? packaged : "libiec104.so.0")
++end
++
++# Values of the C enums used here (C enums are Cint).
++const OK = Cint(0)
++const LINK_CONNECTING = Cint(0)
++const LINK_STOPPED = Cint(1)
++const LINK_STARTED = Cint(3)
++const LINK_CLOSED = Cint(5)
++const COT_SPONTANEOUS = 0x03
++const COT_ACTIVATION_CON = 0x07
++const COT_ACTIVATION_TERMINATION = 0x0a
++const COT_INTERROGATED_STATION = 0x14
++const DEFAULT_PORT = 2404
++
++# --- Types: same field order and widths as in iec104.h -------------------
++
++"Timers, windows and ASDU profile (iec104_link_config); mutable, so fields can be changed."
++mutable struct LinkConfig
++    t0_ms::UInt32
++    t1_ms::UInt32
++    t2_ms::UInt32
++    t3_ms::UInt32
++    k::UInt16
++    w::UInt16
++    tolerant::Cint
++    cot_length::UInt8
++    ca_length::UInt8
++    ioa_length::UInt8
++    max_asdu_length::UInt8
++    originator::UInt8
++    LinkConfig() = (c = new(); ccall((:iec104_link_config_init, LIB), Cvoid, (Ref{LinkConfig},), c); c)
++end
++
++"Time tag CP56Time2a (iec104_time)."
++struct IecTime
++    year::UInt16
++    month::UInt8
++    day::UInt8
++    hour::UInt8
++    minute::UInt8
++    second::UInt8
++    millisecond::UInt16
++    day_of_week::UInt8
++    invalid::UInt8
++    summer_time::UInt8
++end
++IecTime() = IecTime(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
++
++"One information object (iec104_object)."
++struct Object
++    type::UInt8
++    ioa::UInt32
++    value::Float64
++    bits::UInt32
++    quality::UInt8
++    flags::UInt8
++    qualifier::UInt8
++    select::UInt8
++    time::IecTime
++end
++"Object of type @p type at @p ioa with @p value, everything else 0."
++Object(type::Integer, ioa::Integer, value::Real) =
++    Object(UInt8(type), UInt32(ioa), Float64(value), 0, 0, 0, 0, 0, IecTime())
++
++"Data unit identifier of a received ASDU (iec104_asdu_info)."
++struct AsduInfo
++    type::UInt8
++    cause::UInt8
++    negative::UInt8
++    test::UInt8
++    originator::UInt8
++    common_address::UInt16
++end
++
++"Callbacks (iec104_callbacks): C function pointers from @cfunction, C_NULL = not used."
++mutable struct Callbacks
++    user::Ptr{Cvoid}
++    on_asdu::Ptr{Cvoid}
++    on_state::Ptr{Cvoid}
++    on_object::Ptr{Cvoid}
++    on_command::Ptr{Cvoid}
++    on_command_result::Ptr{Cvoid}
++    on_security::Ptr{Cvoid}
++end
++"Callbacks with @p user (any mutable Julia object, kept alive by the caller) and the given pointers."
++Callbacks(user; on_asdu = C_NULL, on_state = C_NULL, on_object = C_NULL, on_command = C_NULL,
++          on_command_result = C_NULL, on_security = C_NULL) =
++    Callbacks(pointer_from_objref(user), on_asdu, on_state, on_object, on_command,
++              on_command_result, on_security)
++
++# Sizes must match the C header (checked once when the module is loaded).
++@assert sizeof(LinkConfig) == 32 && sizeof(IecTime) == 14 && sizeof(Object) == 40 &&
++        sizeof(AsduInfo) == 8 && sizeof(Callbacks) == 56
++
++# --- Status ----------------------------------------------------------------
++
++"Error of a library function; `status` is the iec104_status, `msg` its text."
++struct Iec104Error <: Exception
++    status::Cint
++    msg::String
++end
++Base.showerror(io::IO, e::Iec104Error) = print(io, "iec104: ", e.msg, " (", e.status, ")")
++
++status_string(st::Integer) = unsafe_string(ccall((:iec104_status_string, LIB), Cstring, (Cint,), st))
++
++"Throws Iec104Error unless @p st is IEC104_OK."
++check(st::Integer) = st == OK ? nothing : throw(Iec104Error(st, status_string(st)))
++
++version() = unsafe_string(ccall((:iec104_version_string, LIB), Cstring, ()))
++tls_available() = ccall((:iec104_tls_available, LIB), Cint, ()) != 0
++
++# --- Server (controlled station) ----------------------------------------------
++
++function server_create(config::LinkConfig, callbacks::Callbacks)
++    out = Ref{Ptr{Cvoid}}(C_NULL)
++    check(ccall((:iec104_server_create, LIB), Cint,
++                (Ref{LinkConfig}, Ref{Callbacks}, Ref{Ptr{Cvoid}}), config, callbacks, out))
++    return out[]
++end
++server_listen(s, port::Integer; address = C_NULL) =
++    check(ccall((:iec104_server_listen, LIB), Cint, (Ptr{Cvoid}, Cstring, UInt16), s, address, port))
++server_port(s) = Int(ccall((:iec104_server_port, LIB), UInt16, (Ptr{Cvoid},), s))
++server_add_point(s, station::Integer, o::Object, groups::Integer = 1) =
++    check(ccall((:iec104_server_add_point, LIB), Cint, (Ptr{Cvoid}, UInt16, Ref{Object}, UInt16),
++                s, station, o, groups))
++"Changes a value and sends it spontaneously (buffered per redundancy group)."
++server_update(s, station::Integer, o::Object) =
++    ccall((:iec104_server_update, LIB), Cint, (Ptr{Cvoid}, UInt16, Ref{Object}), s, station, o)
++"Receive, timers, answers, callbacks; waits at most @p timeout_ms."
++server_poll(s, timeout_ms::Integer = 100) =
++    ccall((:iec104_server_poll, LIB), Cint, (Ptr{Cvoid}, Cint), s, timeout_ms)
++server_destroy(s) = ccall((:iec104_server_destroy, LIB), Cvoid, (Ptr{Cvoid},), s)
++
++# --- Client (controlling station) -----------------------------------------------
++
++function client_create(config::LinkConfig, callbacks::Callbacks)
++    out = Ref{Ptr{Cvoid}}(C_NULL)
++    check(ccall((:iec104_client_create, LIB), Cint,
++                (Ref{LinkConfig}, Ref{Callbacks}, Ref{Ptr{Cvoid}}), config, callbacks, out))
++    return out[]
++end
++client_connect(c, host::AbstractString, port::Integer) =
++    check(ccall((:iec104_client_connect, LIB), Cint, (Ptr{Cvoid}, Cstring, UInt16), c, host, port))
++client_start(c) = check(ccall((:iec104_client_start, LIB), Cint, (Ptr{Cvoid},), c))
++client_stop(c) = check(ccall((:iec104_client_stop, LIB), Cint, (Ptr{Cvoid},), c))
++client_poll(c, timeout_ms::Integer = 100) =
++    ccall((:iec104_client_poll, LIB), Cint, (Ptr{Cvoid}, Cint), c, timeout_ms)
++"General interrogation of @p station; @p qoi 20 = all points, 21..36 = group 1..16."
++client_interrogation(c, station::Integer, qoi::Integer = 20) =
++    check(ccall((:iec104_client_interrogation, LIB), Cint, (Ptr{Cvoid}, UInt16, UInt8),
++                c, station, qoi))
++client_destroy(c) = ccall((:iec104_client_destroy, LIB), Cvoid, (Ptr{Cvoid},), c)
++
++end # module
+diff --git a/examples/julia/client.jl b/examples/julia/client.jl
+new file mode 100644
+index 0000000..13a779e
+--- /dev/null
++++ b/examples/julia/client.jl
+@@ -0,0 +1,80 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# client.jl - IEC 104 client (controlling station) in Julia.
++#
++# Connects, starts data transfer, sends a general interrogation to station 1,
++# prints every object and ends after the interrogation and three spontaneous
++# values.
++#
++#   julia client.jl [host] [port]
++
++include(joinpath(@__DIR__, "IEC104.jl"))
++using .IEC104
++
++"What the callbacks collect (passed to C as `user`)."
++mutable struct ClientState
++    state::Cint
++    reason::Cint
++    received::Vector{Tuple{AsduInfo,Object}}
++end
++
++# Callbacks run inside client_poll(), called from C: they only store data.
++# No println, no sleep, no task switch here; that would corrupt Julia's stack.
++function on_state(user::Ptr{Cvoid}, ::UInt32, state::Cint, reason::Cint)::Cvoid
++    s = unsafe_pointer_to_objref(user)::ClientState
++    s.state = state
++    s.reason = reason
++    return nothing
++end
++
++function on_object(user::Ptr{Cvoid}, ::UInt32, info::Ptr{AsduInfo}, obj::Ptr{Object})::Cvoid
++    s = unsafe_pointer_to_objref(user)::ClientState
++    push!(s.received, (unsafe_load(info), unsafe_load(obj)))
++    return nothing
++end
++
++function main(host = "127.0.0.1", port = IEC104.DEFAULT_PORT)
++    st = ClientState(IEC104.LINK_CONNECTING, 0, Tuple{AsduInfo,Object}[])
++    cb = Callbacks(st;
++        on_state = @cfunction(on_state, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cint)),
++        on_object = @cfunction(on_object, Cvoid, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})))
++    config = LinkConfig()          # standard values; e.g. config.t1_ms = 250_000 for long timers
++    GC.@preserve st begin          # st is reached from C through `user`
++        client = client_create(config, cb)
++        try
++            client_connect(client, host, port)
++            started = interrogated = done = false
++            spontaneous = 0
++            while st.state != IEC104.LINK_CLOSED && !(done && spontaneous >= 3)
++                client_poll(client, 100)            # callbacks run inside
++                for (i, o) in st.received           # now print what arrived
++                    println("type $(i.type)  cause $(i.cause)  station $(i.common_address)  ",
++                            "IOA $(o.ioa)  value $(o.value)")
++                    i.type == 100 && i.cause == IEC104.COT_ACTIVATION_TERMINATION && (done = true)
++                    i.cause == IEC104.COT_SPONTANEOUS && (spontaneous += 1)
++                end
++                empty!(st.received)
++                if st.state == IEC104.LINK_STOPPED && !started
++                    client_start(client)            # STARTDT
++                    started = true
++                elseif st.state == IEC104.LINK_STARTED && !interrogated
++                    client_interrogation(client, 1) # station 1, all points
++                    interrogated = true
++                end
++            end
++            st.state == IEC104.LINK_CLOSED && println("connection closed, reason ", st.reason)
++            return st.state != IEC104.LINK_CLOSED
++        finally
++            client_destroy(client)
++        end
++    end
++end
++
++if abspath(PROGRAM_FILE) == @__FILE__
++    host = get(ARGS, 1, "127.0.0.1")
++    port = parse(Int, get(ARGS, 2, string(IEC104.DEFAULT_PORT)))
++    exit(main(host, port) ? 0 : 1)
++end
+diff --git a/examples/julia/server.jl b/examples/julia/server.jl
+new file mode 100644
+index 0000000..3eb542b
+--- /dev/null
++++ b/examples/julia/server.jl
+@@ -0,0 +1,63 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# server.jl - IEC 104 server (controlled station) in Julia.
++#
++# Station 1 with a measured value at IOA 100 (short float). The value rises
++# every second and is sent spontaneously; the library answers a general
++# interrogation by itself. Commands are printed and accepted.
++#
++#   julia server.jl [port] [seconds]
++
++include(joinpath(@__DIR__, "IEC104.jl"))
++using .IEC104
++
++mutable struct ServerState
++    commands::Vector{Tuple{UInt32,AsduInfo,Object}}
++end
++
++# Runs inside server_poll(), called from C: decide and store, print later.
++function on_command(user::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd::Ptr{Object})::Cint
++    s = unsafe_pointer_to_objref(user)::ServerState
++    push!(s.commands, (conn, unsafe_load(info), unsafe_load(cmd)))
++    return Cint(1)   # 1 = accept (positive confirmation), 0 = reject
++end
++
++function main(port = IEC104.DEFAULT_PORT, seconds = 0)
++    st = ServerState(Tuple{UInt32,AsduInfo,Object}[])
++    cb = Callbacks(st;
++        on_command = @cfunction(on_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})))
++    GC.@preserve st begin
++        server = server_create(LinkConfig(), cb)
++        try
++            value = 0.0
++            server_add_point(server, 1, Object(13, 100, value))   # M_ME_NC_1, group 1
++            server_listen(server, port)
++            println("listening on port ", server_port(server))
++            t_end = seconds > 0 ? time() + seconds : Inf
++            next = time() + 1
++            while time() < t_end
++                server_poll(server, 100)
++                for (conn, i, c) in st.commands
++                    println("connection $conn: command type $(i.type), IOA $(c.ioa), value $(c.value)")
++                end
++                empty!(st.commands)
++                if time() >= next                                # once per second
++                    value += 1
++                    server_update(server, 1, Object(13, 100, value))
++                    next += 1
++                end
++            end
++        finally
++            server_destroy(server)
++        end
++    end
++end
++
++if abspath(PROGRAM_FILE) == @__FILE__
++    port = parse(Int, get(ARGS, 1, string(IEC104.DEFAULT_PORT)))
++    seconds = parse(Int, get(ARGS, 2, "0"))
++    main(port, seconds)
++end
+diff --git a/include/iec104/iec104.h b/include/iec104/iec104.h
+index 79224b1..57b32de 100644
+--- a/include/iec104/iec104.h
++++ b/include/iec104/iec104.h
+@@ -61,7 +61,7 @@ extern "C" {
+ /** @brief Major version of this header. Incompatible API changes increment it. */
+ #define IEC104_VERSION_MAJOR 0
+ /** @brief Minor version of this header. Compatible additions increment it. */
+-#define IEC104_VERSION_MINOR 3
++#define IEC104_VERSION_MINOR 4
+ /** @brief Patch version of this header. Fixes without API change increment it. */
+ #define IEC104_VERSION_PATCH 0
+ 
+@@ -604,6 +604,13 @@ IEC104_API iec104_status iec104_server_send_asdu(iec104_server* server, uint32_t
+ IEC104_API size_t iec104_server_connection_count(const iec104_server* server);
+ 
+ /** @brief Behaviour of the server's application layer. */
++/** @brief What happens when an event arrives at a full event buffer. */
++/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
++typedef enum iec104_overflow {
++    IEC104_OVERFLOW_DROP_OLDEST = 0, /**< The oldest event is dropped (default). */
++    IEC104_OVERFLOW_REJECT = 1       /**< The new event is rejected: IEC104_ERR_WOULD_BLOCK. */
++} iec104_overflow;
++
+ typedef struct iec104_server_options {
+     /** 1 (default) = send end of initialization (type 70, cause 4) on the first STARTDT
+      *  of every connection after the server was created. */
+@@ -615,15 +622,98 @@ typedef struct iec104_server_options {
+     /** Maximum age in ms of a command with time tag (58..64, 107) against the server's
+      *  UTC clock; older commands are discarded without answer. 0 (default) = no check. */
+     uint32_t max_command_delay_ms;
++    /** Event buffer of a connection without configured redundancy groups (see
++     *  iec104_server_add_group()): events while the connection is stopped, and
++     *  sent but unacknowledged ones. Default 1000; set before listen. */
++    uint32_t event_buffer_size;
++    /** Behaviour of that buffer when it is full; default IEC104_OVERFLOW_DROP_OLDEST. */
++    iec104_overflow overflow;
+ } iec104_server_options;
+ 
+ /** @brief Fills @p options with the defaults. Does nothing for NULL. */
+ IEC104_API void iec104_server_options_init(iec104_server_options* options);
+ 
+-/** @brief Applies options. @return IEC104_OK or IEC104_ERR_INVALID_ARGUMENT for NULL. */
++/**
++ * @brief Applies options.
++ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL; IEC104_ERR_OUT_OF_RANGE
++ *         for an event buffer size outside 1..IEC104_MAX_EVENT_BUFFER.
++ */
+ IEC104_API iec104_status iec104_server_set_options(iec104_server* server,
+                                                    const iec104_server_options* options);
+ 
++/* Redundancy groups (edition 2, clause 10) -------------------------------- */
++
++/** @brief Most addresses of controlling stations in one group. */
++#define IEC104_GROUP_MAX_PEERS 8
++/** @brief Size of an address text in ::iec104_group_config, including the NUL. */
++#define IEC104_ADDRESS_SIZE 64
++/** @brief Largest event buffer of a group. */
++#define IEC104_MAX_EVENT_BUFFER 1000000
++
++/**
++ * @brief Settings of a redundancy group.
++ *
++ * The connections of one controlling station form a group. Only one of them
++ * transfers data (the one started last with STARTDT); the others stand by in
++ * STOPDT. Spontaneous data goes into the group's event buffer and stays
++ * there until the active connection has acknowledged it. After a break or a
++ * switch-over, unacknowledged events are sent again on the next active
++ * connection (they may arrive twice, but are not lost).
++ */
++typedef struct iec104_group_config {
++    /** IP addresses of the controlling station ("192.0.2.10", "2001:db8::1");
++     *  all empty = any address (only one such group is used). */
++    /* NOLINTNEXTLINE(*-avoid-c-arrays): C header */
++    char peers[IEC104_GROUP_MAX_PEERS][IEC104_ADDRESS_SIZE];
++    uint32_t buffer_size;     /**< Events in the buffer, default 1000. */
++    iec104_overflow overflow; /**< Default IEC104_OVERFLOW_DROP_OLDEST. */
++} iec104_group_config;
++
++/** @brief Defaults: any address, 1000 events, drop oldest. Does nothing for NULL. */
++IEC104_API void iec104_group_config_init(iec104_group_config* config);
++
++/**
++ * @brief Adds a redundancy group (before iec104_server_listen()).
++ *
++ * With groups, a new connection joins the group that lists its address, or
++ * else the group open to any address; without such a group it is rejected
++ * at once (logged as warning). Without any group, every connection is a
++ * group of its own (buffer from ::iec104_server_options).
++ *
++ * @param group Receives the id of the group (1, 2, ...); may be NULL.
++ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL or an address
++ *         without NUL; IEC104_ERR_OUT_OF_RANGE for a buffer size outside
++ *         1..IEC104_MAX_EVENT_BUFFER; IEC104_ERR_WRONG_STATE after listen.
++ */
++IEC104_API iec104_status iec104_server_add_group(iec104_server* server,
++                                                 const iec104_group_config* config,
++                                                 uint32_t* group);
++
++/** @brief State and counters of a redundancy group. */
++typedef struct iec104_group_stats {
++    uint32_t active_connection; /**< Connection that transfers data, 0 = none. */
++    uint32_t connections;       /**< Connections in the group. */
++    uint32_t buffered;          /**< Events in the buffer. */
++    uint32_t in_flight;         /**< ... of them sent, not yet acknowledged. */
++    uint64_t events;            /**< Events put into the buffer. */
++    uint64_t dropped;           /**< Events dropped because the buffer was full. */
++    uint64_t rejected;          /**< Events rejected because the buffer was full. */
++    uint64_t resent;            /**< Sent events queued again after a stop or break. */
++    uint64_t switchovers;       /**< Changes of the active connection to another one. */
++} iec104_group_stats;
++
++/**
++ * @brief Counters of a group.
++ * @return IEC104_OK; IEC104_ERR_WRONG_STATE if the group does not exist (a
++ *         connection's own group ends with the connection).
++ */
++IEC104_API iec104_status iec104_server_get_group_stats(const iec104_server* server, uint32_t group,
++                                                       iec104_group_stats* out);
++
++/** @brief Group of a connection, 0 if the connection does not exist. */
++IEC104_API uint32_t iec104_server_connection_group(const iec104_server* server,
++                                                   uint32_t connection);
++
+ /**
+  * @brief Adds a data point to the server's process image (or replaces it).
+  *
+@@ -882,6 +972,9 @@ IEC104_API iec104_status iec104_client_get_tls_info(const iec104_client* client,
+ /* Configuration file                                                        */
+ /* ------------------------------------------------------------------------- */
+ 
++/** @brief Most redundancy groups in a configuration file. */
++#define IEC104_CONFIG_MAX_GROUPS 8
++
+ /** @brief Everything a configuration file can set. */
+ typedef struct iec104_config {
+     iec104_link_config link;      /**< Timers, windows, ASDU profile. */
+@@ -891,6 +984,9 @@ typedef struct iec104_config {
+     uint16_t port;                /**< TCP port. */
+     int use_tls;                  /**< 1: apply @p tls with *_set_tls(). */
+     iec104_tls_config tls;        /**< TLS settings. */
++    /** Redundancy groups of a server, for iec104_server_add_group(). */
++    iec104_group_config groups[IEC104_CONFIG_MAX_GROUPS];
++    uint32_t group_count; /**< Used entries of @p groups. */
+ } iec104_config;
+ 
+ /** @brief Defaults of all parts (standard values, host "", port 2404). Does nothing for NULL. */
+@@ -910,6 +1006,8 @@ IEC104_API void iec104_config_init(iec104_config* config);
+  * | cot_length, ca_length, ioa_length, max_asdu_length, originator | link (ASDU profile) |
+  * | send_end_of_init, command_termination, cause_of_init | server |
+  * | max_command_delay | server (s) |
++ * | event_buffer_size, overflow ("drop_oldest", "reject") | server; also for the groups |
++ * | group | one redundancy group per line: addresses separated by blanks or commas, "*" = any |
+  * | confirmation_timeout, termination_timeout, expect_termination | client (s) |
+  * | tls | use_tls |
+  * | tls_ca, tls_certificate, tls_key, tls_crl | tls (files) |
+diff --git a/packaging/README-binary.md b/packaging/README-binary.md
+new file mode 100644
+index 0000000..bb1f417
+--- /dev/null
++++ b/packaging/README-binary.md
+@@ -0,0 +1,54 @@
++# IEC 60870-5-104 Library @VERSION@ – fertig gebaut
++
++Geteilte Library für Linux x86-64 (Release, mit TLS).
++
++| Datei | Inhalt |
++| --- | --- |
++| `lib/libiec104.so.0` | Library |
++| `include/iec104/iec104.h` | C-Schnittstelle mit Beschreibung jeder Funktion |
++| `LICENSES/` | Lizenzen: Header Apache-2.0, Library proprietär |
++| `julia/` | Anbindung für Julia (`IEC104.jl`) mit Client- und Server-Beispiel |
++
++## Voraussetzungen
++
++| | Mindestens | Beispiele |
++| --- | --- | --- |
++| glibc | 2.34 | AlmaLinux/RHEL 9, Ubuntu 22.04, Debian 12, WSL2 mit diesen |
++| libstdc++ | GCC 11 | wie oben |
++| OpenSSL | 3.0 (`libssl.so.3`) | Paket `openssl-libs` bzw. `libssl3` |
++
++Prüfen: `ldd lib/libiec104.so.0` darf kein `not found` zeigen.
++
++## Übersetzen und starten
++
++```bash
++gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app
++./meine_app
++```
++
++`-Wl,-rpath,'$ORIGIN/lib'` lässt das Programm die Library in `lib/` neben sich finden. Liegt sie woanders: `LD_LIBRARY_PATH=/pfad/zu/lib ./meine_app`.
++
++Mit `-liec104` statt Dateiname einmalig einen Link anlegen: `ln -s libiec104.so.0 lib/libiec104.so`, dann `gcc -Iinclude meine_app.c -Llib -liec104 …`.
++
++## Kleinstes Programm
++
++```c
++#include <iec104/iec104.h>
++#include <stdio.h>
++
++int main(void) {
++    printf("iec104 %s, TLS %s\n", iec104_version_string(), iec104_tls_available() ? "ja" : "nein");
++    return 0;
++}
++```
++
++## Julia
++
++```bash
++julia julia/server.jl 2404 &          # Station 1, Messwert IOA 100, steigt jede Sekunde
++julia julia/client.jl 127.0.0.1 2404  # Generalabfrage, drei spontane Werte
++```
++
++`IEC104.jl` findet die Library in `lib/` von selbst. Anleitung: `docs/07_Julia.md` im Quellpaket.
++
++Server und Client mit Messwerten, Befehlen, Redundanz und TLS: Anleitung `docs/06_Anleitung.md` im Quellpaket `iec104-@VERSION@.zip`.
+diff --git a/src/api/config.cpp b/src/api/config.cpp
+index 9009281..dea05b5 100644
+--- a/src/api/config.cpp
++++ b/src/api/config.cpp
+@@ -124,6 +124,39 @@ iec104_status parse_whole_seconds(const std::string& text, std::uint32_t& out) {
+     return parse_small(text, 7UL * 24UL * 3600UL, out); // at most one week
+ }
+ 
++/** @brief "group = 192.0.2.10, 192.0.2.11" or "group = *": appends a redundancy group. */
++iec104_status parse_group(const std::string& value, iec104_config& c) {
++    if (c.group_count >= IEC104_CONFIG_MAX_GROUPS) {
++        return IEC104_ERR_OUT_OF_RANGE;
++    }
++    iec104_group_config g{};
++    iec104_group_config_init(&g);
++    std::size_t n = 0;
++    std::size_t pos = 0;
++    while (pos < value.size()) {
++        const std::size_t end = value.find_first_of(" \t,", pos);
++        const std::string address =
++            value.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
++        pos = end == std::string::npos ? value.size() : end + 1U;
++        if (address.empty() || address == "*") {
++            continue;
++        }
++        if (n >= IEC104_GROUP_MAX_PEERS) {
++            return IEC104_ERR_OUT_OF_RANGE;
++        }
++        const iec104_status st = parse_text(address, g.peers[n]);
++        if (st != IEC104_OK) {
++            return st;
++        }
++        ++n;
++    }
++    if (n == 0U && value != "*") {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    c.groups[c.group_count++] = g;
++    return IEC104_OK;
++}
++
+ /** @brief Applies one TLS key ("tls_..."); IEC104_ERR_INVALID_ARGUMENT for an unknown key. */
+ iec104_status apply_tls(const std::string& key, const std::string& value, const std::string& base,
+                         iec104_tls_config& t) {
+@@ -178,6 +211,46 @@ iec104_status apply_tls(const std::string& key, const std::string& value, const
+     return IEC104_ERR_INVALID_ARGUMENT;
+ }
+ 
++/** @brief Applies one key of the server or client options; INVALID_ARGUMENT for an unknown key. */
++iec104_status apply_station(const std::string& key, const std::string& value, iec104_config& c) {
++    if (key == "send_end_of_init") {
++        return parse_flag(value, c.server.send_end_of_init);
++    }
++    if (key == "command_termination") {
++        return parse_flag(value, c.server.command_termination);
++    }
++    if (key == "cause_of_init") {
++        return parse_small(value, 127, c.server.cause_of_init);
++    }
++    if (key == "event_buffer_size") {
++        return parse_small(value, IEC104_MAX_EVENT_BUFFER, c.server.event_buffer_size);
++    }
++    if (key == "overflow") {
++        if (value == "drop_oldest" || value == "reject") {
++            c.server.overflow =
++                value == "reject" ? IEC104_OVERFLOW_REJECT : IEC104_OVERFLOW_DROP_OLDEST;
++            return IEC104_OK;
++        }
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    if (key == "group") {
++        return parse_group(value, c);
++    }
++    if (key == "max_command_delay") {
++        return parse_seconds(value, c.server.max_command_delay_ms);
++    }
++    if (key == "confirmation_timeout") {
++        return parse_seconds(value, c.client.confirmation_timeout_ms);
++    }
++    if (key == "termination_timeout") {
++        return parse_seconds(value, c.client.termination_timeout_ms);
++    }
++    if (key == "expect_termination") {
++        return parse_flag(value, c.client.expect_termination);
++    }
++    return IEC104_ERR_INVALID_ARGUMENT;
++}
++
+ /** @brief Applies one key; IEC104_ERR_INVALID_ARGUMENT for an unknown key. */
+ iec104_status apply(const std::string& key, const std::string& value, const std::string& base,
+                     iec104_config& c) {
+@@ -230,28 +303,7 @@ iec104_status apply(const std::string& key, const std::string& value, const std:
+     if (key == "originator") {
+         return parse_small(value, 255, l.originator);
+     }
+-    if (key == "send_end_of_init") {
+-        return parse_flag(value, c.server.send_end_of_init);
+-    }
+-    if (key == "command_termination") {
+-        return parse_flag(value, c.server.command_termination);
+-    }
+-    if (key == "cause_of_init") {
+-        return parse_small(value, 127, c.server.cause_of_init);
+-    }
+-    if (key == "max_command_delay") {
+-        return parse_seconds(value, c.server.max_command_delay_ms);
+-    }
+-    if (key == "confirmation_timeout") {
+-        return parse_seconds(value, c.client.confirmation_timeout_ms);
+-    }
+-    if (key == "termination_timeout") {
+-        return parse_seconds(value, c.client.termination_timeout_ms);
+-    }
+-    if (key == "expect_termination") {
+-        return parse_flag(value, c.client.expect_termination);
+-    }
+-    return IEC104_ERR_INVALID_ARGUMENT;
++    return apply_station(key, value, c);
+ }
+ 
+ } // namespace
+@@ -307,6 +359,11 @@ iec104_status iec104_config_load(const char* path, iec104_config* config, int* e
+             return st;
+         }
+     }
++    // Groups take the buffer settings of the file, wherever they stand in it.
++    for (std::uint32_t i = 0; i < c.group_count; ++i) {
++        c.groups[i].buffer_size = c.server.event_buffer_size;
++        c.groups[i].overflow = c.server.overflow;
++    }
+     *config = c;
+     return IEC104_OK;
+ }
+diff --git a/src/api/server.cpp b/src/api/server.cpp
+index 291cda8..fddf455 100644
+--- a/src/api/server.cpp
++++ b/src/api/server.cpp
+@@ -16,15 +16,25 @@
+  * confirms by itself. Requests (interrogation, commands, ...) are answered
+  * by the session (src/session/server_session.hpp).
+  *
++ * Spontaneous data (iec104_server_update(), iec104_server_send() to all)
++ * goes through the event buffer of a redundancy group
++ * (src/session/redundancy_group.hpp): every connection belongs to one group,
++ * only the active connection of a group receives the events, and an event
++ * stays buffered until the peer has acknowledged it. Without groups added by
++ * the application, every connection is a group of its own.
++ *
+  * Layer: API.
+  */
+ #include "api/link_common.hpp"
+ #include "api/values.hpp"
+ #include "session/command_table.hpp"
+ #include "session/process_image.hpp"
++#include "session/redundancy_group.hpp"
+ #include "session/server_session.hpp"
+ 
+ #include <array>
++#include <cstring>
++#include <deque>
+ #include <map>
+ #include <new>
+ #include <poll.h>
+@@ -34,19 +44,66 @@ using namespace iec104;
+ 
+ namespace {
+ 
+-/** @brief Lets a session send over a TCP link. */
++constexpr std::uint8_t kCotPeriodic = 1;
++constexpr std::uint8_t kCotBackground = 2;
++
++/** @brief Application layer of one connection plus what its unacknowledged I-frames carry. */
++struct Peer {
++    explicit Peer(session::ServerSession s) noexcept : session(std::move(s)) {}
++    session::ServerSession session;
++    // One entry per sent, unacknowledged I-frame, oldest first: the id of
++    // the buffered event it carried, 0 for anything else. Acknowledgements
++    // (N(R)) are counted, so every I-frame of the link must be recorded.
++    std::deque<std::uint64_t> in_flight;
++    session::RedundancyGroup* group{nullptr};
++    std::uint32_t group_id{0};
++};
++
++/** @brief Sends an ASDU on @p link and records the I-frame for @p peer. */
++iec104_status transmit(transport::Link& link, Peer& peer, const std::uint8_t* asdu,
++                       std::size_t length) noexcept {
++    const iec104_status st = link.send_asdu(asdu, length, transport::monotonic_ms());
++    if (st == IEC104_OK) {
++        peer.in_flight.push_back(0);
++    }
++    return st;
++}
++
++/** @brief Lets a session send over a link; marks buffered events as sent. */
+ class LinkSender : public session::AsduSender {
+   public:
+-    explicit LinkSender(transport::Link& link) noexcept : link_(link) {}
++    LinkSender(transport::Link& link, Peer& peer) noexcept : link_(link), peer_(peer) {}
+     bool can_send() override { return link_.can_send(); }
+     iec104_status send(const std::uint8_t* asdu, std::size_t length) override {
+-        return link_.send_asdu(asdu, length, transport::monotonic_ms());
++        return transmit(link_, peer_, asdu, length);
++    }
++    void sent_event(std::uint64_t id) override {
++        if (!peer_.in_flight.empty()) {
++            peer_.in_flight.back() = id; // the I-frame just recorded by send()
++        }
++        if (peer_.group != nullptr) {
++            peer_.group->sent(id);
++        }
+     }
+ 
+   private:
+     transport::Link& link_;
++    Peer& peer_;
+ };
+ 
++/** @brief IP address of a peer address "ip:port" / "[ipv6]:port" (IPv4-mapped as IPv4). */
++std::string address_of(const std::string& peer) {
++    std::string ip = peer.substr(0, peer.rfind(':'));
++    if (ip.size() >= 2U && ip.front() == '[' && ip.back() == ']') {
++        ip = ip.substr(1, ip.size() - 2U);
++    }
++    const std::string mapped = "::ffff:";
++    if (ip.compare(0, mapped.size(), mapped) == 0 && ip.find('.') != std::string::npos) {
++        ip = ip.substr(mapped.size());
++    }
++    return ip;
++}
++
+ } // namespace
+ 
+ struct iec104_server : api::CallbackSink, session::CommandHandler, session::SessionObserver {
+@@ -61,13 +118,22 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
+     transport::Socket listener;
+     std::shared_ptr<transport::TlsContext> tls; // NULL = plain TCP; for new connections
+     std::vector<std::unique_ptr<transport::Link>> links;
+-    std::map<std::uint32_t, session::ServerSession> sessions;
++    std::map<std::uint32_t, Peer> peers;
+     session::ProcessImage image;
+     session::CommandTable commands;
+     session::SessionOptions options;
+     std::uint32_t next_id{1};
+     std::uint32_t current_connection{0}; // connection of the request being handled
+ 
++    // Redundancy groups by id. Groups added by the application live as long
++    // as the server; without them every connection gets a group of its own
++    // (same id space), which ends with the connection.
++    std::map<std::uint32_t, std::unique_ptr<session::RedundancyGroup>> groups;
++    bool configured_groups{false};
++    std::uint32_t next_group{1};
++    session::GroupConfig own_group; // settings of a connection's own group (server options)
++    std::map<std::uint32_t, bool> overflowing; // group id -> buffer full reported
++
+     transport::Link* find(std::uint32_t id) noexcept {
+         for (auto& link : links) {
+             if (link->id() == id) {
+@@ -84,41 +150,184 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
+             if (transport::accept_tcp(listener, s) != IEC104_OK) {
+                 return;
+             }
++            const std::string from = transport::peer_address(s);
++            const std::uint32_t group = assign_group(address_of(from));
++            if (group == 0U) {
++                // Not a controlling station of any group (also an address allow-list).
++                logger().write(IEC104_LOG_WARNING, 0,
++                               "connection from " + from +
++                                   " rejected: not in any redundancy group");
++                continue; // the socket closes here
++            }
+             auto link = std::make_unique<transport::Link>();
+             if (link->init_accepted(next_id, config, std::move(s), transport::monotonic_ms(),
+-                                    tls) == IEC104_OK) {
+-                link->set_trace(this);
+-                logger().write(IEC104_LOG_INFO, next_id,
+-                               "connection accepted from " + link->peer());
+-                sessions.emplace(next_id, session::ServerSession(profile, originator));
+-                ++next_id;
+-                links.push_back(std::move(link));
++                                    tls) != IEC104_OK) {
++                drop_own_group(group);
++                continue;
+             }
++            link->set_trace(this);
++            logger().write(IEC104_LOG_INFO, next_id,
++                           "connection accepted from " + from +
++                               (configured_groups ? ", group " + std::to_string(group) : ""));
++            Peer& peer = peers.emplace(next_id, Peer(session::ServerSession(profile, originator)))
++                             .first->second;
++            peer.group = groups.at(group).get();
++            peer.group_id = group;
++            peer.group->join(next_id);
++            ++next_id;
++            links.push_back(std::move(link));
+         }
+     }
+ 
+     // Sends what the sessions have queued, as far as the windows allow.
+     void pump_all() noexcept {
+         for (auto& link : links) {
+-            const auto it = sessions.find(link->id());
+-            if (it != sessions.end() && !link->closed()) {
+-                LinkSender sender(*link);
+-                it->second.pump(sender);
++            const auto it = peers.find(link->id());
++            if (it != peers.end() && !link->closed()) {
++                LinkSender sender(*link, it->second);
++                it->second.session.pump(sender);
++            }
++        }
++    }
++
++    // --- Redundancy groups ----------------------------------------------------
++
++    // Group of a new connection from @p address; 0 = reject.
++    std::uint32_t assign_group(const std::string& address) {
++        if (!configured_groups) {
++            const std::uint32_t id = next_group++;
++            groups.emplace(id, std::make_unique<session::RedundancyGroup>(own_group));
++            return id;
++        }
++        // An explicit address match wins over a group open to any address.
++        std::uint32_t any = 0;
++        for (const auto& [id, group] : groups) {
++            if (group->config().peers.empty()) {
++                any = any != 0U ? any : id;
++            } else if (group->accepts(address)) {
++                return id;
++            }
++        }
++        return any;
++    }
++
++    // Removes the own group of a connection that is gone.
++    void drop_own_group(std::uint32_t group) {
++        if (!configured_groups) {
++            groups.erase(group);
++            overflowing.erase(group);
++        }
++    }
++
++    // Hands the buffered events of @p group to its active connection.
++    void deliver(std::uint32_t group_id, session::RedundancyGroup& group) {
++        const std::uint32_t active = group.active();
++        const auto it = peers.find(active);
++        if (it == peers.end()) {
++            return;
++        }
++        const std::vector<const session::BufferedEvent*> events = group.queue_on_active();
++        for (const session::BufferedEvent* e : events) {
++            it->second.session.enqueue_event(e->asdu.data(), e->asdu.size(), e->id);
++        }
++        logger().write(IEC104_LOG_INFO, active,
++                       "group " + std::to_string(group_id) + ": active, " +
++                           std::to_string(events.size()) + " buffered events");
++    }
++
++    // Takes the queued events of @p connection back into its group.
++    void withdraw(std::uint32_t connection) {
++        const auto it = peers.find(connection);
++        if (it != peers.end()) {
++            it->second.session.drop_events();
++        }
++    }
++
++    // Puts an event into every group (spontaneous data to all connections).
++    iec104_status publish(const std::uint8_t* asdu, std::size_t length, std::uint8_t cause) {
++        if (groups.empty()) {
++            return IEC104_ERR_WRONG_STATE; // nobody to send to, nothing to keep
++        }
++        // Cyclic and background data are not buffered: only the active connections get them.
++        // TODO(norm): clause 10, which causes are buffered.
++        if (cause == kCotPeriodic || cause == kCotBackground) {
++            bool sent = false;
++            for (const auto& [id, group] : groups) {
++                const auto it = peers.find(group->active());
++                if (it != peers.end()) {
++                    sent = it->second.session.enqueue(asdu, length) == IEC104_OK || sent;
++                }
++            }
++            return sent ? IEC104_OK : IEC104_ERR_WRONG_STATE;
++        }
++        bool rejected = false;
++        for (const auto& [id, group] : groups) {
++            rejected = add_event(id, *group, asdu, length) != IEC104_OK || rejected;
++        }
++        return rejected ? IEC104_ERR_WOULD_BLOCK : IEC104_OK;
++    }
++
++    // Puts an event into one group and queues it on the group's active connection.
++    iec104_status add_event(std::uint32_t id, session::RedundancyGroup& group,
++                            const std::uint8_t* asdu, std::size_t length) {
++        const session::RedundancyGroup::Added a = group.add(asdu, length);
++        if (a.dropped && a.dropped_queued_on != 0U) {
++            const auto it = peers.find(a.dropped_queued_on);
++            if (it != peers.end()) {
++                it->second.session.drop_event(a.dropped_id);
+             }
+         }
++        if (a.status != IEC104_OK || a.dropped) {
++            report_overflow(id, group);
++        }
++        if (a.status != IEC104_OK) {
++            return a.status;
++        }
++        const auto it = peers.find(group.active());
++        if (it != peers.end()) {
++            for (const session::BufferedEvent* e : group.queue_on_active()) {
++                it->second.session.enqueue_event(e->asdu.data(), e->asdu.size(), e->id);
++            }
++        }
++        return IEC104_OK;
++    }
++
++    void report_overflow(std::uint32_t id, const session::RedundancyGroup& group) {
++        bool& reported = overflowing[id];
++        if (!reported) {
++            reported = true;
++            logger().write(IEC104_LOG_WARNING, group.active(),
++                           "group " + std::to_string(id) + ": event buffer full (" +
++                               std::to_string(group.config().capacity) + "), " +
++                               (group.config().overflow == session::Overflow::DropOldest
++                                    ? "oldest events dropped"
++                                    : "new events rejected"));
++        }
++    }
++
++    void check_overflow_end(std::uint32_t id, const session::RedundancyGroup& group) {
++        const auto it = overflowing.find(id);
++        if (it != overflowing.end() && it->second &&
++            group.stats().buffered < group.config().capacity) {
++            it->second = false;
++            const session::GroupStats st = group.stats();
++            logger().write(IEC104_LOG_INFO, group.active(),
++                           "group " + std::to_string(id) + ": event buffer has room again (" +
++                               std::to_string(st.dropped + st.rejected) + " events lost so far)");
++        }
+     }
+ 
+     // --- LinkSink: events of the links --------------------------------------
+ 
+     void on_asdu(std::uint32_t id, const std::uint8_t* asdu, std::size_t length) override {
+         api::CallbackSink::on_asdu(id, asdu, length);
+-        const auto it = sessions.find(id);
++        const auto it = peers.find(id);
+         current_connection = id;
+         const session::StationContext station{
+             &image, &commands, &options,
+             session::SessionClock{transport::monotonic_ms(), transport::utc_ms()}, this};
+         const bool handled =
+-            it != sessions.end() && it->second.handle(asdu, length, station, *this);
++            it != peers.end() && it->second.session.handle(asdu, length, station, *this);
+         current_connection = 0;
+         if (!handled) {
+             deliver_objects(id, asdu, length, profile);
+@@ -127,16 +336,69 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
+ 
+     void on_state(std::uint32_t id, apci::State state) override {
+         api::CallbackSink::on_state(id, state);
+-        const auto it = sessions.find(id);
+-        if (state == apci::State::Started && it != sessions.end()) {
+-            it->second.on_started(image, options);
++        const auto it = peers.find(id);
++        if (it == peers.end() || it->second.group == nullptr) {
++            return;
++        }
++        Peer& peer = it->second;
++        session::RedundancyGroup& group = *peer.group;
++        if (state == apci::State::Started) {
++            peer.session.on_started(image, options); // end of initialization first
++            const std::uint32_t previous = group.start(id);
++            if (previous != 0U) {
++                withdraw(previous);
++                logger().write(IEC104_LOG_WARNING, id,
++                               "group " + std::to_string(peer.group_id) +
++                                   ": takes over from connection " + std::to_string(previous) +
++                                   " (STARTDT without STOPDT on the old connection)");
++            }
++            deliver(peer.group_id, group);
++        } else if (state == apci::State::Stopped && group.active() == id) {
++            withdraw(id);
++            if (group.stop(id) != 0U) {
++                deliver(peer.group_id, group);
++            }
++        }
++    }
++
++    void on_acknowledged(std::uint32_t id, std::uint16_t count) override {
++        const auto it = peers.find(id);
++        if (it == peers.end()) {
++            return;
++        }
++        Peer& peer = it->second;
++        for (std::uint16_t i = 0; i < count && !peer.in_flight.empty(); ++i) {
++            const std::uint64_t event = peer.in_flight.front();
++            peer.in_flight.pop_front();
++            if (event != 0U && peer.group != nullptr) {
++                peer.group->acknowledged(event);
++            }
++        }
++        if (peer.group != nullptr) {
++            check_overflow_end(peer.group_id, *peer.group);
+         }
+     }
+ 
+     void on_closed(std::uint32_t id, transport::LinkCloseReason reason,
+                    apci::CloseReason protocol_reason) override {
+         api::CallbackSink::on_closed(id, reason, protocol_reason);
+-        sessions.erase(id);
++        const auto it = peers.find(id);
++        if (it == peers.end()) {
++            return;
++        }
++        const std::uint32_t group_id = it->second.group_id;
++        session::RedundancyGroup* group = it->second.group;
++        peers.erase(it); // its queued events are gone with the session
++        if (group != nullptr) {
++            const bool was_active = group->active() == id;
++            const std::uint32_t now_active = group->leave(id);
++            if (was_active && now_active != 0U) {
++                deliver(group_id, *group);
++            }
++            if (!configured_groups) {
++                drop_own_group(group_id);
++            }
++        }
+     }
+ 
+     // --- CommandHandler: the application decides --------------------------
+@@ -178,28 +440,21 @@ struct iec104_server : api::CallbackSink, session::CommandHandler, session::Sess
+                            " discarded: older than the maximum command delay");
+     }
+ 
+-    // Queues @p asdu on one or all started connections.
+-    iec104_status enqueue(std::uint32_t connection, const std::uint8_t* asdu, std::size_t length) {
+-        bool any = false;
+-        bool full = false;
+-        for (auto& link : links) {
+-            if ((connection != 0U && link->id() != connection) ||
+-                link->state() != apci::State::Started) {
+-                continue;
++    // Queues @p asdu on one started connection, or (connection 0) as event for all groups.
++    iec104_status enqueue(std::uint32_t connection, const std::uint8_t* asdu, std::size_t length,
++                          std::uint8_t cause) {
++        iec104_status st = IEC104_ERR_WRONG_STATE;
++        if (connection == 0U) {
++            st = publish(asdu, length, cause);
++        } else {
++            const transport::Link* link = find(connection);
++            const auto it = peers.find(connection);
++            if (link != nullptr && link->state() == apci::State::Started && it != peers.end()) {
++                st = it->second.session.enqueue(asdu, length);
+             }
+-            const auto it = sessions.find(link->id());
+-            if (it == sessions.end()) {
+-                continue;
+-            }
+-            const iec104_status st = it->second.enqueue(asdu, length);
+-            any = any || st == IEC104_OK;
+-            full = full || st == IEC104_ERR_WOULD_BLOCK;
+         }
+         pump_all();
+-        if (full) {
+-            return IEC104_ERR_WOULD_BLOCK;
+-        }
+-        return any ? IEC104_OK : IEC104_ERR_WRONG_STATE;
++        return st;
+     }
+ };
+ 
+@@ -265,19 +520,22 @@ iec104_status iec104_server_send_asdu(iec104_server* server, uint32_t connection
+     if (server == nullptr || asdu == nullptr || length == 0U || length > codec::kMaxAsduLength) {
+         return IEC104_ERR_INVALID_ARGUMENT;
+     }
+-    const apci::TimeMs now = transport::monotonic_ms();
+     if (connection != 0U) {
+         transport::Link* link = server->find(connection);
+-        return link != nullptr ? link->send_asdu(asdu, length, now) : IEC104_ERR_WRONG_STATE;
++        const auto it = server->peers.find(connection);
++        return link != nullptr && it != server->peers.end()
++                   ? transmit(*link, it->second, asdu, length)
++                   : IEC104_ERR_WRONG_STATE;
+     }
+-    // Broadcast to every started connection.
++    // Broadcast to every started connection (raw ASDUs are not buffered).
+     bool sent = false;
+     bool blocked = false;
+     for (auto& link : server->links) {
+-        if (link->state() != apci::State::Started) {
++        const auto it = server->peers.find(link->id());
++        if (link->state() != apci::State::Started || it == server->peers.end()) {
+             continue;
+         }
+-        const iec104_status st = link->send_asdu(asdu, length, now);
++        const iec104_status st = transmit(*link, it->second, asdu, length);
+         sent = sent || st == IEC104_OK;
+         blocked = blocked || st == IEC104_ERR_WOULD_BLOCK;
+     }
+@@ -297,6 +555,9 @@ void iec104_server_options_init(iec104_server_options* options) {
+         options->command_termination = 1;
+         options->cause_of_init = 0;
+         options->max_command_delay_ms = 0;
++        const session::GroupConfig defaults{};
++        options->event_buffer_size = static_cast<uint32_t>(defaults.capacity);
++        options->overflow = IEC104_OVERFLOW_DROP_OLDEST;
+     }
+ }
+ 
+@@ -308,10 +569,90 @@ iec104_status iec104_server_set_options(iec104_server* server,
+     server->options.send_end_of_init = options->send_end_of_init != 0;
+     server->options.command_termination = options->command_termination != 0;
+     server->options.cause_of_init = options->cause_of_init;
++    if (options->event_buffer_size == 0U || options->event_buffer_size > IEC104_MAX_EVENT_BUFFER) {
++        return IEC104_ERR_OUT_OF_RANGE;
++    }
+     server->options.max_command_delay_ms = options->max_command_delay_ms;
++    server->own_group.capacity = options->event_buffer_size;
++    server->own_group.overflow = options->overflow == IEC104_OVERFLOW_REJECT
++                                     ? session::Overflow::Reject
++                                     : session::Overflow::DropOldest;
++    return IEC104_OK;
++}
++
++void iec104_group_config_init(iec104_group_config* config) {
++    if (config != nullptr) {
++        *config = iec104_group_config{};
++        config->buffer_size = static_cast<uint32_t>(session::GroupConfig{}.capacity);
++        config->overflow = IEC104_OVERFLOW_DROP_OLDEST;
++    }
++}
++
++iec104_status iec104_server_add_group(iec104_server* server, const iec104_group_config* config,
++                                      uint32_t* group) {
++    if (server == nullptr || config == nullptr) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    if (server->listener.valid() || !server->links.empty()) {
++        return IEC104_ERR_WRONG_STATE;
++    }
++    if (config->buffer_size == 0U || config->buffer_size > IEC104_MAX_EVENT_BUFFER) {
++        return IEC104_ERR_OUT_OF_RANGE;
++    }
++    session::GroupConfig g;
++    g.capacity = config->buffer_size;
++    g.overflow = config->overflow == IEC104_OVERFLOW_REJECT ? session::Overflow::Reject
++                                                            : session::Overflow::DropOldest;
++    for (const auto& peer : config->peers) { // NOLINT(*-array-to-pointer-decay): C struct
++        const auto* text = static_cast<const char*>(peer);
++        const auto* end = static_cast<const char*>(std::memchr(text, '\0', sizeof peer));
++        if (end == nullptr) {
++            return IEC104_ERR_INVALID_ARGUMENT;
++        }
++        if (end != text) {
++            g.peers.emplace_back(text, end);
++        }
++    }
++    const std::uint32_t id = server->next_group++;
++    server->groups.emplace(id, std::make_unique<session::RedundancyGroup>(std::move(g)));
++    server->configured_groups = true;
++    if (group != nullptr) {
++        *group = id;
++    }
+     return IEC104_OK;
+ }
+ 
++iec104_status iec104_server_get_group_stats(const iec104_server* server, uint32_t group,
++                                            iec104_group_stats* out) {
++    if (server == nullptr || out == nullptr) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    const auto it = server->groups.find(group);
++    if (it == server->groups.end()) {
++        return IEC104_ERR_WRONG_STATE;
++    }
++    const session::GroupStats g = it->second->stats();
++    *out = iec104_group_stats{};
++    out->active_connection = g.active;
++    out->connections = static_cast<uint32_t>(g.connections);
++    out->buffered = static_cast<uint32_t>(g.buffered);
++    out->in_flight = static_cast<uint32_t>(g.in_flight);
++    out->events = g.events;
++    out->dropped = g.dropped;
++    out->rejected = g.rejected;
++    out->resent = g.resent;
++    out->switchovers = g.switchovers;
++    return IEC104_OK;
++}
++
++uint32_t iec104_server_connection_group(const iec104_server* server, uint32_t connection) {
++    if (server == nullptr) {
++        return 0;
++    }
++    const auto it = server->peers.find(connection);
++    return it != server->peers.end() ? it->second.group_id : 0U;
++}
++
+ iec104_status iec104_server_add_command(iec104_server* server, uint16_t common_address,
+                                         uint32_t ioa, uint8_t type, iec104_command_model model,
+                                         uint32_t select_timeout_ms) {
+@@ -365,7 +706,7 @@ iec104_status iec104_server_update(iec104_server* server, uint16_t common_addres
+     if (st != IEC104_OK) {
+         return st;
+     }
+-    st = server->enqueue(0, buf.data(), n);
++    st = server->enqueue(0, buf.data(), n, IEC104_COT_SPONTANEOUS);
+     // No started connection is not an error for an update: the image holds the value.
+     return st == IEC104_ERR_WRONG_STATE ? IEC104_OK : st;
+ }
+@@ -403,7 +744,7 @@ iec104_status iec104_server_send(iec104_server* server, uint32_t connection,
+         if (st != IEC104_OK) {
+             return st;
+         }
+-        result = server->enqueue(connection, buf.data(), n);
++        result = server->enqueue(connection, buf.data(), n, cause);
+         if (result != IEC104_OK) {
+             return result;
+         }
+@@ -433,15 +774,15 @@ iec104_status iec104_server_get_stats(const iec104_server* server, uint32_t conn
+         }
+         iec104_link_stats s{};
+         api::copy_link_stats(*link, s);
+-        const auto it = server->sessions.find(connection);
+-        if (it != server->sessions.end()) {
+-            const session::SessionStats& ss = it->second.stats();
++        const auto it = server->peers.find(connection);
++        if (it != server->peers.end()) {
++            const session::SessionStats& ss = it->second.session.stats();
+             s.requests = ss.requests;
+             s.commands_accepted = ss.commands_accepted;
+             s.commands_rejected = ss.commands_rejected;
+             s.commands_discarded = ss.commands_discarded;
+             s.negative_answers = ss.negative_answers;
+-            s.send_queue = static_cast<uint32_t>(it->second.queued());
++            s.send_queue = static_cast<uint32_t>(it->second.session.queued());
+         }
+         *out = s;
+         return IEC104_OK;
+diff --git a/src/session/redundancy_group.cpp b/src/session/redundancy_group.cpp
+new file mode 100644
+index 0000000..4fcbba8
+--- /dev/null
++++ b/src/session/redundancy_group.cpp
+@@ -0,0 +1,161 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file redundancy_group.cpp
++ * @brief Implementation of the redundancy group (see redundancy_group.hpp).
++ *
++ * Layer: session (no I/O).
++ */
++#include "session/redundancy_group.hpp"
++
++#include <algorithm>
++
++namespace iec104::session {
++
++bool RedundancyGroup::accepts(const std::string& address) const {
++    return config_.peers.empty() ||
++           std::find(config_.peers.begin(), config_.peers.end(), address) != config_.peers.end();
++}
++
++void RedundancyGroup::join(std::uint32_t connection) {
++    members_[connection] = Member{};
++}
++
++std::uint32_t RedundancyGroup::leave(std::uint32_t connection) {
++    const std::uint32_t now_active = stop(connection);
++    members_.erase(connection);
++    return now_active;
++}
++
++std::uint32_t RedundancyGroup::start(std::uint32_t connection) {
++    Member& m = members_[connection];
++    m.started = true;
++    m.started_order = ++start_counter_;
++    const std::uint32_t previous = active_;
++    if (previous == connection) {
++        return 0;
++    }
++    // One connection per group transfers data: the one started last.
++    // TODO(norm): clause 10, STARTDT on a second connection of a group.
++    if (previous != 0U) {
++        revert(previous);
++        ++counters_.switchovers;
++    }
++    active_ = connection;
++    return previous;
++}
++
++std::uint32_t RedundancyGroup::stop(std::uint32_t connection) {
++    const auto it = members_.find(connection);
++    if (it != members_.end()) {
++        it->second.started = false;
++    }
++    if (active_ != connection) {
++        return active_;
++    }
++    revert(connection);
++    // Another started member (left over from a take-over) carries on.
++    active_ = 0;
++    std::uint64_t latest = 0;
++    for (const auto& [id, member] : members_) {
++        if (member.started && member.started_order > latest) {
++            latest = member.started_order;
++            active_ = id;
++        }
++    }
++    if (active_ != 0U) {
++        ++counters_.switchovers;
++    }
++    return active_;
++}
++
++RedundancyGroup::Added RedundancyGroup::add(const std::uint8_t* asdu, std::size_t length) {
++    Added result;
++    if (buffer_.size() >= config_.capacity) {
++        if (config_.overflow == Overflow::Reject || buffer_.empty()) {
++            ++counters_.rejected;
++            result.status = IEC104_ERR_WOULD_BLOCK;
++            return result;
++        }
++        const BufferedEvent& oldest = buffer_.front();
++        result.dropped = true;
++        result.dropped_id = oldest.id;
++        result.dropped_queued_on = oldest.state == EventState::Queued ? oldest.connection : 0U;
++        buffer_.pop_front();
++        ++counters_.dropped;
++    }
++    BufferedEvent e;
++    e.id = next_id_++;
++    e.asdu.assign(asdu, asdu + length);
++    result.id = e.id;
++    buffer_.push_back(std::move(e));
++    ++counters_.events;
++    return result;
++}
++
++std::vector<const BufferedEvent*> RedundancyGroup::queue_on_active() {
++    std::vector<const BufferedEvent*> out;
++    if (active_ == 0U) {
++        return out;
++    }
++    for (BufferedEvent& e : buffer_) {
++        if (e.state == EventState::Pending) {
++            e.state = EventState::Queued;
++            e.connection = active_;
++            out.push_back(&e);
++        }
++    }
++    return out;
++}
++
++void RedundancyGroup::sent(std::uint64_t id) {
++    BufferedEvent* e = find(id);
++    if (e != nullptr && e->state == EventState::Queued) {
++        e->state = EventState::InFlight;
++    }
++}
++
++void RedundancyGroup::acknowledged(std::uint64_t id) {
++    // Acknowledgements come in order of sending; the event is near the front.
++    const auto it = std::find_if(buffer_.begin(), buffer_.end(),
++                                 [id](const BufferedEvent& e) { return e.id == id; });
++    // Only an event still in flight counts: after a revert it waits for the next connection.
++    if (it != buffer_.end() && it->state == EventState::InFlight) {
++        buffer_.erase(it);
++    }
++}
++
++GroupStats RedundancyGroup::stats() const {
++    GroupStats s = counters_;
++    s.active = active_;
++    s.connections = members_.size();
++    s.buffered = buffer_.size();
++    s.in_flight = static_cast<std::size_t>(
++        std::count_if(buffer_.begin(), buffer_.end(),
++                      [](const BufferedEvent& e) { return e.state == EventState::InFlight; }));
++    return s;
++}
++
++BufferedEvent* RedundancyGroup::find(std::uint64_t id) {
++    const auto it = std::find_if(buffer_.begin(), buffer_.end(),
++                                 [id](const BufferedEvent& e) { return e.id == id; });
++    return it != buffer_.end() ? &*it : nullptr;
++}
++
++void RedundancyGroup::revert(std::uint32_t connection) {
++    for (BufferedEvent& e : buffer_) {
++        if (e.state != EventState::Pending && e.connection == connection) {
++            if (e.state == EventState::InFlight) {
++                ++counters_.resent;
++            }
++            e.state = EventState::Pending;
++            e.connection = 0;
++        }
++    }
++}
++
++} // namespace iec104::session
+diff --git a/src/session/redundancy_group.hpp b/src/session/redundancy_group.hpp
+new file mode 100644
+index 0000000..6efbf6f
+--- /dev/null
++++ b/src/session/redundancy_group.hpp
+@@ -0,0 +1,169 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file redundancy_group.hpp
++ * @brief Redundancy group of a controlled station: connections and event buffer.
++ *
++ * Several connections of one controlling station form a redundancy group
++ * (edition 2, clause 10; docs/05_Normfragen_und_Festlegungen.md, N7). Exactly
++ * one of them transfers data: the one started last with STARTDT. The others
++ * stay connected in STOPDT and are supervised with TESTFR. The controlling
++ * station switches over with STOPDT on the old and STARTDT on the new
++ * connection.
++ *
++ * The event buffer belongs to the group, not to a connection:
++ *
++ *   add()          Pending   in the buffer, no connection active
++ *   queue_on()     Queued    handed to the session of the active connection
++ *   sent()         InFlight  sent as I-frame, not yet acknowledged
++ *   acknowledged()           removed: the peer confirmed it with N(R)
++ *
++ * If the active connection stops or breaks, its Queued and InFlight events
++ * become Pending again and go out on the next active connection, so an
++ * event may arrive twice but is never lost (within the buffer size).
++ * TODO(norm): clause 10, handling of unacknowledged events at switch-over.
++ *
++ * Layer: session (no I/O).
++ */
++#pragma once
++
++#include "iec104/iec104.h"
++
++#include <cstddef>
++#include <cstdint>
++#include <deque>
++#include <map>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace iec104::session {
++
++/** @brief What happens when an event arrives at a full buffer. */
++enum class Overflow : std::uint8_t {
++    DropOldest, ///< The oldest event is dropped (counted, logged).
++    Reject,     ///< The new event is rejected (IEC104_ERR_WOULD_BLOCK).
++};
++
++/** @brief Settings of a group. */
++struct GroupConfig {
++    std::vector<std::string> peers; ///< IP addresses of the controlling station; empty = any.
++    std::size_t capacity{1000};     ///< Events in the buffer (pending, queued, in flight).
++    Overflow overflow{Overflow::DropOldest};
++};
++
++/** @brief Counters and state of a group. */
++struct GroupStats {
++    std::uint32_t active{0};      ///< Active connection, 0 = none.
++    std::size_t connections{0};   ///< Member connections.
++    std::size_t buffered{0};      ///< Events in the buffer.
++    std::size_t in_flight{0};     ///< ... of them sent, not acknowledged.
++    std::uint64_t events{0};      ///< Events added.
++    std::uint64_t dropped{0};     ///< Dropped because the buffer was full (DropOldest).
++    std::uint64_t rejected{0};    ///< Rejected because the buffer was full (Reject).
++    std::uint64_t resent{0};      ///< Events queued again after a stop or break.
++    std::uint64_t switchovers{0}; ///< Changes of the active connection to another one.
++};
++
++/** @brief State of one buffered event. */
++enum class EventState : std::uint8_t { Pending, Queued, InFlight };
++
++/** @brief One buffered event. */
++struct BufferedEvent {
++    std::uint64_t id{0};
++    std::vector<std::uint8_t> asdu;
++    EventState state{EventState::Pending};
++    std::uint32_t connection{0}; ///< Queued, InFlight: the connection.
++};
++
++/** @brief A redundancy group (see file comment). */
++class RedundancyGroup {
++  public:
++    explicit RedundancyGroup(GroupConfig config) noexcept : config_(std::move(config)) {}
++
++    /** @brief True if a connection from @p address belongs to this group. */
++    [[nodiscard]] bool accepts(const std::string& address) const;
++
++    /** @brief Adds a connection (in STOPDT). */
++    void join(std::uint32_t connection);
++
++    /**
++     * @brief Removes a connection (closed).
++     * @return The new active connection, 0 if none (see stop()).
++     */
++    std::uint32_t leave(std::uint32_t connection);
++
++    /**
++     * @brief Data transfer on @p connection was started; it becomes the active one.
++     * @return The previously active connection (0 if none or the same). Its
++     *         queued events are Pending again; the caller removes them from
++     *         that connection's session.
++     */
++    std::uint32_t start(std::uint32_t connection);
++
++    /**
++     * @brief Data transfer on @p connection was stopped.
++     *
++     * If it was the active one, its events become Pending and the started
++     * member that was started last (if any) becomes active.
++     * @return The active connection afterwards, 0 if none.
++     */
++    std::uint32_t stop(std::uint32_t connection);
++
++    [[nodiscard]] std::uint32_t active() const noexcept { return active_; }
++    [[nodiscard]] bool has_member(std::uint32_t connection) const {
++        return members_.count(connection) != 0U;
++    }
++
++    /** @brief Result of add(). */
++    struct Added {
++        iec104_status status{IEC104_OK};    ///< OK or IEC104_ERR_WOULD_BLOCK (Reject, full).
++        std::uint64_t id{0};                ///< Id of the new event.
++        bool dropped{false};                ///< An old event was dropped to make room ...
++        std::uint64_t dropped_id{0};        ///< ... with this id ...
++        std::uint32_t dropped_queued_on{0}; ///< ... queued in this session (0: not queued).
++    };
++
++    /** @brief Adds an event (Pending). */
++    Added add(const std::uint8_t* asdu, std::size_t length);
++
++    /**
++     * @brief Hands all Pending events to the active connection (they become Queued).
++     * @return The events in order of age; pointers valid until the next change.
++     */
++    std::vector<const BufferedEvent*> queue_on_active();
++
++    /** @brief An event was sent as I-frame (Queued -> InFlight). */
++    void sent(std::uint64_t id);
++
++    /** @brief An event was acknowledged by the peer: it leaves the buffer. */
++    void acknowledged(std::uint64_t id);
++
++    /** @brief Counters and state. */
++    [[nodiscard]] GroupStats stats() const;
++
++    [[nodiscard]] const GroupConfig& config() const noexcept { return config_; }
++
++  private:
++    BufferedEvent* find(std::uint64_t id);
++    void revert(std::uint32_t connection);
++
++    struct Member {
++        bool started{false};
++        std::uint64_t started_order{0}; // larger = started later
++    };
++
++    GroupConfig config_;
++    std::map<std::uint32_t, Member> members_;
++    std::uint32_t active_{0};
++    std::uint64_t start_counter_{0};
++    std::deque<BufferedEvent> buffer_; // oldest first
++    std::uint64_t next_id_{1};
++    GroupStats counters_{};
++};
++
++} // namespace iec104::session
+diff --git a/src/session/server_session.cpp b/src/session/server_session.cpp
+index f516c59..ddc7cd8 100644
+--- a/src/session/server_session.cpp
++++ b/src/session/server_session.cpp
+@@ -12,6 +12,7 @@
+  */
+ #include "session/server_session.hpp"
+ 
++#include <algorithm>
+ #include <array>
+ #include <utility>
+ 
+@@ -438,6 +439,25 @@ iec104_status ServerSession::enqueue(const std::uint8_t* asdu, std::size_t lengt
+     return IEC104_OK;
+ }
+ 
++void ServerSession::enqueue_event(const std::uint8_t* asdu, std::size_t length, std::uint64_t id) {
++    Item item{};
++    item.asdu.assign(asdu, asdu + length);
++    item.event_id = id;
++    queue_.push_back(std::move(item));
++}
++
++void ServerSession::drop_events() {
++    queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
++                                [](const Item& i) { return i.event_id != 0U; }),
++                 queue_.end());
++}
++
++void ServerSession::drop_event(std::uint64_t id) {
++    queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
++                                [id](const Item& i) { return i.event_id == id; }),
++                 queue_.end());
++}
++
+ void ServerSession::answer(const std::uint8_t* asdu, std::size_t length, std::uint8_t cause,
+                            bool negative) {
+     push_ready(mirror(asdu, length, cause, negative));
+@@ -504,6 +524,9 @@ void ServerSession::pump(AsduSender& sender) {
+             if (sender.send(item.asdu.data(), item.asdu.size()) != IEC104_OK) {
+                 return;
+             }
++            if (item.event_id != 0U) {
++                sender.sent_event(item.event_id);
++            }
+             queue_.pop_front();
+             continue;
+         }
+diff --git a/src/session/server_session.hpp b/src/session/server_session.hpp
+index 45c9114..d5a9db3 100644
+--- a/src/session/server_session.hpp
++++ b/src/session/server_session.hpp
+@@ -62,6 +62,8 @@ class AsduSender {
+     virtual bool can_send() = 0;
+     /** @brief Sends one ASDU. @return IEC104_OK or IEC104_ERR_WOULD_BLOCK. */
+     virtual iec104_status send(const std::uint8_t* asdu, std::size_t length) = 0;
++    /** @brief The ASDU just sent was the buffered event @p id (see enqueue_event()). */
++    virtual void sent_event(std::uint64_t /*id*/) {}
+ };
+ 
+ /** @brief The application's decision on commands (implemented by the API over a callback). */
+@@ -161,6 +163,19 @@ class ServerSession {
+      */
+     iec104_status enqueue(const std::uint8_t* asdu, std::size_t length);
+ 
++    /**
++     * @brief Queues a buffered event of the redundancy group (no queue limit:
++     *        the group's buffer bounds it). @p id is reported to
++     *        AsduSender::sent_event() when it is sent.
++     */
++    void enqueue_event(const std::uint8_t* asdu, std::size_t length, std::uint64_t id);
++
++    /** @brief Removes all queued events (the group takes them back). */
++    void drop_events();
++
++    /** @brief Removes the queued event @p id (dropped by the group). */
++    void drop_event(std::uint64_t id);
++
+     /** @brief Sends queued ASDUs while @p sender can take them. */
+     void pump(AsduSender& sender);
+ 
+@@ -177,6 +192,7 @@ class ServerSession {
+     /** @brief One entry of the send queue: a ready ASDU or an interrogation job. */
+     struct Item {
+         std::vector<std::uint8_t> asdu; // ready ASDU (if points is empty)
++        std::uint64_t event_id{0};      // ready ASDU from the group buffer, 0 = none
+         std::vector<Point> points;      // job: points still to send
+         std::size_t next{0};            // job: index of the next point
+         codec::AsduHeader header{};     // job: header of the data ASDUs
+diff --git a/src/transport/link.cpp b/src/transport/link.cpp
+index 846384d..10d7add 100644
+--- a/src/transport/link.cpp
++++ b/src/transport/link.cpp
+@@ -259,7 +259,8 @@ void Link::dispatch_events(LinkSink& sink) noexcept {
+             sink.on_state(id_, e.state);
+             break;
+         case apci::EventKind::Acknowledged:
+-            break; // will feed the event buffer of redundancy groups
++            sink.on_acknowledged(id_, e.count); // frees events of the redundancy group
++            break;
+         case apci::EventKind::CloseRequested:
+             protocol_reason_ = e.reason;
+             break;
+diff --git a/src/transport/link.hpp b/src/transport/link.hpp
+index 1d19457..7e6b6c3 100644
+--- a/src/transport/link.hpp
++++ b/src/transport/link.hpp
+@@ -82,6 +82,8 @@ class LinkSink {
+     /** @brief A complete APDU was sent or received on link @p id (for a raw data trace). */
+     virtual void on_frame(std::uint32_t /*id*/, bool /*outgoing*/, const std::uint8_t* /*apdu*/,
+                           std::size_t /*length*/) {}
++    /** @brief The peer acknowledged the @p count oldest unacknowledged I-frames of link @p id. */
++    virtual void on_acknowledged(std::uint32_t /*id*/, std::uint16_t /*count*/) {}
+     /** @brief A security event on TLS link @p id. */
+     virtual void on_tls(std::uint32_t /*id*/, TlsEvent /*event*/, const std::string& /*text*/) {}
+ };
+diff --git a/tests/test_operation.cpp b/tests/test_operation.cpp
+index c4909c5..c6269aa 100644
+--- a/tests/test_operation.cpp
++++ b/tests/test_operation.cpp
+@@ -261,3 +261,36 @@ tls_session_lifetime = 600
+     EXPECT_EQ(iec104_config_load(bad.c_str(), &c, &line), IEC104_ERR_INVALID_ARGUMENT);
+     EXPECT_EQ(line, 1);
+ }
++
++// Rule: every "group" line adds a redundancy group; the buffer settings of
++// the file apply to all groups, also when they stand below the groups.
++TEST(ConfigFile, RedundancyGroups) {
++    const std::string path = write_file("groups.conf", R"(group = 192.0.2.10, 192.0.2.11
++group = 2001:db8::1 2001:db8::2
++group = *
++event_buffer_size = 5000
++overflow = reject
++)");
++    iec104_config c{};
++    iec104_config_init(&c);
++    EXPECT_EQ(c.server.event_buffer_size, 1000U);
++    EXPECT_EQ(c.server.overflow, IEC104_OVERFLOW_DROP_OLDEST);
++    int line = -1;
++    ASSERT_EQ(iec104_config_load(path.c_str(), &c, &line), IEC104_OK) << line;
++    ASSERT_EQ(c.group_count, 3U);
++    EXPECT_STREQ(c.groups[0].peers[0], "192.0.2.10");
++    EXPECT_STREQ(c.groups[0].peers[1], "192.0.2.11");
++    EXPECT_STREQ(c.groups[0].peers[2], "");
++    EXPECT_STREQ(c.groups[1].peers[1], "2001:db8::2");
++    EXPECT_STREQ(c.groups[2].peers[0], ""); // any address
++    for (std::uint32_t i = 0; i < c.group_count; ++i) {
++        EXPECT_EQ(c.groups[i].buffer_size, 5000U);
++        EXPECT_EQ(c.groups[i].overflow, IEC104_OVERFLOW_REJECT);
++    }
++    EXPECT_EQ(c.server.event_buffer_size, 5000U);
++
++    const std::string bad = write_file("groups_bad.conf", "group =\n");
++    EXPECT_EQ(iec104_config_load(bad.c_str(), &c, &line), IEC104_ERR_INVALID_ARGUMENT);
++    const std::string range = write_file("groups_range.conf", "event_buffer_size = 2000000\n");
++    EXPECT_EQ(iec104_config_load(range.c_str(), &c, &line), IEC104_ERR_OUT_OF_RANGE);
++}
+diff --git a/tests/test_redundancy.cpp b/tests/test_redundancy.cpp
+new file mode 100644
+index 0000000..f277e3f
+--- /dev/null
++++ b/tests/test_redundancy.cpp
+@@ -0,0 +1,467 @@
++/*
++ * SPDX-FileCopyrightText: 2026 SOPTIM AG
++ * SPDX-License-Identifier: LicenseRef-Proprietary
++ * Author: Udo Schmitz (SOPTIM AG)
++ * All rights reserved by SOPTIM AG.
++ */
++/**
++ * @file test_redundancy.cpp
++ * @brief Redundancy groups and event buffer: the group alone (no I/O) and
++ *        server with two client handles over TCP (public C API).
++ *
++ * Rules: docs/05_Normfragen_und_Festlegungen.md, N7 and E10; public sources
++ * in docs/02_Technik_und_Quellen.md, section "Redundanz".
++ */
++#include "iec104/iec104.h"
++#include "session/redundancy_group.hpp"
++
++#include <chrono>
++#include <cstring>
++#include <functional>
++#include <gtest/gtest.h>
++#include <string>
++#include <vector>
++
++using iec104::session::BufferedEvent;
++using iec104::session::GroupConfig;
++using iec104::session::Overflow;
++using iec104::session::RedundancyGroup;
++
++namespace {
++
++std::vector<std::uint8_t> event(std::uint8_t n) {
++    return {13, 1, 3, 0, 1, 0, n, 0, 0};
++}
++
++std::uint64_t add(RedundancyGroup& g, std::uint8_t n) {
++    const auto e = event(n);
++    return g.add(e.data(), e.size()).id;
++}
++
++std::vector<std::uint8_t> marks(const std::vector<const BufferedEvent*>& events) {
++    std::vector<std::uint8_t> out;
++    for (const BufferedEvent* e : events) {
++        out.push_back(e->asdu[6]);
++    }
++    return out;
++}
++
++} // namespace
++
++// --- The group alone ---------------------------------------------------------
++
++// N7: without an active connection events wait in the buffer; the first
++// started connection gets them in order; acknowledged events leave.
++TEST(RedundancyGroup, BuffersUntilAcknowledged) {
++    RedundancyGroup g(GroupConfig{});
++    g.join(1);
++    const std::uint64_t a = add(g, 1);
++    const std::uint64_t b = add(g, 2);
++    add(g, 3);
++    EXPECT_TRUE(g.queue_on_active().empty()); // no active connection
++    EXPECT_EQ(g.start(1), 0U);
++    EXPECT_EQ(marks(g.queue_on_active()), (std::vector<std::uint8_t>{1, 2, 3}));
++    EXPECT_TRUE(g.queue_on_active().empty()); // all queued already
++    g.sent(a);
++    g.sent(b);
++    EXPECT_EQ(g.stats().in_flight, 2U);
++    g.acknowledged(a);
++    EXPECT_EQ(g.stats().buffered, 2U);
++    EXPECT_EQ(g.stats().events, 3U);
++}
++
++// N7: a stop or break makes queued and sent events pending again; the next
++// active connection gets them in the original order.
++TEST(RedundancyGroup, RevertsOnStopAndBreak) {
++    RedundancyGroup g(GroupConfig{});
++    g.join(1);
++    g.join(2);
++    g.start(1);
++    const std::uint64_t a = add(g, 1);
++    add(g, 2);
++    EXPECT_EQ(marks(g.queue_on_active()), (std::vector<std::uint8_t>{1, 2}));
++    g.sent(a);
++    EXPECT_EQ(g.leave(1), 0U); // break of the active connection, nobody else started
++    EXPECT_EQ(g.active(), 0U);
++    g.acknowledged(a); // a late acknowledgement of the old connection does not count
++    EXPECT_EQ(g.stats().buffered, 2U);
++    EXPECT_EQ(g.stats().resent, 1U);
++    g.start(2);
++    EXPECT_EQ(marks(g.queue_on_active()), (std::vector<std::uint8_t>{1, 2}));
++}
++
++// N7/E10: STARTDT on a second connection takes over; stopping the active one
++// hands over to another started member.
++TEST(RedundancyGroup, TakeOverAndHandOver) {
++    RedundancyGroup g(GroupConfig{});
++    g.join(1);
++    g.join(2);
++    g.start(1);
++    add(g, 1);
++    g.queue_on_active();
++    EXPECT_EQ(g.start(2), 1U); // previous active returned for withdrawal
++    EXPECT_EQ(g.active(), 2U);
++    EXPECT_EQ(marks(g.queue_on_active()), (std::vector<std::uint8_t>{1}));
++    EXPECT_EQ(g.stop(2), 1U); // connection 1 is still started
++    EXPECT_EQ(g.stats().switchovers, 2U);
++    EXPECT_EQ(g.stop(1), 0U);
++}
++
++// E10: a full buffer drops the oldest event (and says where it was queued)
++// or rejects the new one.
++TEST(RedundancyGroup, Overflow) {
++    GroupConfig c;
++    c.capacity = 3;
++    RedundancyGroup drop(c);
++    drop.join(7);
++    drop.start(7);
++    const std::uint64_t first = add(drop, 1);
++    drop.queue_on_active();
++    add(drop, 2);
++    add(drop, 3);
++    const auto e = event(4);
++    const RedundancyGroup::Added r = drop.add(e.data(), e.size());
++    EXPECT_EQ(r.status, IEC104_OK);
++    EXPECT_TRUE(r.dropped);
++    EXPECT_EQ(r.dropped_id, first);
++    EXPECT_EQ(r.dropped_queued_on, 7U);
++    EXPECT_EQ(drop.stats().dropped, 1U);
++    EXPECT_EQ(drop.stats().buffered, 3U);
++
++    c.overflow = Overflow::Reject;
++    RedundancyGroup reject(c);
++    add(reject, 1);
++    add(reject, 2);
++    add(reject, 3);
++    EXPECT_EQ(reject.add(e.data(), e.size()).status, IEC104_ERR_WOULD_BLOCK);
++    EXPECT_EQ(reject.stats().rejected, 1U);
++    EXPECT_EQ(reject.stats().buffered, 3U);
++}
++
++TEST(RedundancyGroup, Addresses) {
++    GroupConfig c;
++    EXPECT_TRUE(RedundancyGroup(c).accepts("192.0.2.1")); // empty list: any
++    c.peers = {"192.0.2.1", "2001:db8::1"};
++    const RedundancyGroup g(c);
++    EXPECT_TRUE(g.accepts("192.0.2.1"));
++    EXPECT_TRUE(g.accepts("2001:db8::1"));
++    EXPECT_FALSE(g.accepts("192.0.2.2"));
++}
++
++// --- Server with two client handles over TCP --------------------------------
++
++namespace {
++
++struct ClientSeen {
++    iec104_link_state state{IEC104_LINK_CONNECTING};
++    iec104_close_reason reason{IEC104_CLOSE_NONE};
++    std::vector<int> values; // spontaneous values of IOA 100, in order of arrival
++
++    static void on_state(void* user, uint32_t, iec104_link_state s, iec104_close_reason r) {
++        auto* c = static_cast<ClientSeen*>(user);
++        c->state = s;
++        c->reason = r;
++    }
++    static void on_object(void* user, uint32_t, const iec104_asdu_info* info,
++                          const iec104_object* o) {
++        if (info->cause == IEC104_COT_SPONTANEOUS && o->ioa == 100U) {
++            static_cast<ClientSeen*>(user)->values.push_back(static_cast<int>(o->value));
++        }
++    }
++};
++
++struct Log {
++    std::vector<std::string> lines;
++    static void fn(void* user, iec104_log_level, uint32_t, const char* message) {
++        static_cast<Log*>(user)->lines.emplace_back(message);
++    }
++    [[nodiscard]] bool contains(const std::string& part) const {
++        for (const auto& l : lines) {
++            if (l.find(part) != std::string::npos) {
++                return true;
++            }
++        }
++        return false;
++    }
++};
++
++class Redundancy : public testing::Test {
++  protected:
++    void TearDown() override {
++        for (iec104_client*& c : clients_) {
++            iec104_client_destroy(c);
++        }
++        iec104_server_destroy(server_);
++    }
++
++    void create_server() {
++        ASSERT_EQ(iec104_server_create(nullptr, nullptr, &server_), IEC104_OK);
++        iec104_server_set_log(server_, IEC104_LOG_INFO, Log::fn, &log_);
++        iec104_object p{};
++        p.type = 13;
++        p.ioa = 100;
++        ASSERT_EQ(iec104_server_add_point(server_, 1, &p, 1), IEC104_OK);
++    }
++    void listen() { ASSERT_EQ(iec104_server_listen(server_, "127.0.0.1", 0), IEC104_OK); }
++
++    /** @brief Connects client @p i (0 or 1) and waits for STOPPED. */
++    void connect(int i, uint32_t t2_ms = 0) {
++        iec104_link_config link{};
++        iec104_link_config_init(&link);
++        if (t2_ms != 0U) {
++            link.t2_ms = t2_ms; // acknowledge late: events stay unacknowledged
++        }
++        iec104_callbacks cb{};
++        cb.user = &seen_[i];
++        cb.on_state = ClientSeen::on_state;
++        cb.on_object = ClientSeen::on_object;
++        ASSERT_EQ(iec104_client_create(&link, &cb, &clients_[i]), IEC104_OK);
++        ASSERT_EQ(iec104_client_connect(clients_[i], "127.0.0.1", iec104_server_port(server_)),
++                  IEC104_OK);
++        ASSERT_TRUE(run_until([&] { return seen_[i].state == IEC104_LINK_STOPPED; }));
++    }
++    void start(int i) {
++        ASSERT_EQ(iec104_client_start(clients_[i]), IEC104_OK);
++        ASSERT_TRUE(run_until([&] { return seen_[i].state == IEC104_LINK_STARTED; }));
++    }
++    void stop(int i) {
++        ASSERT_EQ(iec104_client_stop(clients_[i]), IEC104_OK);
++        ASSERT_TRUE(run_until([&] { return seen_[i].state == IEC104_LINK_STOPPED; }));
++    }
++    /** @brief Spontaneous values @p from .. @p to (inclusive) at IOA 100. */
++    void update(int from, int to, iec104_status expected = IEC104_OK) {
++        for (int v = from; v <= to; ++v) {
++            iec104_object p{};
++            p.type = 13;
++            p.ioa = 100;
++            p.value = v;
++            EXPECT_EQ(iec104_server_update(server_, 1, &p), expected) << v;
++        }
++    }
++    bool run_until(const std::function<bool()>& done, int ms = 5000) {
++        const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
++        while (!done() && std::chrono::steady_clock::now() < end) {
++            (void)iec104_server_poll(server_, 1);
++            for (iec104_client* c : clients_) {
++                if (c != nullptr) {
++                    (void)iec104_client_poll(c, 0);
++                }
++            }
++        }
++        return done();
++    }
++    void settle(int ms = 200) {
++        run_until([] { return false; }, ms);
++    }
++    iec104_group_stats group_stats(uint32_t group) {
++        iec104_group_stats s{};
++        EXPECT_EQ(iec104_server_get_group_stats(server_, group, &s), IEC104_OK);
++        return s;
++    }
++    uint32_t add_group(const std::vector<std::string>& peers, uint32_t size = 1000,
++                       iec104_overflow overflow = IEC104_OVERFLOW_DROP_OLDEST) {
++        iec104_group_config g{};
++        iec104_group_config_init(&g);
++        for (std::size_t i = 0; i < peers.size(); ++i) {
++            std::snprintf(g.peers[i], sizeof g.peers[i], "%s", peers[i].c_str());
++        }
++        g.buffer_size = size;
++        g.overflow = overflow;
++        uint32_t id = 0;
++        EXPECT_EQ(iec104_server_add_group(server_, &g, &id), IEC104_OK);
++        return id;
++    }
++
++    iec104_server* server_{nullptr};
++    iec104_client* clients_[2]{nullptr, nullptr};
++    ClientSeen seen_[2];
++    Log log_;
++};
++
++std::vector<int> range(int from, int to) {
++    std::vector<int> v;
++    for (int i = from; i <= to; ++i) {
++        v.push_back(i);
++    }
++    return v;
++}
++
++} // namespace
++
++// E10: without groups every connection buffers its events while it is stopped.
++TEST_F(Redundancy, OwnGroupBuffersWhileStopped) {
++    create_server();
++    listen();
++    connect(0);
++    update(1, 3);
++    settle();
++    EXPECT_TRUE(seen_[0].values.empty());
++    start(0);
++    ASSERT_TRUE(run_until([&] { return seen_[0].values.size() == 3U; }));
++    EXPECT_EQ(seen_[0].values, range(1, 3));
++    update(4, 5);
++    ASSERT_TRUE(run_until([&] { return seen_[0].values.size() == 5U; }));
++}
++
++// N7: switch-over with STOPDT on the old and STARTDT on the new connection;
++// events in between wait in the group's buffer; nothing is lost or reordered.
++TEST_F(Redundancy, SwitchOverWithStopAndStart) {
++    create_server();
++    const uint32_t g = add_group({"127.0.0.1"});
++    listen();
++    connect(0);
++    connect(1);
++    EXPECT_EQ(iec104_server_connection_group(server_, 1), g);
++    EXPECT_EQ(iec104_server_connection_group(server_, 2), g);
++    start(0);
++    update(1, 5);
++    ASSERT_TRUE(run_until([&] { return seen_[0].values.size() == 5U; }));
++    stop(0); // all acknowledged before STOPDT con
++    update(6, 8);
++    settle();
++    EXPECT_EQ(group_stats(g).buffered, 3U);
++    EXPECT_EQ(group_stats(g).active_connection, 0U);
++    start(1);
++    ASSERT_TRUE(run_until([&] { return seen_[1].values.size() == 3U; }));
++    EXPECT_EQ(seen_[1].values, range(6, 8));
++    EXPECT_EQ(seen_[0].values, range(1, 5));
++    update(9, 9);
++    ASSERT_TRUE(run_until([&] { return seen_[1].values.size() == 4U; }));
++    settle();
++    EXPECT_EQ(seen_[0].values.size(), 5U); // the standby connection gets nothing
++    const iec104_group_stats s = group_stats(g);
++    EXPECT_EQ(s.active_connection, 2U);
++    EXPECT_EQ(s.connections, 2U);
++    EXPECT_EQ(s.events, 9U);
++    EXPECT_EQ(s.resent, 0U);
++}
++
++// N7: events sent but not acknowledged when the active connection breaks are
++// sent again on the next connection.
++TEST_F(Redundancy, BreakResendsUnacknowledged) {
++    create_server();
++    const uint32_t g = add_group({});
++    listen();
++    connect(0, 60000); // acknowledges only after 8 frames or 60 s
++    connect(1);
++    start(0);
++    update(1, 3);
++    ASSERT_TRUE(run_until([&] { return seen_[0].values.size() == 3U; }));
++    EXPECT_EQ(group_stats(g).in_flight, 3U);
++    iec104_client_destroy(clients_[0]); // break without acknowledgement
++    clients_[0] = nullptr;
++    ASSERT_TRUE(run_until([&] { return group_stats(g).connections == 1U; }));
++    start(1);
++    ASSERT_TRUE(run_until([&] { return seen_[1].values.size() == 3U; }));
++    EXPECT_EQ(seen_[1].values, range(1, 3));
++    EXPECT_EQ(group_stats(g).resent, 3U);
++    settle(300);
++}
++
++// E10: STARTDT on a second connection takes over without STOPDT on the old one.
++TEST_F(Redundancy, StartOnSecondConnectionTakesOver) {
++    create_server();
++    const uint32_t g = add_group({});
++    listen();
++    connect(0);
++    connect(1);
++    start(0);
++    update(1, 2);
++    ASSERT_TRUE(run_until([&] { return seen_[0].values.size() == 2U; }));
++    start(1);
++    update(3, 4);
++    ASSERT_TRUE(run_until([&] { return seen_[1].values.size() >= 2U; }));
++    settle();
++    EXPECT_EQ(seen_[0].values, range(1, 2));
++    EXPECT_EQ(seen_[1].values.back(), 4);
++    EXPECT_EQ(group_stats(g).active_connection, 2U);
++    EXPECT_EQ(group_stats(g).switchovers, 1U);
++    EXPECT_TRUE(log_.contains("takes over from connection 1"));
++    // The old one stops: the active connection stays.
++    stop(0);
++    EXPECT_EQ(group_stats(g).active_connection, 2U);
++}
++
++// E10: full buffer: drop the oldest (default) or reject new events.
++TEST_F(Redundancy, BufferOverflow) {
++    create_server();
++    const uint32_t drop = add_group({"127.0.0.1"}, 5);
++    const uint32_t reject = add_group({"192.0.2.1"}, 5, IEC104_OVERFLOW_REJECT);
++    listen();
++    connect(0, 1000);                     // t2 = 1 s: acknowledges soon
++    update(1, 5);                         // both groups full
++    update(6, 8, IEC104_ERR_WOULD_BLOCK); // rejected by the second group
++    EXPECT_EQ(group_stats(drop).dropped, 3U);
++    EXPECT_EQ(group_stats(reject).rejected, 3U);
++    EXPECT_TRUE(log_.contains("event buffer full"));
++    start(0);
++    ASSERT_TRUE(run_until([&] { return seen_[0].values.size() == 5U; }));
++    EXPECT_EQ(seen_[0].values, range(4, 8));                                  // the newest five
++    ASSERT_TRUE(run_until([&] { return group_stats(drop).buffered == 0U; })); // acknowledged
++}
++
++// E10: a connection joins the group that lists its address, else the group
++// open to any address, else it is rejected.
++TEST_F(Redundancy, AssignmentByAddress) {
++    create_server();
++    const uint32_t any = add_group({});
++    const uint32_t own = add_group({"192.0.2.1", "127.0.0.1"});
++    listen();
++    connect(0);
++    EXPECT_EQ(iec104_server_connection_group(server_, 1), own);
++    EXPECT_NE(any, own);
++    iec104_server_destroy(server_);
++    server_ = nullptr;
++    iec104_client_destroy(clients_[0]);
++    clients_[0] = nullptr;
++    seen_[0] = ClientSeen{};
++
++    create_server();
++    add_group({"192.0.2.1"});
++    listen();
++    iec104_callbacks cb{};
++    cb.user = &seen_[0];
++    cb.on_state = ClientSeen::on_state;
++    ASSERT_EQ(iec104_client_create(nullptr, &cb, &clients_[0]), IEC104_OK);
++    ASSERT_EQ(iec104_client_connect(clients_[0], "127.0.0.1", iec104_server_port(server_)),
++              IEC104_OK);
++    ASSERT_TRUE(run_until([&] { return seen_[0].state == IEC104_LINK_CLOSED; }));
++    EXPECT_EQ(iec104_server_connection_count(server_), 0U);
++    EXPECT_TRUE(log_.contains("not in any redundancy group"));
++}
++
++// E10: cyclic data is not buffered; it only goes to active connections.
++TEST_F(Redundancy, CyclicDataNotBuffered) {
++    create_server();
++    listen();
++    connect(0);
++    iec104_object p{};
++    p.type = 13;
++    p.ioa = 100;
++    EXPECT_EQ(iec104_server_send(server_, 0, 1, IEC104_COT_PERIODIC, &p, 1),
++              IEC104_ERR_WRONG_STATE);
++    start(0);
++    EXPECT_EQ(iec104_server_send(server_, 0, 1, IEC104_COT_PERIODIC, &p, 1), IEC104_OK);
++    EXPECT_EQ(group_stats(iec104_server_connection_group(server_, 1)).events, 0U);
++}
++
++TEST_F(Redundancy, SettingsErrors) {
++    create_server();
++    iec104_group_config g{};
++    iec104_group_config_init(&g);
++    EXPECT_EQ(g.buffer_size, 1000U);
++    g.buffer_size = 0;
++    EXPECT_EQ(iec104_server_add_group(server_, &g, nullptr), IEC104_ERR_OUT_OF_RANGE);
++    iec104_group_config_init(&g);
++    std::memset(g.peers[0], 'x', sizeof g.peers[0]); // no NUL
++    EXPECT_EQ(iec104_server_add_group(server_, &g, nullptr), IEC104_ERR_INVALID_ARGUMENT);
++    iec104_server_options o{};
++    iec104_server_options_init(&o);
++    o.event_buffer_size = IEC104_MAX_EVENT_BUFFER + 1U;
++    EXPECT_EQ(iec104_server_set_options(server_, &o), IEC104_ERR_OUT_OF_RANGE);
++    listen();
++    iec104_group_config_init(&g);
++    EXPECT_EQ(iec104_server_add_group(server_, &g, nullptr), IEC104_ERR_WRONG_STATE);
++    iec104_group_stats s{};
++    EXPECT_EQ(iec104_server_get_group_stats(server_, 99, &s), IEC104_ERR_WRONG_STATE);
++}
+diff --git a/tools/selftest/run_selftest.sh b/tools/selftest/run_selftest.sh
+index 23ae136..d1bc26e 100755
+--- a/tools/selftest/run_selftest.sh
++++ b/tools/selftest/run_selftest.sh
+@@ -5,11 +5,13 @@
+ # All rights reserved by SOPTIM AG.
+ # run_selftest.sh – Selbsttest-Server und -Client über Loopback gegeneinander.
+ #
+-# Aufruf: run_selftest.sh SERVER_PROGRAMM CLIENT_PROGRAMM [--tls ZERTIFIKATSVERZEICHNIS]
++# Aufruf: run_selftest.sh SERVER_PROGRAMM CLIENT_PROGRAMM [--tls ZERTIFIKATSVERZEICHNIS | --switchover]
+ #                         [ZUSÄTZLICHE CLIENT-OPTIONEN]
+ #
+ # Mit --tls laufen beide über TLS mit den Testzertifikaten aus
+ # tools/make_test_certs.sh; der Server erneuert die Schlüssel alle 2 s.
++# Mit --switchover bilden zwei Verbindungen des Clients eine Redundanzgruppe;
++# der Client schaltet in der Mitte der Messreihe auf die zweite um.
+ #
+ # Der Server lauscht auf einem freien Port (--port 0) und schreibt ihn in eine
+ # Datei; der Client liest ihn von dort. Kurze Timer (t3 = 1 s) und eine Ruhe
+@@ -30,6 +32,11 @@ if [ "${1:-}" = "--tls" ]; then
+                 --tls-crl "$D/crl.pem" --tls-renewal 2)
+     CLIENT_TLS=(--tls-ca "$D/ca.pem" --tls-cert "$D/client.pem" --tls-key "$D/client.key"
+                 --tls-peer-name localhost)
++elif [ "${1:-}" = "--switchover" ]; then
++    shift
++    # Längere Reihe (300 Werte, 15 s), damit die Umschaltung mitten hinein fällt.
++    SERVER_TLS=(--broadcast --group 127.0.0.1 --stats --count 300 --interval 50)
++    CLIENT_TLS=(--switchover --expect 300)
+ fi
+ 
+ WORK="$(mktemp -d)"
+diff --git a/tools/selftest/selftest_client.cpp b/tools/selftest/selftest_client.cpp
+index f8b63ee..2fb6ebe 100644
+--- a/tools/selftest/selftest_client.cpp
++++ b/tools/selftest/selftest_client.cpp
+@@ -30,6 +30,7 @@
+  *   unknown command IOA          rejected (cause 47)           -
+  *   unknown station              negative, cause 46            -
+  *   spontaneous values           N values in order             -
++ *   switch-over (--switchover)   STOPDT old, STARTDT standby, the series continues
+  *   idle period, STOPDT          yes                           yes
+  *
+  * Exit code: 0 = all steps passed, 1 = a step failed, 2 = usage error.
+@@ -50,6 +51,7 @@ struct Options {
+     unsigned long timeout_s{20};
+     unsigned long ca{selftest::kStation};
+     bool foreign{false};
++    bool switchover{false}; // second connection as standby, switch in the middle of the series
+ };
+ 
+ /** @brief One received object with the parts of its ASDU the checks need. */
+@@ -73,6 +75,7 @@ struct Client {
+     iec104_link_state state{IEC104_LINK_CONNECTING};
+     iec104_close_reason close_reason{IEC104_CLOSE_NONE};
+     std::vector<Received> received;
++    Client* other{nullptr}; // the other connection of a switch-over test, polled as well
+ };
+ 
+ std::uint64_t now_ms() {
+@@ -127,10 +130,51 @@ bool wait_for(Client& c, std::uint64_t ms, const std::function<bool()>& done) {
+     const std::uint64_t end = now_ms() + ms;
+     while (!done() && c.state != IEC104_LINK_CLOSED && now_ms() < end) {
+         (void)iec104_client_poll(c.handle, 10);
++        if (c.other != nullptr && c.other->handle != nullptr) {
++            (void)iec104_client_poll(c.other->handle, 0); // the standby answers TESTFR
++        }
+     }
+     return done();
+ }
+ 
++/** @brief Values of IOA 100 with cause spontaneous, in order of arrival. */
++std::vector<double> series(const Client& c) {
++    std::vector<double> v;
++    for (const Received& r : c.received) {
++        if (r.info.cause == IEC104_COT_SPONTANEOUS && r.object.ioa == selftest::kMeasurementIoa) {
++            v.push_back(r.object.value);
++        }
++    }
++    return v;
++}
++
++/**
++ * @brief The series 0, 1, 2, ... received over two connections one after the other.
++ *
++ * Events not acknowledged before the switch-over may arrive again on the
++ * second connection; such repetitions are skipped.
++ * @param repeated Receives the number of skipped repetitions.
++ * @return Length of the gap-free series 0..n-1, or -1 if it has a gap or is out of order.
++ */
++long merged_series(const Client& first, const Client& second, unsigned long& repeated) {
++    std::vector<double> all = series(first);
++    const std::vector<double> more = series(second);
++    repeated = 0;
++    for (const double v : more) {
++        if (!all.empty() && v <= all.back()) {
++            ++repeated;
++            continue;
++        }
++        all.push_back(v);
++    }
++    for (std::size_t i = 0; i < all.size(); ++i) {
++        if (all[i] != static_cast<double>(i)) {
++            return -1;
++        }
++    }
++    return static_cast<long>(all.size());
++}
++
+ /** @brief Index of the first object at or after @p from with type and cause, or -1. */
+ long find(const Client& c, std::size_t from, std::uint8_t type, std::uint8_t cause) {
+     for (std::size_t i = from; i < c.received.size(); ++i) {
+@@ -270,14 +314,45 @@ void print_help() {
+                 "  --expect N       spontaneous values to expect (default 100)\n"
+                 "  --idle S         idle seconds before STOPDT, to see the link test\n"
+                 "                   (default 0; choose more than t3)\n"
+-                "  --timeout S      limit for each step in seconds (default 20)\n");
++                "  --timeout S      limit for each step in seconds (default 20)\n"
++                "  --switchover     open a second connection as standby and switch to it\n"
++                "                   while the series runs (server with --broadcast)\n");
+     selftest::print_common_help();
+ }
+ 
++/** @brief Creates the client handle of @p c with all options; prints the error. */
++iec104_status create_handle(Client& c) {
++    iec104_callbacks cb{};
++    cb.user = &c;
++    cb.on_state = on_state;
++    cb.on_security = on_security;
++    cb.on_object = on_object;
++    cb.on_command_result = on_command_result;
++    iec104_status st = iec104_client_create(&c.opt.common.link, &cb, &c.handle);
++    if (st != IEC104_OK) {
++        std::fprintf(stderr, "invalid configuration: %s\n", iec104_status_string(st));
++        return st;
++    }
++    (void)iec104_client_set_options(c.handle, &c.opt.common.client);
++    if (c.opt.common.log_level >= 0) {
++        iec104_client_set_log(c.handle, static_cast<iec104_log_level>(c.opt.common.log_level),
++                              selftest::print_log, nullptr);
++    }
++    if (c.opt.common.use_tls &&
++        (st = iec104_client_set_tls(c.handle, &c.opt.common.tls)) != IEC104_OK) {
++        std::fprintf(stderr, "TLS settings: %s (details with --log error)\n",
++                     iec104_status_string(st));
++        iec104_client_destroy(c.handle);
++        c.handle = nullptr;
++    }
++    return st;
++}
++
+ } // namespace
+ 
+ int main(int argc, char** argv) {
+     Client c;
++    Client standby; // second connection of the switch-over test
+     c.opt.common.host = "127.0.0.1";
+     selftest::load_config_option(argc, argv, c.opt.common);
+     for (int i = 1; i < argc; ++i) {
+@@ -298,6 +373,8 @@ int main(int argc, char** argv) {
+             c.opt.ca = selftest::parse_number("--ca", value(), 65535);
+         } else if (arg == "--foreign") {
+             c.opt.foreign = true;
++        } else if (arg == "--switchover") {
++            c.opt.switchover = true;
+         } else if (arg == "--help" || arg == "-h") {
+             print_help();
+             return 0;
+@@ -307,27 +384,8 @@ int main(int argc, char** argv) {
+         }
+     }
+ 
+-    iec104_callbacks cb{};
+-    cb.user = &c;
+-    cb.on_state = on_state;
+-    cb.on_security = on_security;
+-    cb.on_object = on_object;
+-    cb.on_command_result = on_command_result;
+-    iec104_status st = iec104_client_create(&c.opt.common.link, &cb, &c.handle);
++    iec104_status st = create_handle(c);
+     if (st != IEC104_OK) {
+-        std::fprintf(stderr, "invalid configuration: %s\n", iec104_status_string(st));
+-        return 2;
+-    }
+-    (void)iec104_client_set_options(c.handle, &c.opt.common.client);
+-    if (c.opt.common.log_level >= 0) {
+-        iec104_client_set_log(c.handle, static_cast<iec104_log_level>(c.opt.common.log_level),
+-                              selftest::print_log, nullptr);
+-    }
+-    if (c.opt.common.use_tls &&
+-        (st = iec104_client_set_tls(c.handle, &c.opt.common.tls)) != IEC104_OK) {
+-        std::fprintf(stderr, "TLS settings: %s (details with --log error)\n",
+-                     iec104_status_string(st));
+-        iec104_client_destroy(c.handle);
+         return 2;
+     }
+     const auto ca = static_cast<std::uint16_t>(c.opt.ca);
+@@ -397,6 +455,17 @@ int main(int argc, char** argv) {
+         step("TLS", tls.version[0] != '\0',
+              std::string(tls.version) + ", " + tls.cipher + ", peer " + tls.peer_subject);
+     }
++    if (c.opt.switchover) {
++        // Standby: connected, data transfer stopped, supervised with TESTFR.
++        standby.opt = c.opt;
++        ok = create_handle(standby) == IEC104_OK &&
++             iec104_client_connect(standby.handle, c.opt.common.host.c_str(), c.opt.common.port) ==
++                 IEC104_OK;
++        c.other = &standby;
++        standby.other = &c;
++        ok = ok && wait_for(standby, step_ms, [&] { return standby.state == IEC104_LINK_STOPPED; });
++        step("standby connection (stopped)", ok);
++    }
+     ok = iec104_client_start(c.handle) == IEC104_OK &&
+          wait_for(c, step_ms, [&] { return c.state == IEC104_LINK_STARTED; });
+     if (step("start data transfer (STARTDT)", ok, ok ? "" : closed_detail())) {
+@@ -473,46 +542,88 @@ int main(int argc, char** argv) {
+                  });
+             step("unknown station (cause 46)", ok);
+ 
+-            // Spontaneous values of IOA 100 in order.
+-            auto spontaneous = [&](bool& in_order) {
+-                unsigned long n = 0;
+-                in_order = true;
+-                for (const Received& r : c.received) {
+-                    if (r.info.cause == IEC104_COT_SPONTANEOUS &&
+-                        r.object.ioa == selftest::kMeasurementIoa) {
+-                        in_order = in_order && r.object.value == static_cast<double>(n);
+-                        ++n;
++            if (c.opt.switchover) {
++                // Switch while the series is running: STOPDT on the first
++                // connection, STARTDT on the standby; the series must go on
++                // without a gap (the server sends it with --broadcast).
++                ok = wait_for(c, step_ms, [&] { return !series(c).empty(); }) &&
++                     series(c).size() < c.opt.expect && iec104_client_stop(c.handle) == IEC104_OK &&
++                     wait_for(
++                         c, step_ms, [&] { return c.state == IEC104_LINK_STOPPED; }) &&
++                     iec104_client_start(standby.handle) == IEC104_OK &&
++                     wait_for(
++                         standby, step_ms, [&] { return standby.state == IEC104_LINK_STARTED; });
++                step("switch-over (STOPDT, STARTDT standby)", ok,
++                     std::to_string(series(c).size()) + " values before");
++                unsigned long repeated = 0;
++                const auto expect = static_cast<long>(c.opt.expect);
++                ok = ok && wait_for(standby, step_ms,
++                                    [&] { return merged_series(c, standby, repeated) >= expect; });
++                const long n = merged_series(c, standby, repeated);
++                step("spontaneous values", ok && n == expect,
++                     n < 0 ? "gap or NOT in order"
++                           : std::to_string(n) + "/" + std::to_string(expect) + ", in order" +
++                                 (repeated > 0U ? ", " + std::to_string(repeated) + " repeated"
++                                                : ""));
++            } else {
++                // Spontaneous values of IOA 100 in order.
++                auto spontaneous = [&](bool& in_order) {
++                    unsigned long n = 0;
++                    in_order = true;
++                    for (const Received& r : c.received) {
++                        if (r.info.cause == IEC104_COT_SPONTANEOUS &&
++                            r.object.ioa == selftest::kMeasurementIoa) {
++                            in_order = in_order && r.object.value == static_cast<double>(n);
++                            ++n;
++                        }
+                     }
+-                }
+-                return n;
+-            };
+-            bool in_order = true;
+-            ok = wait_for(c, step_ms, [&] { return spontaneous(in_order) >= c.opt.expect; });
+-            const unsigned long values = spontaneous(in_order);
+-            step("spontaneous values", ok && in_order && values == c.opt.expect,
+-                 std::to_string(values) + "/" + std::to_string(c.opt.expect) +
+-                     (in_order ? ", in order" : ", NOT in order"));
++                    return n;
++                };
++                bool in_order = true;
++                ok = wait_for(c, step_ms, [&] { return spontaneous(in_order) >= c.opt.expect; });
++                const unsigned long values = spontaneous(in_order);
++                step("spontaneous values", ok && in_order && values == c.opt.expect,
++                     std::to_string(values) + "/" + std::to_string(c.opt.expect) +
++                         (in_order ? ", in order" : ", NOT in order"));
++            }
+         }
+ 
++        // After a switch-over the standby carries the data.
++        Client& m = c.opt.switchover && standby.state == IEC104_LINK_STARTED ? standby : c;
++
+         // Idle: the link stays up only if both sides answer TESTFR within t1.
+         if (c.opt.idle_s > 0U) {
+-            (void)wait_for(c, c.opt.idle_s * 1000U, [] { return false; });
+-            step("idle period (link test)", c.state == IEC104_LINK_STARTED,
+-                 c.state == IEC104_LINK_STARTED ? std::to_string(c.opt.idle_s) + " s, ok"
+-                                                : closed_detail());
++            (void)wait_for(m, c.opt.idle_s * 1000U, [] { return false; });
++            step("idle period (link test)", m.state == IEC104_LINK_STARTED,
++                 m.state == IEC104_LINK_STARTED  ? std::to_string(c.opt.idle_s) + " s, ok"
++                 : m.state == IEC104_LINK_CLOSED ? iec104_close_reason_string(m.close_reason)
++                                                 : "timeout");
++            if (c.opt.switchover) {
++                step("idle connection still open",
++                     (&m == &c ? standby : c).state == IEC104_LINK_STOPPED);
++            }
+         }
+ 
+-        ok = c.state == IEC104_LINK_STARTED && iec104_client_stop(c.handle) == IEC104_OK &&
+-             wait_for(c, step_ms, [&] { return c.state == IEC104_LINK_STOPPED; });
+-        step("stop data transfer (STOPDT)", ok, ok ? "" : closed_detail());
++        ok = m.state == IEC104_LINK_STARTED && iec104_client_stop(m.handle) == IEC104_OK &&
++             wait_for(m, step_ms, [&] { return m.state == IEC104_LINK_STOPPED; });
++        step("stop data transfer (STOPDT)", ok,
++             ok || m.state != IEC104_LINK_CLOSED ? "" : iec104_close_reason_string(m.close_reason));
+     }
+ 
+-    iec104_client_close(c.handle);
+-    (void)wait_for(c, 1000, [&] { return c.state == IEC104_LINK_CLOSED; });
++    c.other = nullptr;
++    standby.other = nullptr;
++    for (Client* k : {&standby, &c}) {
++        if (k->handle == nullptr) {
++            continue;
++        }
++        iec104_client_close(k->handle);
++        (void)wait_for(*k, 1000, [&] { return k->state == IEC104_LINK_CLOSED; });
++    }
+     iec104_link_stats stats{};
+     if (c.opt.common.stats && iec104_client_get_stats(c.handle, &stats) == IEC104_OK) {
+         selftest::print_stats(stats);
+     }
++    iec104_client_destroy(standby.handle);
+     iec104_client_destroy(c.handle);
+     std::printf("result: %s\n", passed ? "PASSED" : "FAILED");
+     return passed ? 0 : 1;
+diff --git a/tools/selftest/selftest_common.hpp b/tools/selftest/selftest_common.hpp
+index 02caabb..22ed486 100644
+--- a/tools/selftest/selftest_common.hpp
++++ b/tools/selftest/selftest_common.hpp
+@@ -39,6 +39,7 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <string>
++#include <vector>
+ 
+ namespace selftest {
+ 
+@@ -68,6 +69,7 @@ struct CommonOptions {
+     int log_level{-1}; ///< -1 = no log output, else iec104_log_level
+     bool use_tls{false};
+     iec104_tls_config tls{};
++    std::vector<iec104_group_config> groups; ///< Redundancy groups (server).
+ 
+     CommonOptions() {
+         iec104_link_config_init(&link);
+@@ -108,6 +110,7 @@ inline void load_config_option(int argc, char** argv, CommonOptions& o) {
+         o.host = c.host;
+         o.use_tls = c.use_tls != 0;
+         o.tls = c.tls;
++        o.groups.assign(&c.groups[0], &c.groups[0] + c.group_count);
+     }
+ }
+ 
+diff --git a/tools/selftest/selftest_server.cpp b/tools/selftest/selftest_server.cpp
+index b84b525..fff6646 100644
+--- a/tools/selftest/selftest_server.cpp
++++ b/tools/selftest/selftest_server.cpp
+@@ -36,6 +36,7 @@ struct Options {
+     unsigned long duration_s{0};
+     bool once{false};
+     std::string port_file;
++    bool broadcast{false}; // one series for all connections through the event buffers
+ };
+ 
+ /** @brief Progress of one connection. */
+@@ -55,6 +56,12 @@ struct Server {
+     bool switch_state{false};
+     bool finished_once{false};
+     bool once_passed{false};
++    // --broadcast: the series starts with the first STARTDT and runs to its end,
++    // whichever connection is active.
++    bool series_running{false};
++    unsigned long series_sent{0};
++    std::uint64_t series_next_ms{0};
++    bool all_passed{true};
+ };
+ 
+ std::uint64_t now_ms() {
+@@ -89,16 +96,20 @@ void on_state(void* user, std::uint32_t id, iec104_link_state state, iec104_clos
+     }
+     if (state == IEC104_LINK_STARTED) {
+         p.started = true;
++        s->series_running = true;
+     } else if (state == IEC104_LINK_STOPPED || state == IEC104_LINK_STOP_PENDING) {
+         p.started = false;
+     } else if (state == IEC104_LINK_CLOSED) {
+-        selftest::report_line("measured values sent",
+-                              std::to_string(p.sent) + "/" + std::to_string(s->opt.count));
++        if (!s->opt.broadcast) {
++            selftest::report_line("measured values sent",
++                                  std::to_string(p.sent) + "/" + std::to_string(s->opt.count));
++        }
+         selftest::report_line("requests answered (100-107)", std::to_string(p.requests));
+         selftest::report_line("commands passed to the application", std::to_string(p.commands));
+         selftest::report_line("clock synchronizations", std::to_string(p.clock_syncs));
+-        const bool passed =
+-            p.sent == s->opt.count && (reason == IEC104_CLOSE_PEER || reason == IEC104_CLOSE_LOCAL);
++        const bool passed = (s->opt.broadcast || p.sent == s->opt.count) &&
++                            (reason == IEC104_CLOSE_PEER || reason == IEC104_CLOSE_LOCAL);
++        s->all_passed = s->all_passed && passed;
+         if (s->opt.common.stats) {
+             iec104_link_stats st{};
+             if (iec104_server_get_stats(s->handle, id, &st) == IEC104_OK) {
+@@ -106,11 +117,13 @@ void on_state(void* user, std::uint32_t id, iec104_link_state state, iec104_clos
+             }
+         }
+         std::printf("connection %u result: %s\n", id, passed ? "PASSED" : "FAILED");
+-        if (s->opt.once && !s->finished_once) {
++        s->peers.erase(id);
++        // --once: one connection; with --broadcast all connections of the switch-over test.
++        const bool done = !s->opt.broadcast || (s->peers.empty() && s->series_sent >= s->opt.count);
++        if (s->opt.once && !s->finished_once && done) {
+             s->finished_once = true;
+-            s->once_passed = passed;
++            s->once_passed = s->all_passed && (!s->opt.broadcast || s->series_sent >= s->opt.count);
+         }
+-        s->peers.erase(id);
+     }
+ }
+ 
+@@ -161,8 +174,29 @@ int on_command(void* user, std::uint32_t id, const iec104_asdu_info* info,
+     return 1;
+ }
+ 
++// --broadcast: the next value of the series as event for all connections.
++void send_due_event(Server& s) {
++    const std::uint64_t now = now_ms();
++    while (s.series_running && s.series_sent < s.opt.count && now >= s.series_next_ms) {
++        const iec104_object v =
++            make(11, selftest::kMeasurementIoa, static_cast<double>(s.series_sent));
++        if (iec104_server_update(s.handle, selftest::kStation, &v) != IEC104_OK) {
++            break; // buffer full (reject): try again after the next poll
++        }
++        ++s.series_sent;
++        s.series_next_ms = now + s.opt.interval_ms;
++        if (s.opt.interval_ms > 0U) {
++            break;
++        }
++    }
++}
++
+ // Sends the next measured values that are due on every started connection.
+ void send_due_values(Server& s) {
++    if (s.opt.broadcast) {
++        send_due_event(s);
++        return;
++    }
+     const std::uint64_t now = now_ms();
+     for (auto& [id, p] : s.peers) {
+         while (p.started && p.sent < s.opt.count && now >= p.next_send_ms) {
+@@ -181,6 +215,35 @@ void send_due_values(Server& s) {
+     }
+ }
+ 
++/** @brief "--group 192.0.2.1,192.0.2.2" or "--group '*'"; prints the error. */
++bool parse_group(const char* text, std::vector<iec104_group_config>& groups) {
++    const std::string list = text != nullptr ? text : "";
++    iec104_group_config g{};
++    iec104_group_config_init(&g);
++    std::size_t n = 0;
++    std::size_t pos = 0;
++    while (pos <= list.size() && !list.empty() && list != "*") {
++        const std::size_t end = list.find(',', pos);
++        const std::string address = list.substr(pos, end == std::string::npos ? end : end - pos);
++        if (address.empty() || address.size() >= IEC104_ADDRESS_SIZE ||
++            n >= IEC104_GROUP_MAX_PEERS) {
++            std::fprintf(stderr, "invalid value for --group: %s\n", list.c_str());
++            return false;
++        }
++        std::snprintf(g.peers[n++], IEC104_ADDRESS_SIZE, "%s", address.c_str());
++        if (end == std::string::npos) {
++            break;
++        }
++        pos = end + 1U;
++    }
++    if (list.empty()) {
++        std::fprintf(stderr, "invalid value for --group\n");
++        return false;
++    }
++    groups.push_back(g);
++    return true;
++}
++
+ void add_points(Server& s) {
+     iec104_object m = make(11, selftest::kMeasurementIoa, 0);
+     iec104_object f = make(13, selftest::kFloatIoa, selftest::kFloatValue);
+@@ -201,7 +264,13 @@ void print_help() {
+                 "  --duration S     stop after S seconds (default 0 = run until Ctrl-C)\n"
+                 "  --once           exit after the first connection has closed; exit code\n"
+                 "                   0 = passed, 1 = failed\n"
+-                "  --port-file F    write the port actually used to file F (for --port 0)\n");
++                "  --port-file F    write the port actually used to file F (for --port 0)\n"
++                "  --broadcast      one series for all connections, through the event\n"
++                "                   buffers of the redundancy groups (switch-over tests)\n"
++                "  --group ADDRS    redundancy group of the controlling station with these\n"
++                "                   addresses (comma separated, * = any); repeatable\n"
++                "  --buffer N       event buffer per group (default 1000)\n"
++                "  --overflow WHAT  full buffer: drop_oldest (default) or reject\n");
+     selftest::print_common_help();
+ }
+ 
+@@ -229,6 +298,24 @@ int main(int argc, char** argv) {
+         } else if (arg == "--port-file") {
+             const char* v = value();
+             s.opt.port_file = v != nullptr ? v : "";
++        } else if (arg == "--broadcast") {
++            s.opt.broadcast = true;
++        } else if (arg == "--group") {
++            if (!parse_group(value(), s.opt.common.groups)) {
++                return 2;
++            }
++        } else if (arg == "--buffer") {
++            s.opt.common.server.event_buffer_size = static_cast<std::uint32_t>(
++                selftest::parse_number("--buffer", value(), IEC104_MAX_EVENT_BUFFER));
++        } else if (arg == "--overflow") {
++            const char* v = value();
++            const std::string what = v != nullptr ? v : "";
++            if (what != "drop_oldest" && what != "reject") {
++                std::fprintf(stderr, "invalid value for --overflow: %s\n", what.c_str());
++                return 2;
++            }
++            s.opt.common.server.overflow =
++                what == "reject" ? IEC104_OVERFLOW_REJECT : IEC104_OVERFLOW_DROP_OLDEST;
+         } else if (arg == "--help" || arg == "-h") {
+             print_help();
+             return 0;
+@@ -257,7 +344,23 @@ int main(int argc, char** argv) {
+                                     IEC104_COMMAND_SELECT_EXECUTE, selftest::kSelectTimeoutMs);
+     (void)iec104_server_add_command(s.handle, selftest::kStation, selftest::kTimedIoa, 58,
+                                     IEC104_COMMAND_DIRECT, 0);
+-    (void)iec104_server_set_options(s.handle, &s.opt.common.server);
++    if (iec104_server_set_options(s.handle, &s.opt.common.server) != IEC104_OK) {
++        std::fprintf(stderr, "invalid server options\n");
++        iec104_server_destroy(s.handle);
++        return 2;
++    }
++    std::vector<std::uint32_t> group_ids;
++    for (iec104_group_config g : s.opt.common.groups) {
++        g.buffer_size = s.opt.common.server.event_buffer_size; // --buffer, --overflow
++        g.overflow = s.opt.common.server.overflow;
++        std::uint32_t id = 0;
++        if (iec104_server_add_group(s.handle, &g, &id) != IEC104_OK) {
++            std::fprintf(stderr, "invalid redundancy group\n");
++            iec104_server_destroy(s.handle);
++            return 2;
++        }
++        group_ids.push_back(id);
++    }
+     if (s.opt.common.log_level >= 0) {
+         iec104_server_set_log(s.handle, static_cast<iec104_log_level>(s.opt.common.log_level),
+                               selftest::print_log, nullptr);
+@@ -294,6 +397,22 @@ int main(int argc, char** argv) {
+         (void)iec104_server_poll(s.handle, 5);
+         std::fflush(stdout);
+     }
++    if (s.opt.broadcast) {
++        selftest::report_line("series sent as events",
++                              std::to_string(s.series_sent) + "/" + std::to_string(s.opt.count));
++    }
++    for (const std::uint32_t id : group_ids) {
++        iec104_group_stats g{};
++        if (s.opt.common.stats && iec104_server_get_group_stats(s.handle, id, &g) == IEC104_OK) {
++            std::printf("group %u: events %llu, buffered %u, dropped %llu, rejected %llu,"
++                        " resent %llu, switch-overs %llu\n",
++                        id, static_cast<unsigned long long>(g.events), g.buffered,
++                        static_cast<unsigned long long>(g.dropped),
++                        static_cast<unsigned long long>(g.rejected),
++                        static_cast<unsigned long long>(g.resent),
++                        static_cast<unsigned long long>(g.switchovers));
++        }
++    }
+     iec104_server_destroy(s.handle);
+     if (s.opt.once) {
+         return s.finished_once && s.once_passed ? 0 : 1;
