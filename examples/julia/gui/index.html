@@ -1,0 +1,202 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 SOPTIM AG
+SPDX-License-Identifier: LicenseRef-Proprietary
+Author: Udo Schmitz (SOPTIM AG)
+All rights reserved by SOPTIM AG.
+
+Test GUI of the IEC 104 library; served by iec104_gui.jl.
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>IEC 104 Test-GUI</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #222; }
+  header { background: #2c3e50; color: #fff; padding: 8px 16px; display: flex; gap: 16px; align-items: baseline; }
+  header h1 { font-size: 17px; margin: 0; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; }
+  section { background: #fff; border: 1px solid #d8dbe0; border-radius: 6px; padding: 10px 12px; min-width: 0; }
+  section.wide { grid-column: 1 / 3; }
+  h2 { font-size: 15px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+  .state { font-weight: normal; font-size: 13px; padding: 1px 8px; border-radius: 10px; background: #e3e6ea; }
+  .state.started { background: #c9f0d2; } .state.closed { background: #f6d2d2; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+  label { font-size: 12px; color: #555; display: flex; flex-direction: column; }
+  input, select { font: inherit; padding: 3px 5px; border: 1px solid #c4c8ce; border-radius: 4px; }
+  input.s { width: 60px; } input.m { width: 110px; } input.l { width: 220px; }
+  button { font: inherit; padding: 4px 10px; border: 1px solid #8a94a3; border-radius: 4px; background: #eef1f5; cursor: pointer; }
+  button:hover { background: #dfe5ec; } button.main { background: #2c6fb3; color: #fff; border-color: #2c6fb3; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border-bottom: 1px solid #eceef1; padding: 3px 6px; text-align: left; white-space: nowrap; }
+  th { background: #f0f2f5; position: sticky; top: 0; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .scroll { max-height: 340px; overflow: auto; }
+  .neg { color: #b02a2a; } .fresh { background: #fff6cc; }
+  #log { font: 12px ui-monospace, monospace; max-height: 220px; overflow: auto; white-space: pre-wrap; }
+  #err { color: #b02a2a; }
+  details { margin: 4px 0; }
+</style>
+</head>
+<body>
+<header><h1>IEC 60870-5-104 Test-GUI</h1><span id="err"></span></header>
+<main>
+
+<section>
+  <h2>Leitstelle (Client) <span id="cstate" class="state">–</span></h2>
+  <div class="row">
+    <label>Adresse<input id="host" class="m" value="127.0.0.1"></label>
+    <label>Port<input id="port" class="s" value="2404"></label>
+    <label>Station (CA)<input id="station" class="s" value="1"></label>
+    <label>&nbsp;<button class="main" onclick="connect()">Verbinden</button></label>
+    <label>&nbsp;<button onclick="act('client/start')">STARTDT</button></label>
+    <label>&nbsp;<button onclick="act('client/stop')">STOPDT</button></label>
+    <label>&nbsp;<button onclick="act('client/close')">Trennen</button></label>
+  </div>
+  <details><summary>Timer, Fenster, TLS</summary>
+    <div class="row">
+      <label>t0 s<input id="t0" class="s" placeholder="30"></label>
+      <label>t1 s<input id="t1" class="s" placeholder="15"></label>
+      <label>t2 s<input id="t2" class="s" placeholder="10"></label>
+      <label>t3 s<input id="t3" class="s" placeholder="20"></label>
+      <label>k<input id="k" class="s" placeholder="12"></label>
+      <label>w<input id="w" class="s" placeholder="8"></label>
+      <label>tolerant<input id="tolerant" type="checkbox"></label>
+    </div>
+    <div class="row">
+      <label>TLS<input id="tls" type="checkbox"></label>
+      <label>CA (PEM)<input id="ca" class="l"></label>
+      <label>Zertifikat<input id="cert" class="l"></label>
+      <label>Schlüssel<input id="key" class="l"></label>
+      <label>Name der Gegenstelle<input id="peer" class="m"></label>
+    </div>
+  </details>
+  <div class="row">
+    <button onclick="act('client/gi', {qoi: document.getElementById('qoi').value})">Generalabfrage</button>
+    <select id="qoi"><option value="20">Station</option></select>
+    <button onclick="act('client/ci')">Zählerabfrage</button>
+    <button onclick="act('client/clock')">Uhrzeit setzen</button>
+    <button onclick="act('client/clear')">Tabelle leeren</button>
+  </div>
+  <div class="row">
+    <label>Befehl<select id="ctype"></select></label>
+    <label>IOA<input id="cioa" class="m" value="6000"></label>
+    <label>Wert<input id="cvalue" class="s" value="1"></label>
+    <label>Ablauf<select id="cmode"><option value="direct">direkt</option><option value="sbo">Select/Execute</option></select></label>
+    <label>&nbsp;<button class="main" onclick="command()">Senden</button></label>
+  </div>
+  <div class="scroll"><table>
+    <thead><tr><th>Stat.</th><th>IOA</th><th>Typ</th><th>Wert</th><th>Qualität</th><th>Ursache</th><th>Zeitmarke</th><th>Anz.</th><th>Alter s</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Station (Server) <span id="sstate" class="state">aus</span></h2>
+  <div class="row">
+    <label>Port<input id="sport" class="s" value="2404"></label>
+    <label>Station (CA)<input id="sstation" class="s" value="1"></label>
+    <label>&nbsp;<button class="main" onclick="act('server/listen', {port: v('sport'), station: v('sstation')})">Starten</button></label>
+    <label>&nbsp;<button onclick="act('server/stop')">Beenden</button></label>
+    <label>Befehle annehmen<input id="accept" type="checkbox" checked onchange="act('server/accept', {on: this.checked ? 1 : 0})"></label>
+  </div>
+  <div class="row">
+    <label>Datenpunkt<select id="ptype"></select></label>
+    <label>IOA<input id="pioa" class="m" value="100"></label>
+    <label>Wert<input id="pvalue" class="s" value="0"></label>
+    <label>&nbsp;<button class="main" onclick="act('server/point', {type: v('ptype'), ioa: v('pioa'), value: v('pvalue')})">Anlegen / senden</button></label>
+  </div>
+  <div class="scroll"><table>
+    <thead><tr><th>IOA</th><th>Typ</th><th>Wert</th><th></th></tr></thead>
+    <tbody id="points"></tbody>
+  </table></div>
+  <p>Verbindungen: <span id="conns">keine</span></p>
+</section>
+
+<section class="wide">
+  <h2>Ereignisse</h2>
+  <div id="log"></div>
+</section>
+</main>
+
+<script>
+const TYPES = {1:'M_SP_NA_1 Einzelmeldung', 3:'M_DP_NA_1 Doppelmeldung', 5:'M_ST_NA_1 Stufenstellung',
+  7:'M_BO_NA_1 Bitmuster', 9:'M_ME_NA_1 Messwert normiert', 11:'M_ME_NB_1 Messwert skaliert',
+  13:'M_ME_NC_1 Messwert Gleitkomma', 15:'M_IT_NA_1 Zählwert', 30:'M_SP_TB_1 Einzelmeldung+Zeit',
+  31:'M_DP_TB_1 Doppelmeldung+Zeit', 34:'M_ME_TD_1 normiert+Zeit', 35:'M_ME_TE_1 skaliert+Zeit',
+  36:'M_ME_TF_1 Gleitkomma+Zeit', 37:'M_IT_TB_1 Zählwert+Zeit', 45:'C_SC_NA_1 Einzelbefehl',
+  46:'C_DC_NA_1 Doppelbefehl', 47:'C_RC_NA_1 Stufenbefehl', 48:'C_SE_NA_1 Sollwert normiert',
+  49:'C_SE_NB_1 Sollwert skaliert', 50:'C_SE_NC_1 Sollwert Gleitkomma', 58:'C_SC_TA_1 Einzelbefehl+Zeit',
+  59:'C_DC_TA_1 Doppelbefehl+Zeit', 61:'C_SE_TA_1 Sollwert normiert+Zeit', 62:'C_SE_TB_1 Sollwert skaliert+Zeit',
+  63:'C_SE_TC_1 Sollwert Gleitkomma+Zeit', 70:'M_EI_NA_1 Ende Initialisierung', 100:'C_IC_NA_1 Generalabfrage',
+  101:'C_CI_NA_1 Zählerabfrage', 103:'C_CS_NA_1 Uhrzeit', 107:'C_TS_TA_1 Test'};
+const CAUSES = {1:'zyklisch', 2:'Hintergrund', 3:'spontan', 4:'initialisiert', 5:'Abfrage', 6:'Aktivierung',
+  7:'Bestätigung', 8:'Abbruch', 9:'Abbruch bestätigt', 10:'Beendigung', 11:'Rückmeldung fern',
+  12:'Rückmeldung lokal', 20:'Generalabfrage', 37:'Zählerabfrage', 44:'Typ unbekannt',
+  45:'Ursache unbekannt', 46:'Station unbekannt', 47:'IOA unbekannt'};
+for (let g = 1; g <= 16; g++) CAUSES[20 + g] = 'Gruppe ' + g;
+const opt = (sel, keys) => keys.forEach(k => sel.add(new Option(k + ' ' + TYPES[k], k)));
+opt(document.getElementById('ctype'), [45, 46, 47, 48, 49, 50, 58, 59, 61, 62, 63]);
+opt(document.getElementById('ptype'), [1, 3, 5, 9, 11, 13, 15]);
+document.getElementById('ptype').value = 13;
+const qoi = document.getElementById('qoi');
+for (let g = 1; g <= 16; g++) qoi.add(new Option('Gruppe ' + g, 20 + g));
+
+const v = id => document.getElementById(id).value;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const typeName = t => TYPES[t] ? TYPES[t].split(' ')[0] : t;
+
+async function act(path, params = {}) {
+  const r = await fetch('/api/' + path + '?' + new URLSearchParams(params));
+  const j = await r.json();
+  document.getElementById('err').textContent = j.ok ? '' : j.error;
+  refresh();
+}
+function connect() {
+  const checked = id => document.getElementById(id).checked ? 1 : 0;
+  const p = {host: v('host'), port: v('port'), station: v('station'), tls: checked('tls'),
+             tolerant: checked('tolerant')};
+  for (const k of ['t0', 't1', 't2', 't3', 'k', 'w', 'ca', 'cert', 'key', 'peer']) p[k] = v(k);
+  act('client/connect', p);
+}
+function command() { act('client/command', {type: v('ctype'), ioa: v('cioa'), value: v('cvalue'), mode: v('cmode')}); }
+function sendPoint(ioa, type, delta) {
+  const input = document.getElementById('pv' + ioa);
+  const value = delta === undefined ? input.value : String(Number(input.value) + delta);
+  act('server/point', {ioa, type, value});
+}
+
+let since = 0;
+async function refresh() {
+  let s;
+  try { s = await (await fetch('/api/state?since=' + since)).json(); }
+  catch (e) { document.getElementById('err').textContent = 'GUI-Programm nicht erreichbar'; return; }
+  const cs = document.getElementById('cstate');
+  cs.textContent = s.client.state;
+  cs.className = 'state ' + (s.client.state === 'started' ? 'started' : s.client.state === 'closed' ? 'closed' : '');
+  document.getElementById('rows').innerHTML = s.client.rows.map(r =>
+    `<tr class="${r.age < 2 ? 'fresh' : ''}"><td>${r.station}</td><td class="num">${r.ioa}</td>` +
+    `<td title="${esc(TYPES[r.type] || '')}">${r.type} ${esc(typeName(r.type))}</td>` +
+    `<td class="num">${r.type === 7 ? '0x' + r.bits.toString(16) : r.value}</td><td>${esc(r.quality)}</td>` +
+    `<td class="${r.negative ? 'neg' : ''}">${r.cause} ${esc(CAUSES[r.cause] || '')}${r.negative ? ' negativ' : ''}</td>` +
+    `<td>${esc(r.time)}</td><td class="num">${r.count}</td><td class="num">${r.age}</td></tr>`).join('');
+  const ss = document.getElementById('sstate');
+  ss.textContent = s.server.running ? 'Port ' + s.server.port + ', Station ' + s.server.station : 'aus';
+  ss.className = 'state ' + (s.server.running ? 'started' : '');
+  if (document.activeElement === null || !document.activeElement.id.startsWith('pv'))
+    document.getElementById('points').innerHTML = s.server.points.map(p =>
+      `<tr><td class="num">${p.ioa}</td><td>${p.type} ${esc(typeName(p.type))}</td>` +
+      `<td><input id="pv${p.ioa}" class="s" value="${p.value}"></td>` +
+      `<td><button onclick="sendPoint(${p.ioa}, ${p.type})">Senden</button> ` +
+      `<button onclick="sendPoint(${p.ioa}, ${p.type}, 1)">+1</button></td></tr>`).join('');
+  document.getElementById('conns').textContent =
+    s.server.connections.map(c => c.id + ': ' + c.state).join(', ') || 'keine';
+  const log = document.getElementById('log');
+  for (const e of s.log) { log.textContent += e.time + '  ' + e.text + '\n'; since = e.seq; }
+  if (s.log.length) log.scrollTop = log.scrollHeight;
+}
+setInterval(refresh, 500);
+refresh();
+</script>
+</body>
+</html>

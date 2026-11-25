@@ -1,6 +1,6 @@
 # Änderungen
 
-## In Arbeit (nächste Lieferung)
+## 0.5.0 (25.11.2026)
 
 | Bereich | Änderung |
 | --- | --- |
@@ -10,6 +10,8 @@
 | Selbsttest | Client `--series-ioa`; `--switchover` auch gegen fremde Server; klare Meldung bei fehlendem ACTCON/ACTTERM |
 | Tests | Referenzmitschnitt über TLS (`Capture.ForeignTlsServer`); Test-PKI auch mit RSA-Schlüsseln |
 | Doku | README mit Schnellstart ohne Bauen, Feature-Liste, Tests, Test gegen lib60870 |
+| Test-GUI | `examples/julia/gui/`: Oberfläche im Browser für Leitstelle und Station (Abfragen, Befehle mit Select/Execute, Werte, TLS, Ereignisse); nur Julia-Standardbibliothek |
+| Julia | `IEC104.jl` um Befehle, Uhrzeit, Zählerabfrage, TLS, Log und Texte der Zustände erweitert |
 
 ## 0.4.0 (25.11.2026)
 

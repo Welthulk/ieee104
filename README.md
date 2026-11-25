@@ -2,7 +2,7 @@
 
 Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
 
-Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
+Stand: 25.11.2026, Version 0.5.0, Linux x86-64.
 
 ## Sofort nutzen, ohne zu bauen
 
@@ -10,15 +10,17 @@ Stand: 25.11.2026, Version 0.4.0, Linux x86-64.
 | --- | --- |
 | Fertig gebaute Library für Linux x86-64 (Release, mit TLS) | `dist/iec104-<version>-linux-x86_64/` (in der Lieferung als gleichnamiges Zip): `lib/libiec104.so.0`, `include/iec104/iec104.h`, Kurzanleitung `README.md` |
 | Beispielprogramme für Julia | `julia/` im selben Ordner bzw. `examples/julia/`: `IEC104.jl` (Anbindung), `client.jl`, `server.jl`; Anleitung `docs/07_Julia.md` |
+| Test-GUI im Browser | `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080`: Leitstelle und Station mit Abfragen, Befehlen, Werten, TLS (`docs/07_Julia.md`, Abschnitt 7) |
 | Beispielprogramme in C | `examples/hello_server.c`, `examples/hello_client.c`; Anleitung `docs/06_Anleitung.md` |
 
 Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab 2.34, OpenSSL 3).
 
 ```bash
-cd dist/iec104-0.4.0-linux-x86_64
+cd dist/iec104-0.5.0-linux-x86_64
 gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
 julia julia/server.jl 2404 &                                                       # Julia: Station
 julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
+julia julia/gui/iec104_gui.jl                                                      # Test-GUI: http://localhost:8080
 ```
 
 ## Funktionen
@@ -34,7 +36,7 @@ julia julia/client.jl 127.0.0.1 2404                                            
 | Sicherheit | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3: gegenseitige Authentifizierung, Sperrlisten, Prüfung von Name oder Fingerprint, Key Update und Renegotiation, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse; Abweisung unbekannter Absender |
 | Betrieb | Log mit Stufen bis zum APDU-Hexdump, Statistik je Verbindung und Gruppe, Konfigurationsdatei, kein interner Thread (Poll im Thread der Anwendung) |
 | Einbindung | stabile C-Schnittstelle (ein Header), statisch oder geteilt, `find_package(iec104)`, Anbindung für Julia per `ccall`; fertig gebaute Library |
-| Werkzeuge | Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870 |
+| Werkzeuge | Test-GUI im Browser (Leitstelle und Station); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870 |
 
 ## Tests
 

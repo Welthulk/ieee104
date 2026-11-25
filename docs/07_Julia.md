@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
 Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
 
 ```bash
-cd iec104-0.4.0-linux-x86_64
+cd iec104-0.5.0-linux-x86_64
 julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
 julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
 ```
@@ -155,3 +155,28 @@ end
 | `try … finally *_destroy(handle) end` | schließt Verbindungen auch nach Strg-C oder Fehler |
 | `IEC104.jl` und Library aus derselben Version verwenden | Strukturen können sich zwischen Versionen ändern; `IEC104.jl` prüft die Größen beim Laden |
 | Typen, Ursachen und Qualitätsbits: Tabellen in `include/iec104/iec104.h` | Kommentar zu `iec104_object` |
+
+## 7. Test-GUI im Browser
+
+`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server). Es braucht nur Julia, keine Pakete.
+
+```bash
+julia julia/gui/iec104_gui.jl            # im Binärpaket; im Quellbaum examples/julia/gui/
+```
+
+Dann im Browser `http://localhost:8080` öffnen; unter WSL auch aus Windows heraus. Anderer Port: `julia julia/gui/iec104_gui.jl 8081`.
+
+| Bereich | Funktionen |
+| --- | --- |
+| Leitstelle | Verbinden (Adresse, Port, Station, Timer, k, w, tolerant, TLS mit CA, Zertifikat, Schlüssel, Name), STARTDT, STOPDT, Trennen; Generalabfrage (Station, Gruppe 1–16), Zählerabfrage, Uhrzeit; Befehle 45–50 und 58–63 direkt oder mit Select/Execute |
+| Tabelle | jeder empfangene Punkt mit Typ, Wert, Qualität, Ursache (negativ rot), Zeitmarke, Anzahl, Alter; frische Werte hervorgehoben |
+| Station | Starten auf Port/Station, Datenpunkte anlegen (Typen 1, 3, 5, 9, 11, 13, 15), Wert ändern und spontan senden (+1 für schnelle Tests), Befehle annehmen oder ablehnen, Verbindungen |
+| Ereignisse | Zustände, Befehle und ihr Ergebnis, TLS-Ereignisse, Fehler und Warnungen der Library |
+
+Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Punkt anlegen, Leitstelle auf `127.0.0.1:2404` verbinden, STARTDT, Generalabfrage.
+
+| Hinweis | Grund |
+| --- | --- |
+| Die GUI lauscht nur auf `127.0.0.1` | sie hat keine Anmeldung und kann Befehle senden; eine andere Adresse nur bewusst als zweiter Parameter |
+| Die GUI ist ein Testwerkzeug | eine Verbindung je Seite, kein Speichern der Einstellungen |
+| Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`) und `index.html` (Seite) |

@@ -61,7 +61,7 @@ extern "C" {
 /** @brief Major version of this header. Incompatible API changes increment it. */
 #define IEC104_VERSION_MAJOR 0
 /** @brief Minor version of this header. Compatible additions increment it. */
-#define IEC104_VERSION_MINOR 4
+#define IEC104_VERSION_MINOR 5
 /** @brief Patch version of this header. Fixes without API change increment it. */
 #define IEC104_VERSION_PATCH 0
 

@@ -43,7 +43,7 @@ Für `-liec104` einmal `ln -s libiec104.so.0 lib/libiec104.so` anlegen. `find_pa
 Eigenes CMake-Projekt:
 
 ```cmake
-find_package(iec104 0.4 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
+find_package(iec104 0.5 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
 target_link_libraries(meine_app PRIVATE iec104::iec104)
 ```
 
