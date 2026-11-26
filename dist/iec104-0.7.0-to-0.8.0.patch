@@ -1,0 +1,1787 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index ea71040..bfc21be 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,17 @@
+ # Änderungen
+ 
++## 0.8.0 (26.11.2026)
++
++| Bereich | Änderung |
++| --- | --- |
++| Test-GUI | Selbsttest: 22 Schritte (mit lib60870-Ordner 23) mit eigener Station und Leitstelle auf 127.0.0.1, je Schritt Zweck, Erwartung, Beobachtung; „Protokoll kopieren“ (Kurzfassung) und „Protokoll speichern“ (alle Rahmen); Ersatz per markiertem Textfeld, wo der Browser die Zwischenablage sperrt |
++| Test-GUI | Jeder gesendete und empfangene Rahmen unter Ereignisse dekodiert (I/S/U, Typ, Ursache, Station, erstes Objekt mit Wert, Qualität, Zeitmarke) und in einem Satz erklärt; ein- und ausblendbar, „Ereignisse kopieren“; Warnungen braun, Fehler rot |
++| Test-GUI | Wert an der Station ohne Leitstelle mit STARTDT: Hinweis „gespeichert, nichts gesendet“ |
++| Test-GUI | Korrekturen aus der Prüfung: Datenpunkt wird auch ohne laufende Station geprüft (blockierte sonst den Start, Meldung nennt jetzt die IOA); Klicks in der Punkttabelle gehen nicht mehr verloren; nach Neustart der GUI zeigt die offene Seite wieder Ereignisse; Zustand nach erneutem Verbinden stimmt; Tabelle der Leitstelle zeigt höchstens 1000 Punkte; Download des Protokolls bricht in Firefox nicht mehr ab |
++| Test-GUI | Rahmen im Klartext: Quittung nach Überlauf der Folgenummer richtig, unvollständiges Element behält den Kopf |
++| Werkzeug | `wsl_ausprobieren.sh`: kein „detached HEAD“-Hinweis mehr beim Holen von lib60870 |
++| Test | `tests/gui/test_frames.jl` (ctest `Julia.Frames`, nur Julia) mit Rahmen aus dem lib60870-Mitschnitt; `test_gui.sh` startet den Selbsttest und prüft Ergebnis und Protokoll |
++
+ ## 0.7.0 (26.11.2026)
+ 
+ | Bereich | Änderung |
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 7ffd0fb..8e654ea 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,7 @@
+ cmake_minimum_required(VERSION 3.21)
+ 
+ project(iec104
+-    VERSION 0.7.0
++    VERSION 0.8.0
+     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
+     LANGUAGES C CXX)
+ 
+@@ -310,10 +310,18 @@ endif()
+ # ---------------------------------------------------------------------------
+ # Test GUI in Julia (examples/julia/gui) over HTTP, only on 127.0.0.1. Needs
+ # the shared library, Julia and curl; with IEC104_LIB60870_DIR also with
+-# lib60870 as controlling station against the station of the GUI.
++# lib60870 as controlling station against the station of the GUI. The frame
++# description of the commented protocol (frames.jl) only needs Julia.
+ # ---------------------------------------------------------------------------
+-if(IEC104_BUILD_TESTS AND BUILD_SHARED_LIBS)
++if(IEC104_BUILD_TESTS)
+     find_program(IEC104_JULIA julia)
++    if(IEC104_JULIA)
++        add_test(NAME Julia.Frames
++            COMMAND ${IEC104_JULIA} --startup-file=no ${PROJECT_SOURCE_DIR}/tests/gui/test_frames.jl)
++        set_tests_properties(Julia.Frames PROPERTIES TIMEOUT 300)
++    endif()
++endif()
++if(IEC104_BUILD_TESTS AND BUILD_SHARED_LIBS)
+     find_program(IEC104_CURL curl)
+     if(IEC104_JULIA AND IEC104_CURL)
+         set(_gui_env "JULIA=${IEC104_JULIA}" "CURL=${IEC104_CURL}")
+diff --git a/README.md b/README.md
+index 49fcd6b..8af1d6c 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
+ 
+-Stand: 26.11.2026, Version 0.7.0, Linux x86-64.
++Stand: 26.11.2026, Version 0.8.0, Linux x86-64.
+ 
+ ## Sofort nutzen, ohne zu bauen
+ 
+@@ -10,7 +10,7 @@ Stand: 26.11.2026, Version 0.7.0, Linux x86-64.
+ | --- | --- |
+ | Fertig gebaute Library für Linux x86-64 (Release, mit TLS) | `dist/iec104-<version>-linux-x86_64/` (in der Lieferung als gleichnamiges Zip): `lib/libiec104.so.0`, `include/iec104/iec104.h`, Kurzanleitung `README.md` |
+ | Beispielprogramme für Julia | `julia/` im selben Ordner bzw. `examples/julia/`: `IEC104.jl` (Anbindung), `client.jl`, `server.jl`; Anleitung `docs/07_Julia.md` |
+-| Test-GUI im Browser | `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080`: Leitstelle und Station mit Abfragen, Befehlen, Werten, TLS (`docs/07_Julia.md`, Abschnitt 7) |
++| Test-GUI im Browser | `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080`: Leitstelle und Station mit Abfragen, Befehlen, Werten, TLS; Selbsttest mit Protokoll zum Weitergeben; jeder Rahmen im Klartext erklärt (`docs/07_Julia.md`, Abschnitt 7) |
+ | Beispielprogramme in C | `examples/hello_server.c`, `examples/hello_client.c`; Anleitung `docs/06_Anleitung.md` |
+ 
+ Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab 2.34, OpenSSL 3).
+@@ -18,7 +18,7 @@ Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab
+ Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iee104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
+ 
+ ```bash
+-cd dist/iec104-0.7.0-linux-x86_64
++cd dist/iec104-0.8.0-linux-x86_64
+ gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
+ julia julia/server.jl 2404 &                                                       # Julia: Station
+ julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
+@@ -38,7 +38,7 @@ julia julia/gui/iec104_gui.jl
+ | Sicherheit | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3: gegenseitige Authentifizierung, Sperrlisten, Prüfung von Name oder Fingerprint, Key Update und Renegotiation, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse; Abweisung unbekannter Absender |
+ | Betrieb | Log mit Stufen bis zum APDU-Hexdump, Statistik je Verbindung und Gruppe, Konfigurationsdatei, kein interner Thread (Poll im Thread der Anwendung) |
+ | Einbindung | stabile C-Schnittstelle (ein Header), statisch oder geteilt, `find_package(iec104)`, Anbindung für Julia per `ccall`; fertig gebaute Library |
+-| Werkzeuge | Test-GUI im Browser (Leitstelle und Station, dazu lib60870 als fremde Leitstelle gegen die eigene Station); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870; Interoperabilitätsliste für die eigene Konfiguration (`iec104_interop_list`, Markdown oder CSV) |
++| Werkzeuge | Test-GUI im Browser (Leitstelle und Station, dazu lib60870 als fremde Leitstelle gegen die eigene Station, Selbsttest mit kommentiertem Protokoll, Rahmen im Klartext); Selbsttest-Server und -Client für automatische und manuelle Tests, auch gegen fremde Geräte; Interop-Skript gegen lib60870; Interoperabilitätsliste für die eigene Konfiguration (`iec104_interop_list`, Markdown oder CSV) |
+ 
+ ## Tests
+ 
+diff --git a/docs/07_Julia.md b/docs/07_Julia.md
+index 53ee66d..63f7e65 100644
+--- a/docs/07_Julia.md
++++ b/docs/07_Julia.md
+@@ -1,6 +1,6 @@
+ # Anleitung: Library aus Julia verwenden
+ 
+-Stand: 25.11.2026 · geprüft mit Julia 1.13 · Dateien: `examples/julia/` (im Binärpaket `julia/`)
++Stand: 26.11.2026 · geprüft mit Julia 1.13 · Dateien: `examples/julia/` (im Binärpaket `julia/`)
+ 
+ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu installieren und nichts zu übersetzen: Die fertig gebaute Library und die Datei `IEC104.jl` genügen.
+ 
+@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
+ Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
+ 
+ ```bash
+-cd iec104-0.7.0-linux-x86_64
++cd iec104-0.8.0-linux-x86_64
+ julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
+ julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
+ ```
+@@ -158,7 +158,7 @@ end
+ 
+ ## 7. Test-GUI im Browser
+ 
+-`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server), darunter lib60870 als fremde Leitstelle. Es braucht nur Julia, keine Pakete.
++`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server), darunter lib60870 als fremde Leitstelle, ein Selbsttest und das Ereignisprotokoll mit erklärten Rahmen. Es braucht nur Julia, keine Pakete.
+ 
+ ```bash
+ julia julia/gui/iec104_gui.jl [port] [adresse] [lib60870]   # im Binärpaket; im Quellbaum examples/julia/gui/
+@@ -178,7 +178,8 @@ Dann im Browser `http://localhost:8080` öffnen. Kommt unter WSL der Windows-Bro
+ | Tabelle | jeder empfangene Punkt mit Typ, Wert, Qualität, Ursache (negativ rot), Zeitmarke, Anzahl, Alter; frische Werte hervorgehoben |
+ | Station | Starten auf Port/Station, Datenpunkte anlegen (Typen 1, 3, 5, 9, 11, 13, 15), Wert ändern und spontan senden (+1 für schnelle Tests), Befehle annehmen oder ablehnen, Verbindungen |
+ | Gegenstelle lib60870 | ein Leitstellen-Beispiel von lib60870 gegen die eigene Station starten und beenden (Abschnitt 7.1) |
+-| Ereignisse | Zustände, Abfragen und Befehle an die Station, Befehlsergebnisse, TLS-Ereignisse, Fehler und Warnungen der Library, Ausgabe von lib60870 |
++| Selbsttest | prüft die Library mit eigener Station und Leitstelle (Abschnitt 7.2) |
++| Ereignisse | Zustände, Abfragen und Befehle an die Station, Befehlsergebnisse, TLS-Ereignisse, Fehler (rot) und Warnungen (braun) der Library, Ausgabe von lib60870; jeder gesendete und empfangene Rahmen dekodiert und erklärt (Abschnitt 7.3); „Ereignisse kopieren“ |
+ 
+ Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Punkt anlegen, Leitstelle auf `127.0.0.1:2404` verbinden, STARTDT, Generalabfrage.
+ 
+@@ -187,8 +188,8 @@ Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Pu
+ | GUI und Station lauschen nur auf `127.0.0.1` | die GUI hat keine Anmeldung, kann Befehle senden und Programme starten; eine andere Adresse nur bewusst als zweiter Parameter |
+ | Anfragen nur mit Host `localhost` oder IP-Adresse samt Port der GUI, `/api/` nur mit Kopfzeile `X-IEC104-GUI: 1`, nur GET, kein CORS, nicht einbettbar | eine fremde Webseite im selben Browser kann die GUI nicht steuern, auch nicht über DNS-Rebinding |
+ | Die GUI ist ein Testwerkzeug | eine Verbindung je Seite, kein Speichern der Einstellungen |
+-| Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`) und `index.html` (Seite) |
+-| Test | `tests/gui/test_gui.sh`; in `ctest` (Preset `shared`) als `Julia.Gui`, mit `IEC104_LIB60870_DIR` auch `Julia.GuiLib60870` |
++| Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`), `selftest.jl` (Selbsttest), `frames.jl` (Rahmen in Worten), `index.html` (Seite) |
++| Test | `tests/gui/test_gui.sh` mit Selbsttest; in `ctest` (Preset `shared`) als `Julia.Gui`, mit `IEC104_LIB60870_DIR` auch `Julia.GuiLib60870`; `tests/gui/test_frames.jl` als `Julia.Frames` (nur Julia) |
+ 
+ ### 7.1 Gegenstelle lib60870
+ 
+@@ -216,3 +217,53 @@ Ablauf: Station mit Station (CA) 1 starten, Datenpunkt anlegen, unter „Gegenst
+ | Eine Gegenstelle zur Zeit; Beenden schickt SIGINT, nach 3 s SIGKILL; endet die GUI, endet die Gegenstelle mit | kein Prozess bleibt zurück |
+ | Ausgabe zeilenweise, Zeilen über 300 Zeichen gekürzt | mit `stdbuf` (coreutils) sofort, sonst erst beim Ende des Programms |
+ | Prozess und Ausgabe laufen in normalen Julia-Tasks, nie in einem Callback | Regel aus Abschnitt 4 |
++
++### 7.2 Selbsttest
++
++**Selbsttest starten** prüft die Library in etwa 20 Sekunden mit eigener Station und Leitstelle auf `127.0.0.1` (freier Port). Station und Leitstelle oben auf der Seite bleiben unberührt. Jeder Schritt nennt Zweck, Erwartung und Beobachtung.
++
++| Nr. | Schritt | Erwartet |
++| --- | --- | --- |
++| 1–3 | Station starten (IOA 101–108, Typen 1, 3, 5, 9, 11, 13, 15), verbinden, STARTDT | Ende der Initialisierung (Typ 70, Ursache 4) |
++| 4–5 | Generalabfrage Station, Gruppe 2 | Bestätigung, alle Punkte außer dem Zählwert mit Ursache 20 bzw. nur IOA 108 mit Ursache 22, Beendigung |
++| 6–7 | Zählerabfrage, Lesebefehl | Zählwert mit Ursache 37; IOA 106 mit Ursache 5 |
++| 8 | Werte je Meldetyp ändern | 6 Werte spontan (Ursache 3) mit dem neuen Wert |
++| 9 | Uhrzeit setzen | Station nimmt an, positive Bestätigung |
++| 10–12 | Befehle 45–50 direkt, 45 mit Select/Execute, 58–63 mit Zeitmarke | „ausgeführt“ (Bestätigung und Beendigung); bei Select erst „ausgewählt“ |
++| 13–15 | Befehl abgelehnt, unbekannte IOA, unbekannte Station | negative Antwort; Ursache 47 bzw. 46 |
++| 16 | Einzelbefehl mit Wert 2 | vor dem Senden abgewiesen, kein Rahmen |
++| 17–18 | STOPDT, Wert ändern, STARTDT | im gestoppten Zustand kein Wert, danach kommt der gepufferte Wert nach (docs/05, E10) |
++| 19 | Ruhe, Leitstelle mit t3 = 3 s | TESTFR act und TESTFR con |
++| 20–22 | Trennen, Rahmenstatistik, Fehler der Library | beide Seiten getrennt; alle Rahmen lesbar; keine Fehler, Warnungen nur für die provozierten negativen Antworten |
++| 23 | lib60870 `simple_client` gegen die Station (nur mit lib60870-Ordner, sonst übersprungen) | Verbindung, STARTDT, Generalabfrage, Testbefehl, Rückgabe 0 |
++
++| Knopf | Inhalt |
++| --- | --- |
++| Protokoll kopieren | Kurzfassung: Version, Umgebung, Ergebnis, Tabelle aller Schritte, Einzelheiten und Rahmen nur der fehlgeschlagenen Schritte; zum Weitergeben, z. B. in einer Fehlermeldung |
++| Protokoll speichern | Textdatei `iec104_selbsttest_<datum>_<zeit>.txt` mit allen Schritten und allen Rahmen |
++
++Über `http://localhost:…` kopiert der Knopf direkt in die Zwischenablage. Über eine andere Adresse (z. B. die WSL-Adresse) sperrt der Browser die Zwischenablage; dann erscheint der Text markiert in einem Feld, mit Strg+C kopieren.
++
++### 7.3 Rahmen im Klartext
++
++Unter Ereignisse steht jeder Rahmen von Leitstelle und Station der GUI mit Richtung und Inhalt, darunter in einem Satz, was er bedeutet. „Rahmen“ und „Erklärungen“ blenden beides ein und aus.
++
++```
++09:12:03  Leitstelle → I N(S)=0 N(R)=1 · 100 C_IC_NA_1 Generalabfrage · Ursache 6 Aktivierung · Station 1 · IOA 0 QOI 20 (Station)
++          ↳ Leitstelle fordert alle Werte an
++09:12:03  Leitstelle ← I N(S)=2 N(R)=1 · 13 M_ME_NC_1 Messwert Gleitkomma · Ursache 20 Generalabfrage · Station 1 · IOA 100 Wert 5.0
++          ↳ Antwort auf die Generalabfrage
++09:12:03  Leitstelle → S N(R)=4
++          ↳ Quittung: alle I-Rahmen bis Nr. 3 sind angekommen
++```
++
++| Teil | Bedeutung |
++| --- | --- |
++| `→` / `←` | gesendet / empfangen, aus Sicht von Leitstelle bzw. Station (Station mit Verbindungsnummer) |
++| `I N(S)= N(R)=` | Datenrahmen mit Sende- und Empfangsfolgenummer |
++| `S N(R)=` | reine Quittung |
++| `U STARTDT/STOPDT/TESTFR act/con` | Steuerrahmen |
++| Typ, Ursache, Station | Typkennung mit Namen, Übertragungsursache (negativ, Test), gemeinsame Adresse |
++| `IOA … Wert …` | erstes Informationsobjekt mit Wert, Qualität (`[IV NT …]`) und Zeitmarke; „(+n weitere)“ bei mehreren Objekten |
++
++Die Beschreibung macht `frames.jl` ohne Aufruf der Library, für das Standardprofil (Ursache 2, Station 2, IOA 3 Oktette). Grundlage ist der Trace der Library (Log-Stufe 4, jeder Rahmen als Hexdump).
+diff --git a/docs/08_Interop.md b/docs/08_Interop.md
+index 4e631aa..6231450 100644
+--- a/docs/08_Interop.md
++++ b/docs/08_Interop.md
+@@ -1,6 +1,6 @@
+ # Interop-Tests und Integrationstest
+ 
+-Stand: 25.11.2026 · Gegenstelle: lib60870-C v2.4.1, für TLS mit mbedTLS 3.6.8 · Skript: `tools/interop/run_lib60870.sh`
++Stand: 26.11.2026 · Gegenstelle: lib60870-C v2.4.1, für TLS mit mbedTLS 3.6.8 · Skript: `tools/interop/run_lib60870.sh`
+ 
+ ## 1. Zweck
+ 
+diff --git a/docs/09_Interoperabilitaetsliste.md b/docs/09_Interoperabilitaetsliste.md
+index c7bec8e..3284e42 100644
+--- a/docs/09_Interoperabilitaetsliste.md
++++ b/docs/09_Interoperabilitaetsliste.md
+@@ -1,6 +1,6 @@
+ # Interoperabilitätsliste (IEC 60870-5-104, Abschnitt 9)
+ 
+-IEC 60870-5-104 Library 0.7.0 · Rolle: Station und Leitstelle · Parameter: Standardwerte
++IEC 60870-5-104 Library 0.8.0 · Rolle: Station und Leitstelle · Parameter: Standardwerte
+ 
+ Erzeugt mit `iec104_interop_list`. Gliederung und Bezeichnungen nach öffentlichen Wiedergaben der Checkliste (docs/02_Technik_und_Quellen.md, [ORA]); die Angaben stammen aus dem Code der Library. Eigene Parameter: `iec104_interop_list --config datei.conf`, zum Abgleich mit der Liste einer Gegenstelle `--format csv`.
+ 
+diff --git a/examples/julia/gui/frames.jl b/examples/julia/gui/frames.jl
+new file mode 100644
+index 0000000..c8a6726
+--- /dev/null
++++ b/examples/julia/gui/frames.jl
+@@ -0,0 +1,276 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# frames.jl - plain German description of an IEC 104 APDU for the commented
++# protocol of the test GUI: frame format (I, S, U), type, cause, station and
++# the first information object, plus one sentence what the frame means.
++#
++# Pure Julia, no call into the library. Only the default profile (cause of
++# transmission 2 octets, common address 2, IOA 3) like the GUI uses.
++# Field layout: docs/02_Technik_und_Quellen.md; reference frames in
++# tests/gui/test_frames.jl.
++
++module Frames
++
++export describe, parse_hex
++
++# Type identification -> (name, German short text).
++const TYPES = Dict{Int,Tuple{String,String}}(
++    1 => ("M_SP_NA_1", "Einzelmeldung"), 3 => ("M_DP_NA_1", "Doppelmeldung"),
++    5 => ("M_ST_NA_1", "Stufenstellung"), 7 => ("M_BO_NA_1", "Bitmuster"),
++    9 => ("M_ME_NA_1", "Messwert normiert"), 11 => ("M_ME_NB_1", "Messwert skaliert"),
++    13 => ("M_ME_NC_1", "Messwert Gleitkomma"), 15 => ("M_IT_NA_1", "Zählwert"),
++    21 => ("M_ME_ND_1", "Messwert normiert ohne Qualität"),
++    30 => ("M_SP_TB_1", "Einzelmeldung mit Zeit"), 31 => ("M_DP_TB_1", "Doppelmeldung mit Zeit"),
++    32 => ("M_ST_TB_1", "Stufenstellung mit Zeit"), 33 => ("M_BO_TB_1", "Bitmuster mit Zeit"),
++    34 => ("M_ME_TD_1", "Messwert normiert mit Zeit"), 35 => ("M_ME_TE_1", "Messwert skaliert mit Zeit"),
++    36 => ("M_ME_TF_1", "Messwert Gleitkomma mit Zeit"), 37 => ("M_IT_TB_1", "Zählwert mit Zeit"),
++    45 => ("C_SC_NA_1", "Einzelbefehl"), 46 => ("C_DC_NA_1", "Doppelbefehl"),
++    47 => ("C_RC_NA_1", "Stufenbefehl"), 48 => ("C_SE_NA_1", "Sollwert normiert"),
++    49 => ("C_SE_NB_1", "Sollwert skaliert"), 50 => ("C_SE_NC_1", "Sollwert Gleitkomma"),
++    51 => ("C_BO_NA_1", "Bitmuster-Befehl"),
++    58 => ("C_SC_TA_1", "Einzelbefehl mit Zeit"), 59 => ("C_DC_TA_1", "Doppelbefehl mit Zeit"),
++    60 => ("C_RC_TA_1", "Stufenbefehl mit Zeit"), 61 => ("C_SE_TA_1", "Sollwert normiert mit Zeit"),
++    62 => ("C_SE_TB_1", "Sollwert skaliert mit Zeit"), 63 => ("C_SE_TC_1", "Sollwert Gleitkomma mit Zeit"),
++    64 => ("C_BO_TA_1", "Bitmuster-Befehl mit Zeit"),
++    70 => ("M_EI_NA_1", "Ende der Initialisierung"),
++    100 => ("C_IC_NA_1", "Generalabfrage"), 101 => ("C_CI_NA_1", "Zählerabfrage"),
++    102 => ("C_RD_NA_1", "Lesebefehl"), 103 => ("C_CS_NA_1", "Uhrzeit"),
++    104 => ("C_TS_NA_1", "Testbefehl"), 105 => ("C_RP_NA_1", "Rücksetzen"),
++    106 => ("C_CD_NA_1", "Laufzeitmessung"), 107 => ("C_TS_TA_1", "Testbefehl mit Zeit"))
++
++function cause_text(c::Integer)
++    c == 1 && return "zyklisch"
++    c == 2 && return "Hintergrund"
++    c == 3 && return "spontan"
++    c == 4 && return "initialisiert"
++    c == 5 && return "Abfrage"
++    c == 6 && return "Aktivierung"
++    c == 7 && return "Bestätigung"
++    c == 8 && return "Abbruch"
++    c == 9 && return "Abbruch bestätigt"
++    c == 10 && return "Beendigung"
++    c == 11 && return "Rückmeldung fern"
++    c == 12 && return "Rückmeldung lokal"
++    c == 20 && return "Generalabfrage"
++    21 <= c <= 36 && return "Gruppe $(c - 20)"
++    c == 37 && return "Zählerabfrage"
++    38 <= c <= 41 && return "Zählergruppe $(c - 37)"
++    c == 44 && return "Typ unbekannt"
++    c == 45 && return "Ursache unbekannt"
++    c == 46 && return "Station unbekannt"
++    c == 47 && return "IOA unbekannt"
++    return "Ursache $c"
++end
++
++"Octets of a hex dump like \"68 04 07 00 00 00\"."
++parse_hex(s::AbstractString) = UInt8[parse(UInt8, h; base = 16) for h in split(s)]
++
++# --- Elements ----------------------------------------------------------------------
++
++u16(b, i) = UInt16(b[i]) | UInt16(b[i+1]) << 8
++i16(b, i) = reinterpret(Int16, u16(b, i))
++u32(b, i) = UInt32(b[i]) | UInt32(b[i+1]) << 8 | UInt32(b[i+2]) << 16 | UInt32(b[i+3]) << 24
++
++function quality(q::UInt8)
++    names = [n for (bit, n) in ((0x01, "OV"), (0x10, "BL"), (0x20, "SB"), (0x40, "NT"), (0x80, "IV"))
++             if q & bit != 0]
++    return isempty(names) ? "" : " [" * join(names, " ") * "]"
++end
++
++"CP56Time2a at index i (7 octets)."
++function cp56(b, i)
++    ms = u16(b, i)
++    t = string(2000 + (b[i+6] & 0x7f), "-", lpad(b[i+5] & 0x0f, 2, '0'), "-", lpad(b[i+4] & 0x1f, 2, '0'),
++               " ", lpad(b[i+3] & 0x1f, 2, '0'), ":", lpad(b[i+2] & 0x3f, 2, '0'), ":",
++               lpad(ms ÷ 1000, 2, '0'), ".", lpad(ms % 1000, 3, '0'))
++    b[i+3] & 0x80 != 0 && (t *= " SU")
++    b[i+2] & 0x80 != 0 && (t *= " ungültig")
++    return t
++end
++
++const DOUBLE = ("unbestimmt", "aus", "ein", "gestört")
++const STEP = ("nicht erlaubt", "tiefer", "höher", "nicht erlaubt")
++
++command_mode(q::UInt8) = q & 0x80 != 0 ? " Select" : ""
++
++"Text of the element of type t at index i (first object only), \"\" if not decoded."
++function element(t::Int, b, i)
++    base = t in 30:37 ? (t == 30 ? 1 : t == 31 ? 3 : t == 32 ? 5 : t == 33 ? 7 :
++                         t == 34 ? 9 : t == 35 ? 11 : t == 36 ? 13 : 15) :
++           t in 58:64 ? t - 13 : t
++    s = if base == 1
++        (b[i] & 0x01 != 0 ? "ein" : "aus") * quality(b[i] & 0xf0)
++    elseif base == 3
++        DOUBLE[(b[i] & 0x03) + 1] * quality(b[i] & 0xf0)
++    elseif base == 5
++        v = Int(b[i] & 0x7f)
++        v >= 64 && (v -= 128)
++        "Stufe $v" * (b[i] & 0x80 != 0 ? " (läuft)" : "") * quality(b[i+1])
++    elseif base == 7
++        "Bits 0x" * string(u32(b, i); base = 16, pad = 8) * quality(b[i+4])
++    elseif base == 9
++        "Wert " * string(round(i16(b, i) / 32768; digits = 5)) * quality(b[i+2])
++    elseif base == 11
++        "Wert $(i16(b, i))" * quality(b[i+2])
++    elseif base == 13
++        "Wert " * string(reinterpret(Float32, u32(b, i))) * quality(b[i+4])
++    elseif base == 15
++        "Zähler $(reinterpret(Int32, u32(b, i))) Folge $(b[i+4] & 0x1f)" *
++            (b[i+4] & 0x80 != 0 ? " [IV]" : "")
++    elseif base == 45
++        (b[i] & 0x01 != 0 ? "ein" : "aus") * command_mode(b[i])
++    elseif base == 46
++        DOUBLE[(b[i] & 0x03) + 1] * command_mode(b[i])
++    elseif base == 47
++        STEP[(b[i] & 0x03) + 1] * command_mode(b[i])
++    elseif base == 48
++        "Sollwert " * string(round(i16(b, i) / 32768; digits = 5)) * command_mode(b[i+2])
++    elseif base == 49
++        "Sollwert $(i16(b, i))" * command_mode(b[i+2])
++    elseif base == 50
++        "Sollwert " * string(reinterpret(Float32, u32(b, i))) * command_mode(b[i+4])
++    elseif base == 51
++        "Bits 0x" * string(u32(b, i); base = 16, pad = 8)
++    elseif t == 70
++        "Grund $(b[i] & 0x7f)"
++    elseif t == 100
++        q = Int(b[i])
++        q == 20 ? "QOI 20 (Station)" : 21 <= q <= 36 ? "QOI $q (Gruppe $(q - 20))" : "QOI $q"
++    elseif t == 101
++        "RQT $(b[i] & 0x3f) FRZ $(b[i] >> 6)"
++    elseif t == 103
++        cp56(b, i)
++    elseif t == 104
++        "Muster 0x" * string(u16(b, i); base = 16, pad = 4)
++    elseif t == 105
++        "QRP $(b[i])"
++    elseif t == 107
++        "Zähler $(u16(b, i)) Zeit " * cp56(b, i + 2)
++    else
++        ""
++    end
++    # Time tag behind the element of types with time.
++    if t in 30:37 || t in 58:64
++        len = Dict(1 => 1, 3 => 1, 5 => 2, 7 => 5, 9 => 3, 11 => 3, 13 => 5, 15 => 5,
++                   45 => 1, 46 => 1, 47 => 1, 48 => 3, 49 => 3, 50 => 5, 51 => 4)[base]
++        s *= " Zeit " * cp56(b, i + len)
++    end
++    return s
++end
++
++# --- Meaning ------------------------------------------------------------------------
++
++"One sentence what an ASDU means."
++function meaning(t::Int, cause::Int, negative::Bool, select::Bool)
++    cause == 44 && return "Station kennt diesen Typ nicht"
++    cause == 45 && return "Station kennt diese Ursache für den Typ nicht"
++    cause == 46 && return "Station kennt die gemeinsame Adresse (Station) nicht"
++    cause == 47 && return "Station kennt die IOA nicht"
++    if t <= 44   # monitor direction
++        cause == 3 && return "Spontane Meldung: die Station meldet einen neuen Wert"
++        cause == 20 && return "Antwort auf die Generalabfrage"
++        21 <= cause <= 36 && return "Antwort auf die Abfrage der Gruppe $(cause - 20)"
++        37 <= cause <= 41 && return "Antwort auf die Zählerabfrage"
++        cause == 5 && return "Antwort auf einen Lesebefehl"
++        cause == 1 && return "Zyklische Meldung"
++        cause == 2 && return "Hintergrundabfrage"
++        cause in (11, 12) && return "Rückmeldung nach einem Befehl"
++        return ""
++    end
++    t == 70 && return "Ende der Initialisierung: die Station ist bereit"
++    what = t == 100 ? "die Generalabfrage" : t == 101 ? "die Zählerabfrage" :
++           t == 103 ? "die Uhrzeit" : t in (104, 107) ? "den Testbefehl" :
++           t == 105 ? "das Rücksetzen" : select ? "die Auswahl" : "den Befehl"
++    if cause == 6
++        t == 100 && return "Leitstelle fordert alle Werte an"
++        t == 101 && return "Leitstelle fordert die Zählwerte an"
++        t == 103 && return "Leitstelle stellt die Uhr der Station"
++        t in (104, 107) && return "Testbefehl: prüft die Verbindung bis in die Anwendung"
++        t == 105 && return "Leitstelle setzt die Station zurück"
++        return select ? "Leitstelle wählt den Befehl aus (Select, noch nicht ausführen)" :
++               "Leitstelle sendet den Befehl"
++    end
++    cause == 5 && t == 102 && return "Leitstelle fragt einen einzelnen Wert ab"
++    cause == 7 && return negative ? "Station lehnt $what ab" :
++                         t in (104, 107) ? "Station spiegelt den Testbefehl" : "Station bestätigt $what"
++    cause == 8 && return "Leitstelle bricht $what ab"
++    cause == 9 && return negative ? "Station lehnt den Abbruch ab" : "Station bestätigt den Abbruch"
++    cause == 10 && return t in (100, 101) ? "Station meldet: alle Werte gesendet, $what ist beendet" :
++                          "Station meldet: Befehl ausgeführt"
++    return ""
++end
++
++const U_FUNCTIONS = Dict(
++    0x07 => ("U STARTDT act", "Leitstelle bittet, die Datenübertragung zu starten"),
++    0x0b => ("U STARTDT con", "Station bestätigt: Datenübertragung läuft"),
++    0x13 => ("U STOPDT act", "Leitstelle bittet, die Datenübertragung anzuhalten"),
++    0x23 => ("U STOPDT con", "Station bestätigt: Datenübertragung angehalten"),
++    0x43 => ("U TESTFR act", "Testrahmen: lebt die Verbindung? (nach t3 ohne Verkehr)"),
++    0x83 => ("U TESTFR con", "Antwort auf den Testrahmen: die Verbindung lebt"))
++
++"""
++    describe(apdu) -> (summary, meaning)
++
++Summary like "I N(S)=0 N(R)=0 · 100 C_IC_NA_1 Generalabfrage · Ursache 6 Aktivierung ·
++Station 1 · IOA 0 QOI 20 (Station)" and one German sentence what the frame means.
++Never throws: unreadable frames come back as hex.
++"""
++function describe(b::AbstractVector{UInt8})
++    try
++        length(b) >= 6 && b[1] == 0x68 || return ("? " * hexdump(b), "kein IEC-104-Rahmen")
++        c1 = b[3]
++        if c1 & 0x01 == 0x00
++            ns = (u16(b, 3) >> 1)
++            nr = (u16(b, 5) >> 1)
++            head = "I N(S)=$ns N(R)=$nr"
++            length(b) >= 6 + 6 + 3 || return (head * " (ASDU zu kurz)", "")
++            return describe_asdu(head, b, 7)
++        elseif c1 & 0x03 == 0x01
++            nr = (u16(b, 5) >> 1)
++            return ("S N(R)=$nr", "Quittung: alle I-Rahmen bis Nr. $(mod(Int(nr) - 1, 32768)) sind angekommen")
++        else
++            return get(U_FUNCTIONS, c1, ("U 0x" * string(c1; base = 16, pad = 2), "unbekannte U-Funktion"))
++        end
++    catch
++        return ("? " * hexdump(b), "Rahmen nicht lesbar")
++    end
++end
++
++hexdump(b) = join((string(x; base = 16, pad = 2) for x in b), ' ')
++
++function describe_asdu(head::String, b, i::Int)
++    t = Int(b[i])
++    n = Int(b[i+1] & 0x7f)
++    cause = Int(b[i+2] & 0x3f)
++    negative = b[i+2] & 0x40 != 0
++    test = b[i+2] & 0x80 != 0
++    station = Int(u16(b, i + 4))
++    name, text = get(TYPES, t, ("Typ $t", ""))
++    parts = [head, isempty(text) ? name : "$t $name $text",
++             "Ursache $cause " * cause_text(cause) * (negative ? " negativ" : "") * (test ? " Test" : ""),
++             "Station $station"]
++    j = i + 6
++    if length(b) >= j + 2
++        ioa = Int(b[j]) | Int(b[j+1]) << 8 | Int(b[j+2]) << 16
++        e = try
++            length(b) >= j + 3 ? element(t, b, j + 3) : "(Element fehlt)"
++        catch
++            "(Element unvollständig: " * hexdump(b[j+3:end]) * ")"
++        end
++        push!(parts, "IOA $ioa" * (isempty(e) ? "" : " " * e) * (n > 1 ? " (+$(n - 1) weitere)" : ""))
++    end
++    select = t in (45:51..., 58:64...) && length(b) >= j + 3 && command_select(t, b, j + 3)
++    return (join(parts, " · "), meaning(t, cause, negative, select))
++end
++
++"S/E bit of a command element (in the qualifier octet behind the value)."
++function command_select(t::Int, b, i::Int)
++    base = t >= 58 ? t - 13 : t
++    q = base in (45, 46, 47) ? i : base in (48, 49) ? i + 2 : base == 50 ? i + 4 : 0
++    return q != 0 && q <= length(b) && b[q] & 0x80 != 0
++end
++
++end # module Frames
+diff --git a/examples/julia/gui/iec104_gui.jl b/examples/julia/gui/iec104_gui.jl
+index 3042de5..368eb84 100644
+--- a/examples/julia/gui/iec104_gui.jl
++++ b/examples/julia/gui/iec104_gui.jl
+@@ -30,6 +30,8 @@ include(joinpath(@__DIR__, "..", "IEC104.jl"))
+ using .IEC104
+ using Sockets
+ using Printf
++include(joinpath(@__DIR__, "frames.jl"))   # description of frames for the commented protocol
++using .Frames
+ 
+ # --- State ---------------------------------------------------------------------
+ 
+@@ -61,13 +63,15 @@ mutable struct Gui
+     accept_commands::Bool
+     points::Dict{UInt32,Object}
+     connections::Dict{UInt32,Cint}
+-    # Event list shown on the page
+-    log::Vector{Tuple{Int,Float64,String}}
++    # Event list shown on the page: number, time, kind ("event", "frame", "error"), text, meaning
++    log::Vector{Tuple{Int,Float64,String,String,String}}
+     log_seq::Int
+ end
+ 
+ const GUI = Gui(C_NULL, IEC104.LINK_CLOSED, 0, 1, Dict(), C_NULL, 1, true, Dict(), Dict(), [], 0)
+-const LOG_MAX = 500
++const LOG_MAX = 3000   # frames included
++const ROWS_MAX = 1000  # rows of the client table sent to the page
++const BOOT = string(round(Int, time() * 1000))   # identifies this run of the GUI for the page
+ 
+ # Address and port of the GUI, set by main(). The station listens on the same address.
+ const GUI_ADDRESS = Ref("127.0.0.1")
+@@ -99,9 +103,9 @@ const PEER_PROGRAMS = [
+ ]
+ const PEER_LINE_MAX = 300   # longer output lines are cut
+ 
+-note(text::AbstractString) = begin
++note(text::AbstractString; kind = "event", explain = "") = begin
+     GUI.log_seq += 1
+-    push!(GUI.log, (GUI.log_seq, time(), String(text)))
++    push!(GUI.log, (GUI.log_seq, time(), String(kind), String(text), String(explain)))
+     length(GUI.log) > LOG_MAX && popfirst!(GUI.log)
+     nothing
+ end
+@@ -134,6 +138,20 @@ const BASE_TYPE = Dict(30 => 1, 31 => 3, 32 => 5, 34 => 9, 35 => 11, 36 => 13, 3
+                        58 => 45, 59 => 46, 60 => 47, 61 => 48, 62 => 49, 63 => 50)
+ range_text(type::Integer) = get(RANGES, get(BASE_TYPE, Int(type), Int(type)), "")
+ 
++"Value fits the monitor type (same limits as the library, src/api/values.cpp)."
++function value_ok(type::Integer, v::Real)
++    isfinite(v) || return false
++    t = get(BASE_TYPE, Int(type), Int(type))
++    whole(lo, hi) = isinteger(v) && lo <= v <= hi
++    t == 1 && return whole(0, 1)
++    t == 3 && return whole(0, 3)
++    t == 5 && return whole(-64, 63)
++    t == 9 && return -32768 <= round(v * 32768) <= 32767
++    t == 11 && return whole(-32768, 32767)
++    t == 15 && return whole(typemin(Int32), typemax(Int32))
++    return true
++end
++
+ # --- Callbacks (run inside the poll, called from C: store only, no I/O) -------
+ 
+ function cb_client_state(::Ptr{Cvoid}, ::UInt32, state::Cint, reason::Cint)::Cvoid
+@@ -214,10 +232,27 @@ function cb_security(::Ptr{Cvoid}, conn::UInt32, event::Cint, detail::Cstring)::
+     return nothing
+ end
+ 
+-function cb_log(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid
+-    level <= 1 && note("Library $conn: " * unsafe_string(message))   # errors and warnings
++"Library log: errors and warnings as events, every frame (level trace) with its meaning."
++function log_entry(side::String, level::Cint, conn::UInt32, message::Cstring)
++    try
++        m = unsafe_string(message)
++        if level <= 1
++            note("Library $conn: " * m; kind = level == 0 ? "error" : "warning")
++        elseif level == 4
++            sent = startswith(m, "sent ")
++            (sent || startswith(m, "received ")) || return nothing
++            summary, meaning = Frames.describe(Frames.parse_hex(m[(sent ? 6 : 10):end]))
++            who = side == "L" ? "Leitstelle" : "Station($conn)"
++            note(who * (sent ? " → " : " ← ") * summary; kind = "frame", explain = meaning)
++        end
++    catch
++    end
+     return nothing
+ end
++cb_log_client(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid =
++    log_entry("L", level, conn, message)
++cb_log_server(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid =
++    log_entry("S", level, conn, message)
+ 
+ # --- Actions ---------------------------------------------------------------------
+ 
+@@ -226,7 +261,14 @@ p_num(p, k, d) = haskey(p, k) && !isempty(p[k]) ? parse(Float64, replace(p[k], '
+ p_str(p, k) = get(p, k, "")
+ 
+ function gui_client_connect(p)
+-    GUI.client != C_NULL && (client_destroy(GUI.client); GUI.client = C_NULL)
++    if GUI.client != C_NULL
++        # destroy reports nothing any more: note the end of the old connection here
++        old = GUI.client
++        GUI.client = C_NULL
++        client_destroy(old)
++        GUI.client_state != IEC104.LINK_CLOSED && note("Leitstelle: alte Verbindung getrennt")
++        GUI.client_state = IEC104.LINK_CLOSED
++    end
+     cfg = LinkConfig()
+     for (k, f) in (("t0", :t0_ms), ("t1", :t1_ms), ("t2", :t2_ms), ("t3", :t3_ms))
+         haskey(p, k) && !isempty(p[k]) && setfield!(cfg, f, UInt32(round(p_num(p, k, 0) * 1000)))
+@@ -240,7 +282,7 @@ function gui_client_connect(p)
+         on_command_result = @cfunction(cb_command_result, Cvoid, (Ptr{Cvoid}, UInt16, Ptr{Object}, Cint)),
+         on_security = @cfunction(cb_security, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cstring)))
+     GUI.client = client_create(cfg, cb)
+-    client_set_log(GUI.client, 1, @cfunction(cb_log, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
++    client_set_log(GUI.client, 4, @cfunction(cb_log_client, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
+     if get(p, "tls", "") == "1"
+         t = TlsConfig()
+         for (k, f) in (("ca", :ca_file), ("cert", :certificate_file), ("key", :private_key_file),
+@@ -284,11 +326,17 @@ function gui_server_listen(p)
+         on_command = @cfunction(cb_server_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})),
+         on_security = @cfunction(cb_security, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cstring)))
+     GUI.server = server_create(LinkConfig(), cb)
+-    server_set_log(GUI.server, 1, @cfunction(cb_log, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
++    server_set_log(GUI.server, 4, @cfunction(cb_log_server, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
+     GUI.server_station = UInt16(p_int(p, "station", 1))
+     try
+         for o in values(GUI.points)
+-            server_add_point(GUI.server, GUI.server_station, o)
++            try
++                server_add_point(GUI.server, GUI.server_station, o)
++            catch e
++                e isa Iec104Error || rethrow()
++                throw(ArgumentError("Datenpunkt IOA $(o.ioa) Typ $(o.type) Wert $(o.value): $(e.msg)" *
++                                    " – erlaubt: $(range_text(o.type))"))
++            end
+         end
+         # Same address as the GUI: 127.0.0.1 unless the GUI was started on another one.
+         IEC104.server_listen(GUI.server, p_int(p, "port", 2404); address = GUI_ADDRESS[])
+@@ -307,9 +355,14 @@ function gui_server_point(p)
+     old !== nothing && old.type != o.type &&
+         throw(ArgumentError("IOA $(o.ioa) ist schon als Typ $(old.type) angelegt; " *
+                             "für Typ $(o.type) eine andere IOA wählen"))
++    value_ok(o.type, o.value) ||
++        throw(ArgumentError("Wert $(o.value) passt nicht zu Typ $(o.type) – erlaubt: $(range_text(o.type))"))
+     if GUI.server != C_NULL
+         if old !== nothing
+             check(server_update(GUI.server, GUI.server_station, o))   # spontaneous
++            any(==(IEC104.LINK_STARTED), values(GUI.connections)) ||
++                note("Station: IOA $(o.ioa) = $(o.value) gespeichert; keine Leitstelle mit STARTDT, " *
++                     "nichts gesendet (kommt mit der nächsten Generalabfrage)")
+         else
+             server_add_point(GUI.server, GUI.server_station, o)
+             note("Station: Datenpunkt IOA $(o.ioa) Typ $(o.type) angelegt")
+@@ -371,6 +424,12 @@ function gui_peer_start(p)
+     a = GUI_ADDRESS[]
+     a == "0.0.0.0" || a == "::" || startswith(a, "127.") ||
+         throw(ArgumentError("Gegenstelle verbindet sich mit 127.0.0.1, die Station lauscht auf $a"))
++    peer_launch(x, port)
++    return nothing
++end
++
++"Starts program x of PEER_PROGRAMS against 127.0.0.1:port; output and end become events."
++function peer_launch(x, port::Integer)
+     cmd = `$(peer_path(x)) 127.0.0.1 $port`
+     stdbuf = Sys.which("stdbuf")   # C stdio buffers blocks on a pipe; line by line instead
+     stdbuf === nothing || (cmd = `$stdbuf -oL -eL $cmd`)
+@@ -383,7 +442,7 @@ function gui_peer_start(p)
+     note("lib60870: $(x.key) verbindet sich mit 127.0.0.1:$port (Prozess $(getpid(proc)))")
+     reader = @async peer_read(out)
+     @async peer_wait(proc, x.key, reader)
+-    return nothing
++    return proc
+ end
+ 
+ "SIGINT; still running after 3 s: SIGKILL."
+@@ -402,6 +461,8 @@ end
+ "At exit of the GUI: a running counterpart ends too."
+ peer_kill() = (p = PEER.process; p !== nothing && process_running(p) && kill(p, Base.SIGKILL); nothing)
+ 
++include(joinpath(@__DIR__, "selftest.jl"))   # self-test with its own station and controlling station
++
+ const ACTIONS = Dict{String,Function}(
+     "/api/client/connect" => gui_client_connect,
+     "/api/client/start" => p -> (need_client(); client_start(GUI.client)),
+@@ -419,6 +480,7 @@ const ACTIONS = Dict{String,Function}(
+     "/api/server/accept" => p -> (GUI.accept_commands = get(p, "on", "1") == "1"),
+     "/api/peer/start" => gui_peer_start,
+     "/api/peer/stop" => gui_peer_stop,
++    "/api/selftest/start" => selftest_start,
+ )
+ 
+ # --- JSON (hand-made, the page needs little) -------------------------------------
+@@ -443,12 +505,14 @@ time_text(t::IecTime) = t.year == 0 ? "" :
+ 
+ function state_json(since::Int)
+     io = IOBuffer()
+-    print(io, "{\"client\":{\"state\":")
++    print(io, "{\"boot\":\"", BOOT, "\",\"client\":{\"state\":")
+     jstr(io, GUI.client == C_NULL ? "–" : IEC104.state_string(GUI.client_state))
+     print(io, ",\"text\":")
+     jstr(io, GUI.client == C_NULL ? "nicht verbunden" : state_text(GUI.client_state))
+     print(io, ",\"station\":", GUI.station, ",\"rows\":[")
+     rows = sort!(collect(values(GUI.rows)); by = r -> (r.station, r.ioa, r.type))
++    total = length(rows)
++    length(rows) > ROWS_MAX && (rows = rows[1:ROWS_MAX])   # the page stays fast
+     for (n, r) in enumerate(rows)
+         n > 1 && print(io, ',')
+         print(io, "{\"station\":", r.station, ",\"ioa\":", r.ioa, ",\"type\":", r.type,
+@@ -462,7 +526,7 @@ function state_json(since::Int)
+         jnum(io, round(time() - r.updated; digits = 1))
+         print(io, '}')
+     end
+-    print(io, "]},\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
++    print(io, "],\"rows_total\":", total, "},\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
+           GUI.server == C_NULL ? 0 : server_port(GUI.server), ",\"station\":", GUI.server_station,
+           ",\"accept\":", GUI.accept_commands, ",\"connections\":[")
+     for (n, (id, st)) in enumerate(sort!(collect(GUI.connections)))
+@@ -491,16 +555,22 @@ function state_json(since::Int)
+         jstr(io, x.label)
+         print(io, ",\"available\":", peer_found(x), '}')
+     end
+-    print(io, "]},\"log\":[")
++    print(io, "]},")
++    selftest_json(io)
++    print(io, ",\"log\":[")
+     first = true
+-    for (seq, t, text) in GUI.log
++    for (seq, t, kind, text, explain) in GUI.log
+         seq <= since && continue
+         first || print(io, ',')
+         first = false
+         print(io, "{\"seq\":", seq, ",\"time\":")
+         jstr(io, Libc.strftime("%H:%M:%S", t))
++        print(io, ",\"kind\":")
++        jstr(io, kind)
+         print(io, ",\"text\":")
+         jstr(io, text)
++        print(io, ",\"explain\":")
++        jstr(io, explain)
+         print(io, '}')
+     end
+     print(io, "]}")
+@@ -544,7 +614,8 @@ const ACTION_NAMES = Dict(
+     "/api/client/gi" => "Generalabfrage", "/api/client/ci" => "Zählerabfrage",
+     "/api/client/clock" => "Uhrzeit setzen", "/api/client/command" => "Befehl",
+     "/api/server/listen" => "Station starten", "/api/server/point" => "Datenpunkt",
+-    "/api/peer/start" => "Gegenstelle starten", "/api/peer/stop" => "Gegenstelle beenden")
++    "/api/peer/start" => "Gegenstelle starten", "/api/peer/stop" => "Gegenstelle beenden",
++    "/api/selftest/start" => "Selbsttest")
+ 
+ "Error message with a hint what to do."
+ function error_text(e, path, p)
+@@ -567,6 +638,8 @@ end
+ function route(path, p)
+     path == "/" && return ("200 OK", "text/html; charset=utf-8", PAGE)
+     path == "/api/state" && return ("200 OK", "application/json", state_json(p_int(p, "since", 0)))
++    path == "/api/selftest/report" &&
++        return ("200 OK", "text/plain; charset=utf-8", selftest_report(p_str(p, "full") == "1"))
+     action = get(ACTIONS, path, nothing)
+     action === nothing && return ("404 Not Found", "text/plain", "not found")
+     try
+@@ -660,6 +733,7 @@ function main(port = 8080, address = "127.0.0.1", lib60870 = "")
+     @async while true   # poll task: the library runs here, callbacks included
+         GUI.client != C_NULL && client_poll(GUI.client, 0)
+         GUI.server != C_NULL && server_poll(GUI.server, 0)
++        selftest_poll()
+         sleep(0.02)
+     end
+     while true
+diff --git a/examples/julia/gui/index.html b/examples/julia/gui/index.html
+index 7d35df6..b8c79fc 100644
+--- a/examples/julia/gui/index.html
++++ b/examples/julia/gui/index.html
+@@ -33,7 +33,10 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+   td.num { text-align: right; font-variant-numeric: tabular-nums; }
+   .scroll { max-height: 340px; overflow: auto; }
+   .neg { color: #b02a2a; } .fresh { background: #fff6cc; }
+-  #log { font: 12px ui-monospace, monospace; max-height: 220px; overflow: auto; white-space: pre-wrap; }
++  #log { font: 12px ui-monospace, monospace; max-height: 360px; overflow: auto; white-space: pre-wrap; }
++  #log .frame { color: #2c4f7c; } #log .error { color: #b02a2a; } #log .warning { color: #9a5b00; } #log .explain { color: #777; }
++  td.ok { color: #1d7a35; font-weight: bold; } td.fail { color: #b02a2a; font-weight: bold; } td.skip { color: #888; }
++  #copybox { width: 100%; height: 160px; font: 12px ui-monospace, monospace; }
+   #err { color: #b02a2a; }
+   details { margin: 4px 0; }
+   .hint { font-size: 12px; color: #555; margin: 4px 0; }
+@@ -140,7 +143,32 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+ </section>
+ 
+ <section class="wide">
+-  <h2>Ereignisse</h2>
++  <h2>Selbsttest <span id="tstate" class="state">nicht gelaufen</span></h2>
++  <div class="row">
++    <button class="main" onclick="act('selftest/start')">Selbsttest starten</button>
++    <button onclick="copyReport()">Protokoll kopieren</button>
++    <button onclick="saveReport()">Protokoll speichern</button>
++    <span class="hint">Eigene Station und Leitstelle der Library auf 127.0.0.1 prüfen etwa 20 Abläufe
++      (Verbindung, Abfragen, spontane Werte, Befehle, Fehlerfälle, STOPDT, Testrahmen); Station und Leitstelle
++      oben bleiben unberührt. „Kopieren“: Kurzfassung zum Weitergeben, „Speichern“: alles mit allen Rahmen.</span>
++  </div>
++  <div class="scroll"><table>
++    <thead><tr><th>Nr.</th><th>Schritt</th><th>Ergebnis</th><th>Erwartet</th><th>Beobachtet</th><th>Dauer</th></tr></thead>
++    <tbody id="steps"></tbody>
++  </table></div>
++  <div id="copyarea" hidden><p class="hint">Die Zwischenablage ist über diese Adresse gesperrt:
++    Text ist markiert, mit Strg+C kopieren.</p><textarea id="copybox" readonly></textarea></div>
++</section>
++
++<section class="wide">
++  <h2>Ereignisse
++    <span class="row" style="margin: 0">
++      <label style="flex-direction: row; gap: 4px">Rahmen<input id="showframes" type="checkbox" checked onchange="renderLog()"></label>
++      <label style="flex-direction: row; gap: 4px">Erklärungen<input id="showexplain" type="checkbox" checked onchange="renderLog()"></label>
++      <button onclick="copyText(logText())">Ereignisse kopieren</button>
++      <button onclick="entries = []; renderLog()">Leeren</button>
++    </span>
++  </h2>
+   <div id="log"></div>
+ </section>
+ </main>
+@@ -231,8 +259,84 @@ function showPeer(peer) {
+   ps.className = 'state ' + (peer.running ? 'started' : '');
+ }
+ 
++// Copy into the clipboard; where the browser forbids it (http on an address other than
++// localhost) the text is shown selected for Ctrl+C.
++async function copyText(text) {
++  const area = document.getElementById('copyarea');
++  if (navigator.clipboard && window.isSecureContext) {
++    try {
++      await navigator.clipboard.writeText(text);
++      area.hidden = true;
++      document.getElementById('err').textContent = '';
++      alert('In die Zwischenablage kopiert (' + text.split('\n').length + ' Zeilen).');
++      return;
++    } catch (e) { /* fall through to the text box */ }
++  }
++  const box = document.getElementById('copybox');
++  box.value = text;
++  area.hidden = false;
++  box.focus();
++  box.select();
++}
++async function report(full) {
++  const r = await fetch('/api/selftest/report?full=' + (full ? 1 : 0), GUI_HEADER);
++  return r.text();
++}
++async function copyReport() { copyText(await report(false)); }
++async function saveReport() {
++  const text = await report(true);
++  const a = document.createElement('a');
++  a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain;charset=utf-8'}));
++  const d = new Date(), z = n => String(n).padStart(2, '0');
++  a.download = `iec104_selbsttest_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_` +
++               `${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.txt`;
++  a.click();
++  setTimeout(() => URL.revokeObjectURL(a.href), 2000);   // the download needs the URL a moment longer
++}
++function showSelftest(t) {
++  const ts = document.getElementById('tstate');
++  if (t.steps.length === 0) { ts.textContent = 'nicht gelaufen'; ts.className = 'state'; }
++  else if (t.running) { ts.textContent = 'läuft: Schritt ' + t.steps.length + ' von ' + t.total; ts.className = 'state'; }
++  else {
++    ts.textContent = t.passed + ' von ' + (t.passed + t.failed) + ' bestanden';
++    ts.className = 'state ' + (t.failed ? 'closed' : 'started');
++  }
++  const cls = {OK: 'ok', FEHLER: 'fail', 'ÜBERSPRUNGEN': 'skip'};
++  document.getElementById('steps').innerHTML = t.steps.map(x =>
++    `<tr><td class="num">${x.nr}</td><td>${esc(x.title)}</td><td class="${cls[x.status] || ''}">${esc(x.status)}</td>` +
++    `<td style="white-space: normal">${esc(x.expected)}</td><td style="white-space: normal">${esc(x.observed)}</td>` +
++    `<td class="num">${esc(x.duration)}</td></tr>`).join('');
++}
++
++// Event list: kept here, shown with or without frames and explanations.
++let entries = [];
++const ENTRIES_MAX = 3000;
++const PAD = ' '.repeat(10);
++function entryText(e, explain) {
++  return e.time + '  ' + e.text + (explain && e.explain ? '\n' + PAD + '↳ ' + e.explain : '');
++}
++function visible() {
++  const frames = document.getElementById('showframes').checked;
++  return entries.filter(e => frames || e.kind !== 'frame');
++}
++function logText() {
++  const explain = document.getElementById('showexplain').checked;
++  return visible().map(e => entryText(e, explain)).join('\n') + '\n';
++}
++function renderLog() {
++  const log = document.getElementById('log');
++  const explain = document.getElementById('showexplain').checked;
++  const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
++  log.innerHTML = visible().map(e =>
++    `<div class="${e.kind}">${esc(e.time + '  ' + e.text)}` +
++    (explain && e.explain ? `<div class="explain">${esc(PAD + '↳ ' + e.explain)}</div>` : '') + '</div>').join('');
++  if (atEnd) log.scrollTop = log.scrollHeight;
++}
++
+ let since = 0;
++let boot = '';
+ let refreshing = false;
++let pointsShown = '';
+ async function refresh() {
+   if (refreshing) return;   // the next interval catches up; avoids duplicate log lines
+   refreshing = true;
+@@ -245,6 +349,13 @@ async function update() {
+     if (!r.ok) { document.getElementById('err').textContent = await r.text(); return; }
+     s = await r.json();
+   } catch (e) { document.getElementById('err').textContent = 'GUI-Programm nicht erreichbar'; return; }
++  const err = document.getElementById('err');
++  if (err.textContent === 'GUI-Programm nicht erreichbar' || err.textContent.startsWith('Zugriff')) err.textContent = '';
++  if (s.boot !== boot) {   // GUI program (re)started: its event numbers start again
++    const restarted = boot !== '';
++    boot = s.boot;
++    if (restarted) { since = 0; entries = []; pointsShown = ''; renderLog(); return; }   // next round: all events
++  }
+   const cs = document.getElementById('cstate');
+   cs.textContent = s.client.text || s.client.state;
+   cs.className = 'state ' + (s.client.state === 'started' ? 'started' : s.client.state === 'closed' ? 'closed' : '');
+@@ -253,26 +364,35 @@ async function update() {
+     `<td title="${esc(TYPES[r.type] || '')}">${r.type} ${esc(typeName(r.type))}</td>` +
+     `<td class="num">${r.type === 7 ? '0x' + r.bits.toString(16) : r.value}</td><td>${esc(r.quality)}</td>` +
+     `<td class="${r.negative ? 'neg' : ''}">${r.cause} ${esc(CAUSES[r.cause] || '')}${r.negative ? ' negativ' : ''}</td>` +
+-    `<td>${esc(r.time)}</td><td class="num">${r.count}</td><td class="num">${r.age}</td></tr>`).join('');
++    `<td>${esc(r.time)}</td><td class="num">${r.count}</td><td class="num">${r.age}</td></tr>`).join('') +
++    (s.client.rows_total > s.client.rows.length
++      ? `<tr><td colspan="9" class="hint">… ${s.client.rows_total - s.client.rows.length} weitere Punkte nicht angezeigt</td></tr>` : '');
+   const ss = document.getElementById('sstate');
+   ss.textContent = s.server.running ? 'Port ' + s.server.port + ', Station ' + s.server.station : 'aus';
+   ss.className = 'state ' + (s.server.running ? 'started' : '');
+-  if (document.activeElement === null || !document.activeElement.id.startsWith('pv'))
+-    document.getElementById('points').innerHTML = s.server.points.map(p =>
++  const pts = document.getElementById('points');
++  const ptsKey = JSON.stringify(s.server.points);
++  if (ptsKey !== pointsShown && !pts.contains(document.activeElement)) {
++    pointsShown = ptsKey;
++    pts.innerHTML = s.server.points.map(p =>
+       `<tr><td class="num">${p.ioa}</td><td>${p.type} ${esc(typeName(p.type))}</td>` +
+       `<td><input id="pv${p.ioa}" class="s" value="${p.value}"></td>` +
+       `<td><button onclick="sendPoint(${p.ioa}, ${p.type})">Senden</button> ` +
+       `<button onclick="sendPoint(${p.ioa}, ${p.type}, 1)">+1</button></td></tr>`).join('');
++  }
+   document.getElementById('conns').textContent =
+     s.server.connections.map(c => c.id + ': ' + c.state).join(', ') || 'keine';
+   showPeer(s.peer);
+-  const log = document.getElementById('log');
++  showSelftest(s.selftest);
++  let added = false;
+   for (const e of s.log) {
+     if (e.seq <= since) continue;
+-    log.textContent += e.time + '  ' + e.text + '\n';
++    entries.push(e);
+     since = e.seq;
++    added = true;
+   }
+-  if (s.log.length) log.scrollTop = log.scrollHeight;
++  if (entries.length > ENTRIES_MAX) entries = entries.slice(-ENTRIES_MAX);
++  if (added) renderLog();
+ }
+ ranges();
+ setInterval(refresh, 500);
+diff --git a/examples/julia/gui/selftest.jl b/examples/julia/gui/selftest.jl
+new file mode 100644
+index 0000000..2fbe678
+--- /dev/null
++++ b/examples/julia/gui/selftest.jl
+@@ -0,0 +1,627 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# selftest.jl - self-test of the test GUI, included by iec104_gui.jl.
++#
++# A station and a controlling station of the library talk to each other on
++# 127.0.0.1 with their own handles; the station and controlling station of the
++# page are not touched. Every step states its purpose, the expectation and what
++# was observed. The report lists the frames of each step with their meaning
++# (frames.jl), short (failed steps only) or full.
++#
++# Expectations follow the library's documented behaviour (docs/05, E10 for the
++# buffering during STOPDT) and the field layout in docs/02.
++#
++# The steps run in their own task; they wait with sleep(), so the poll task
++# keeps the library running. Callbacks only store events (docs/07, section 4).
++
++mutable struct Step
++    nr::Int
++    title::String
++    purpose::String
++    expected::String
++    observed::String
++    ok::Union{Nothing,Bool}     # nothing: skipped
++    running::Bool
++    t_start::Float64
++    t_end::Float64
++    first_frame::Int            # frames of this step: ST.frames[first_frame:last_frame]
++    last_frame::Int
++end
++
++mutable struct SelfTest
++    running::Bool
++    started::Float64
++    finished::Float64
++    steps::Vector{Step}
++    client::Ptr{Cvoid}
++    server::Ptr{Cvoid}
++    port::Int
++    accept::Bool                # answer of the station to commands
++    client_state::Cint
++    events::Vector{Any}         # NamedTuples stored by the callbacks
++    frames::Vector{Tuple{Float64,String,String,String}}   # time, side and direction, summary, meaning
++end
++
++const ST = SelfTest(false, 0.0, 0.0, Step[], C_NULL, C_NULL, 0, true, IEC104.LINK_CLOSED, [], [])
++const ST_FRAMES_MAX = 5000
++const ST_CLIENT_CONN = Ref(0)   # connection number of the test client at the station
++const ST_T3_S = 3            # short t3 of the controlling station: the idle test comes quickly
++const ST_STEPS = 22          # without the optional lib60870 step
++const CMD_TERMINATED = 1     # iec104_command_result: confirmed and terminated
++const CMD_REJECTED = 3       # negative answer
++
++# Data points of the test station 1: IOA, type, value, interrogation groups (bit 0 = group 1).
++const ST_POINTS = [(101, 1, 1.0, 1), (102, 3, 2.0, 1), (103, 5, 7.0, 1), (104, 9, 0.5, 1),
++                   (105, 11, 1234.0, 1), (106, 13, 21.5, 1), (107, 15, 100.0, 1), (108, 13, 8.5, 2)]
++
++# --- Callbacks (inside the poll: store only) ---------------------------------------
++
++st_event(e) = (push!(ST.events, e); nothing)
++
++function st_client_state(::Ptr{Cvoid}, ::UInt32, state::Cint, reason::Cint)::Cvoid
++    ST.client_state = state
++    st_event((kind = :cstate, state = Int(state), reason = Int(reason)))
++end
++
++function st_client_object(::Ptr{Cvoid}, ::UInt32, info::Ptr{AsduInfo}, obj::Ptr{Object})::Cvoid
++    i = unsafe_load(info)
++    o = unsafe_load(obj)
++    st_event((kind = :object, type = Int(i.type), cause = Int(i.cause), negative = i.negative != 0,
++              station = Int(i.common_address), ioa = Int(o.ioa), value = o.value))
++end
++
++function st_command_result(::Ptr{Cvoid}, ::UInt16, cmd::Ptr{Object}, result::Cint)::Cvoid
++    c = unsafe_load(cmd)
++    st_event((kind = :result, type = Int(c.type), ioa = Int(c.ioa), result = Int(result)))
++end
++
++function st_server_state(::Ptr{Cvoid}, conn::UInt32, state::Cint, reason::Cint)::Cvoid
++    st_event((kind = :sstate, conn = Int(conn), state = Int(state), reason = Int(reason)))
++end
++
++function st_server_command(::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd::Ptr{Object})::Cint
++    i = unsafe_load(info)
++    c = unsafe_load(cmd)
++    st_event((kind = :command, conn = Int(conn), type = Int(i.type), ioa = Int(c.ioa), value = c.value,
++              select = c.select != 0))
++    return Cint(ST.accept ? 1 : 0)
++end
++
++function st_server_asdu(::Ptr{Cvoid}, conn::UInt32, asdu::Ptr{UInt8}, len::Csize_t)::Cvoid
++    len >= 3 && st_event((kind = :request, conn = Int(conn), type = Int(unsafe_load(asdu, 1)),
++                          cause = Int(unsafe_load(asdu, 3) & 0x3f)))
++    return nothing
++end
++
++"Library log of the test handles: errors as events, every frame (trace) described."
++function st_log(side::String, level::Cint, conn::UInt32, message::Cstring)
++    try
++        m = unsafe_string(message)
++        if level <= 1
++            st_event((kind = :log, level = Int(level), text = m))
++        elseif level == 4
++            sent = startswith(m, "sent ")
++            (sent || startswith(m, "received ")) || return nothing
++            summary, meaning = Frames.describe(Frames.parse_hex(m[(sent ? 6 : 10):end]))
++            who = side == "L" ? "Leitstelle" : "Station($conn)"
++            length(ST.frames) < ST_FRAMES_MAX &&
++                push!(ST.frames, (time(), who * (sent ? " →" : " ←"), summary, meaning))
++        end
++    catch
++    end
++    return nothing
++end
++st_log_client(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid =
++    st_log("L", level, conn, message)
++st_log_server(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid =
++    st_log("S", level, conn, message)
++
++# --- Helpers for the steps -----------------------------------------------------------------
++
++struct StepFailed <: Exception
++    msg::String
++end
++fail(msg) = throw(StepFailed(msg))
++
++"Waits until pred() holds, at most `timeout` seconds; the poll task runs meanwhile."
++function wait_until(pred, timeout)
++    t_end = time() + timeout
++    while !pred()
++        time() > t_end && return false
++        sleep(0.02)
++    end
++    return true
++end
++
++matches(e, kw) = all(hasproperty(e, k) && getproperty(e, k) == v for (k, v) in kw)
++"Events since index `mark` with the given fields, e.g. seen(m; kind = :object, cause = 3)."
++seen(mark; kw...) = [e for e in ST.events[mark+1:end] if matches(e, kw)]
++
++"Waits for an event with the given fields; fails with `what` after `timeout` seconds."
++function expect(mark, what, timeout = 3.0; kw...)
++    wait_until(() -> !isempty(seen(mark; kw...)), timeout) || fail("$what fehlt nach $(timeout) s")
++    return first(seen(mark; kw...))
++end
++
++st_object(t, ioa, v) = Object(t, ioa, v)
++st_timed(t, ioa, v) = Object(UInt8(t), UInt32(ioa), Float64(v), 0, 0, 0, 0, 0, time_now())
++result_text(r) = IEC104.command_result_string(r)
++ioas(es) = join(sort!(unique(e.ioa for e in es)), ", ")
++
++"Runs one step; f() returns the observation or calls fail()."
++function run_step(f, title, purpose, expected)
++    s = Step(length(ST.steps) + 1, title, purpose, expected, "", false, true, time(), 0.0,
++             length(ST.frames) + 1, 0)
++    push!(ST.steps, s)
++    try
++        s.observed = f()
++        s.ok = true
++    catch e
++        s.observed = e isa StepFailed ? e.msg :
++                     e isa Iec104Error ? "Fehler der Library: $(e.msg)" : sprint(showerror, e)
++        s.ok = false
++    end
++    sleep(0.15)   # late answers and acknowledgements still belong to this step
++    s.t_end = time()
++    s.last_frame = length(ST.frames)
++    s.running = false
++    return s.ok
++end
++
++function skip_step(title, purpose, why)
++    s = Step(length(ST.steps) + 1, title, purpose, "–", why, nothing, false, time(), time(),
++             length(ST.frames) + 1, length(ST.frames))
++    push!(ST.steps, s)
++end
++
++# --- The test ---------------------------------------------------------------------------------
++
++function selftest_start(p)
++    ST.running && throw(ArgumentError("Selbsttest läuft bereits"))
++    ST.running = true
++    ST.started = time()
++    ST.finished = 0.0
++    empty!(ST.steps)
++    empty!(ST.events)
++    empty!(ST.frames)
++    ST_CLIENT_CONN[] = 0
++    ST.accept = true
++    note("Selbsttest gestartet (eigene Station und Leitstelle auf 127.0.0.1)")
++    @async try
++        selftest_steps()
++    catch e
++        note("Selbsttest abgebrochen: " * sprint(showerror, e); kind = "error")
++    finally
++        selftest_cleanup()
++        ST.finished = time()
++        ST.running = false
++        passed = count(s -> s.ok === true, ST.steps)
++        note("Selbsttest beendet: $passed von $(count(s -> s.ok !== nothing, ST.steps)) bestanden" *
++             (any(s -> s.ok === false, ST.steps) ? " – Einzelheiten unter „Protokoll kopieren“" : ""))
++    end
++    return nothing
++end
++
++function selftest_cleanup()
++    c, s = ST.client, ST.server
++    ST.client = C_NULL   # the poll task must not use the handles any more
++    ST.server = C_NULL
++    c != C_NULL && client_destroy(c)
++    s != C_NULL && server_destroy(s)
++end
++
++"Called by the poll task of the GUI."
++function selftest_poll()
++    ST.client != C_NULL && client_poll(ST.client, 0)
++    ST.server != C_NULL && server_poll(ST.server, 0)
++    return nothing
++end
++
++function selftest_steps()
++    log_fn_c = @cfunction(st_log_client, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring))
++    log_fn_s = @cfunction(st_log_server, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring))
++
++    run_step("Station starten",
++             "Die Library als Station (Server) auf 127.0.0.1 mit einem Punkt je Meldetyp",
++             "lauscht auf einem freien Port; 8 Datenpunkte (Typ 1, 3, 5, 9, 11, 13, 15) angelegt") do
++        cb = Callbacks(ST;
++            on_asdu = @cfunction(st_server_asdu, Cvoid, (Ptr{Cvoid}, UInt32, Ptr{UInt8}, Csize_t)),
++            on_state = @cfunction(st_server_state, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cint)),
++            on_command = @cfunction(st_server_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})))
++        ST.server = server_create(LinkConfig(), cb)
++        server_set_log(ST.server, 4, log_fn_s, C_NULL)
++        for (ioa, t, v, groups) in ST_POINTS
++            server_add_point(ST.server, 1, st_object(t, ioa, v), groups)
++        end
++        server_listen(ST.server, 0; address = "127.0.0.1")
++        ST.port = server_port(ST.server)
++        "lauscht auf 127.0.0.1:$(ST.port), Station 1, IOA 101–108"
++    end || return
++
++    m = length(ST.events)
++    run_step("Verbinden",
++             "Die Library als Leitstelle (Client) baut die TCP-Verbindung zur Station auf",
++             "Verbindung steht, beide Seiten im Zustand „verbunden, Datenübertragung aus“") do
++        cfg = LinkConfig()
++        cfg.t3_ms = ST_T3_S * 1000
++        cb = Callbacks(ST;
++            on_state = @cfunction(st_client_state, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cint)),
++            on_object = @cfunction(st_client_object, Cvoid, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})),
++            on_command_result = @cfunction(st_command_result, Cvoid, (Ptr{Cvoid}, UInt16, Ptr{Object}, Cint)))
++        ST.client = client_create(cfg, cb)
++        client_set_log(ST.client, 4, log_fn_c, C_NULL)
++        client_connect(ST.client, "127.0.0.1", ST.port)
++        expect(m, "Leitstelle verbunden", 5.0; kind = :cstate, state = Int(IEC104.LINK_STOPPED))
++        e = expect(m, "Verbindung an der Station", 2.0; kind = :sstate, state = Int(IEC104.LINK_STOPPED))
++        ST_CLIENT_CONN[] = e.conn
++        "verbunden; Station sieht die Verbindung"
++    end || return
++
++    m = length(ST.events)
++    run_step("STARTDT",
++             "Die Leitstelle gibt die Datenübertragung frei (U-Rahmen STARTDT act/con)",
++             "Zustand „Datenübertragung läuft“; Station meldet „Ende der Initialisierung“ (Typ 70, Ursache 4)") do
++        client_start(ST.client)
++        expect(m, "STARTDT-Bestätigung"; kind = :cstate, state = Int(IEC104.LINK_STARTED))
++        expect(m, "Ende der Initialisierung (Typ 70)"; kind = :object, type = 70, cause = 4)
++        "Datenübertragung läuft, Typ 70 Ursache 4 erhalten"
++    end || return
++
++    m = length(ST.events)
++    run_step("Generalabfrage Station",
++             "Abfrage aller Werte der Station (Typ 100, QOI 20)",
++             "Bestätigung (Ursache 7), alle Punkte außer dem Zählwert genau einmal mit Ursache 20, " *
++             "Typ und Wert wie angelegt (IOA 101–106, 108), Beendigung (Ursache 10)") do
++        client_interrogation(ST.client, 1, 20)
++        expect(m, "Beendigung der Generalabfrage"; kind = :object, type = 100, cause = 10)
++        isempty(seen(m; kind = :object, type = 100, cause = 7, negative = false)) &&
++            fail("keine positive Bestätigung")
++        got = seen(m; kind = :object, cause = 20)
++        ioas(got) == "101, 102, 103, 104, 105, 106, 108" || fail("Punkte mit Ursache 20: $(ioas(got))")
++        length(got) == 7 || fail("$(length(got)) Antworten statt 7 (doppelt?)")
++        bad = String[]
++        for (ioa, t, v, _) in ST_POINTS
++            t == 15 && continue
++            e = first(x for x in got if x.ioa == ioa)
++            (e.type == t && e.value == v) || push!(bad, "IOA $ioa: Typ $(e.type) Wert $(e.value) statt Typ $t Wert $v")
++        end
++        isempty(bad) || fail(join(bad, "; "))
++        "Bestätigung, 7 Werte mit richtigem Typ und Wert (IOA $(ioas(got))), Beendigung"
++    end
++
++    m = length(ST.events)
++    run_step("Generalabfrage Gruppe 2",
++             "Abfrage nur der Punkte der Gruppe 2 (QOI 22)",
++             "nur IOA 108 mit Ursache 22, eingerahmt von Bestätigung und Beendigung") do
++        client_interrogation(ST.client, 1, 22)
++        expect(m, "Beendigung der Gruppenabfrage"; kind = :object, type = 100, cause = 10)
++        got = seen(m; kind = :object, cause = 22)
++        ioas(got) == "108" || fail("Punkte mit Ursache 22: $(ioas(got))")
++        isempty(seen(m; kind = :object, cause = 20)) || fail("Punkte der Station mitgeschickt")
++        "nur IOA 108 mit Ursache 22"
++    end
++
++    m = length(ST.events)
++    run_step("Zählerabfrage",
++             "Abfrage der Zählwerte (Typ 101, RQT 5 = alle)",
++             "Bestätigung, Zählwert IOA 107 = 100 mit Ursache 37, Beendigung") do
++        client_counter_interrogation(ST.client, 1)
++        expect(m, "Beendigung der Zählerabfrage"; kind = :object, type = 101, cause = 10)
++        e = expect(m, "Zählwert IOA 107"; kind = :object, ioa = 107, cause = 37)
++        e.value == 100 || fail("Zählwert $(e.value) statt 100")
++        "Zählwert IOA 107 = $(e.value), Ursache 37"
++    end
++
++    m = length(ST.events)
++    run_step("Lesebefehl",
++             "Einen einzelnen Wert abfragen (Typ 102, Ursache 5)",
++             "IOA 106 = 21.5 mit Ursache 5") do
++        client_read(ST.client, 1, 106)
++        e = expect(m, "Antwort auf den Lesebefehl"; kind = :object, ioa = 106, cause = 5)
++        e.value == 21.5 || fail("Wert $(e.value) statt 21.5")
++        "IOA 106 = $(e.value), Ursache 5"
++    end
++
++    m = length(ST.events)
++    changes = [(101, 1, 0.0), (102, 3, 1.0), (103, 5, -3.0), (104, 9, -0.25), (105, 11, -42.0), (106, 13, 3.25)]
++    run_step("Spontane Werte",
++             "Die Station ändert je Meldetyp einen Wert; die Leitstelle muss ihn ohne Abfrage erhalten",
++             "6 Werte mit Ursache 3 (spontan), jeweils der neue Wert") do
++        for (ioa, t, v) in changes
++            check(server_update(ST.server, 1, st_object(t, ioa, v)))
++        end
++        bad = String[]
++        for (ioa, t, v) in changes
++            e = expect(m, "spontaner Wert IOA $ioa"; kind = :object, ioa = ioa, cause = 3)
++            e.value == v || push!(bad, "IOA $ioa: $(e.value) statt $v")
++        end
++        isempty(bad) || fail(join(bad, "; "))
++        "6 Werte spontan erhalten: " * join(("$ioa=$v" for (ioa, _, v) in changes), ", ")
++    end
++
++    m = length(ST.events)
++    run_step("Uhrzeit setzen",
++             "Uhrzeitsynchronisation (Typ 103) mit der aktuellen Zeit",
++             "Station nimmt an, Leitstelle erhält Bestätigung (Ursache 7, positiv)") do
++        client_clock_sync(ST.client, 1)
++        expect(m, "Uhrzeit an der Station"; kind = :command, type = 103)
++        expect(m, "Bestätigung der Uhrzeit"; kind = :object, type = 103, cause = 7, negative = false)
++        "Station hat die Uhrzeit erhalten und bestätigt"
++    end
++
++    m = length(ST.events)
++    direct = [(45, 1.0), (46, 2.0), (47, 2.0), (48, 0.5), (49, 100.0), (50, 12.5)]
++    run_step("Befehle direkt (45–50)",
++             "Je Befehlstyp ein Befehl ohne Auswahl an IOA 6000 + Typ",
++             "Station erhält jeden Befehl mit dem Wert; Ergebnis „ausgeführt“ (Bestätigung und Beendigung)") do
++        for (t, v) in direct
++            client_send_command(ST.client, 1, st_object(t, 6000 + t, v))
++        end
++        bad = String[]
++        for (t, v) in direct
++            r = expect(m, "Ergebnis Typ $t"; kind = :result, ioa = 6000 + t)
++            r.result == CMD_TERMINATED || push!(bad, "Typ $t: $(result_text(r.result))")
++            c = seen(m; kind = :command, type = t, ioa = 6000 + t)
++            (isempty(c) || first(c).value != v) && push!(bad, "Typ $t: Wert an der Station falsch")
++        end
++        isempty(bad) || fail(join(bad, "; "))
++        "6 Befehle ausgeführt (Typ 45–50)"
++    end
++
++    m = length(ST.events)
++    run_step("Select/Execute (45)",
++             "Einzelbefehl in zwei Schritten: erst auswählen, dann ausführen",
++             "Station erhält Auswahl und danach Ausführung; Ergebnis „ausgeführt“ (die Library meldet nur das Endergebnis)") do
++        client_select_execute(ST.client, 1, st_object(45, 6100, 1.0))
++        expect(m, "Ergebnis „ausgeführt“"; kind = :result, ioa = 6100, result = CMD_TERMINATED)
++        isempty(seen(m; kind = :command, ioa = 6100, select = true)) && fail("Auswahl kam nicht an")
++        isempty(seen(m; kind = :command, ioa = 6100, select = false)) && fail("Ausführung kam nicht an")
++        "Auswahl und Ausführung an der Station, Ergebnis „ausgeführt“"
++    end
++
++    m = length(ST.events)
++    timed = [(58, 1.0), (59, 1.0), (60, 1.0), (61, -0.5), (62, -100.0), (63, 7.25)]
++    run_step("Befehle mit Zeitmarke (58–63)",
++             "Je Befehlstyp mit Zeitmarke (CP56Time2a, jetzt) ein Befehl",
++             "Ergebnis jeweils „ausgeführt“") do
++        for (t, v) in timed
++            client_send_command(ST.client, 1, st_timed(t, 6000 + t, v))
++        end
++        bad = String[]
++        for (t, _) in timed
++            r = expect(m, "Ergebnis Typ $t"; kind = :result, ioa = 6000 + t)
++            r.result == CMD_TERMINATED || push!(bad, "Typ $t: $(result_text(r.result))")
++        end
++        isempty(bad) || fail(join(bad, "; "))
++        "6 Befehle mit Zeitmarke ausgeführt"
++    end
++
++    m = length(ST.events)
++    run_step("Befehl abgelehnt",
++             "Die Station lehnt einen Befehl ab",
++             "negative Bestätigung; Ergebnis „abgelehnt“") do
++        ST.accept = false
++        try
++            client_send_command(ST.client, 1, st_object(45, 6200, 1.0))
++            r = expect(m, "Ergebnis"; kind = :result, ioa = 6200)
++            r.result == CMD_REJECTED || fail("Ergebnis „$(result_text(r.result))“")
++        finally
++            ST.accept = true
++        end
++        "negative Bestätigung, Ergebnis „abgelehnt“"
++    end
++
++    m = length(ST.events)
++    run_step("Unbekannte IOA",
++             "Lesebefehl an eine IOA, die es nicht gibt (9999)",
++             "negative Antwort mit Ursache 47 (IOA unbekannt)") do
++        client_read(ST.client, 1, 9999)
++        expect(m, "Antwort mit Ursache 47"; kind = :object, type = 102, cause = 47, negative = true)
++        "negativ, Ursache 47"
++    end
++
++    m = length(ST.events)
++    run_step("Unbekannte Station",
++             "Generalabfrage an Station 99, die es nicht gibt",
++             "negative Antwort mit Ursache 46 (Station unbekannt)") do
++        client_interrogation(ST.client, 99, 20)
++        expect(m, "Antwort mit Ursache 46"; kind = :object, type = 100, cause = 46, negative = true, station = 99)
++        "negativ, Ursache 46"
++    end
++
++    run_step("Wert außerhalb des Bereichs",
++             "Einzelbefehl mit Wert 2 (erlaubt sind 0 und 1)",
++             "die Library weist ihn vor dem Senden ab („value out of range“); kein Rahmen geht hinaus") do
++        before = count(f -> startswith(f[2], "Leitstelle →") && startswith(f[3], "I "), ST.frames)
++        try
++            client_send_command(ST.client, 1, st_object(45, 6300, 2.0))
++            fail("Befehl wurde angenommen")
++        catch e
++            e isa Iec104Error && e.status == -5 || rethrow()   # IEC104_ERR_OUT_OF_RANGE
++        end
++        sleep(0.2)
++        after = count(f -> startswith(f[2], "Leitstelle →") && startswith(f[3], "I "), ST.frames)
++        after == before || fail("trotzdem ein I-Rahmen gesendet")
++        "lokal abgewiesen: value out of range, nichts gesendet"
++    end
++
++    m = length(ST.events)
++    run_step("STOPDT",
++             "Die Leitstelle hält die Datenübertragung an; danach ändert die Station einen Wert",
++             "Zustand „verbunden, Datenübertragung aus“; der neue Wert kommt NICHT an (die Station puffert ihn)") do
++        client_stop(ST.client)
++        expect(m, "STOPDT-Bestätigung"; kind = :cstate, state = Int(IEC104.LINK_STOPPED))
++        check(server_update(ST.server, 1, st_object(13, 106, 99.0)))
++        sleep(1.0)
++        isempty(seen(m; kind = :object, ioa = 106)) || fail("Wert kam trotz STOPDT an")
++        "angehalten; in 1 s kein Wert angekommen"
++    end
++
++    m = length(ST.events)
++    run_step("STARTDT erneut",
++             "Die Leitstelle startet die Datenübertragung wieder",
++             "Zustand „Datenübertragung läuft“; der gepufferte Wert IOA 106 = 99 kommt mit Ursache 3 nach") do
++        client_start(ST.client)
++        expect(m, "STARTDT-Bestätigung"; kind = :cstate, state = Int(IEC104.LINK_STARTED))
++        e = expect(m, "gepufferter Wert IOA 106"; kind = :object, ioa = 106, cause = 3)
++        e.value == 99.0 || fail("Wert $(e.value) statt 99")
++        "läuft wieder; IOA 106 = 99 nachgeliefert"
++    end
++
++    run_step("Testrahmen (t3)",
++             "Ohne Verkehr schickt die Leitstelle nach t3 = $(ST_T3_S) s einen Testrahmen",
++             "U-Rahmen TESTFR act von der Leitstelle, TESTFR con von der Station") do
++        first_frame = length(ST.frames) + 1
++        ok = wait_until(() -> any(f -> f[2] == "Leitstelle ←" && f[3] == "U TESTFR con",
++                                  ST.frames[first_frame:end]), ST_T3_S + 5.0)
++        ok || fail("kein TESTFR con innerhalb $(ST_T3_S + 5) s")
++        any(f -> f[2] == "Leitstelle →" && f[3] == "U TESTFR act", ST.frames[first_frame:end]) ||
++            fail("TESTFR act fehlt")
++        "TESTFR act gesendet, TESTFR con erhalten"
++    end
++
++    m = length(ST.events)
++    run_step("Trennen",
++             "Die Leitstelle beendet die Verbindung",
++             "Leitstelle „getrennt (von dieser Seite)“, Station „getrennt (Gegenstelle)“") do
++        client_close(ST.client)
++        expect(m, "Leitstelle getrennt"; kind = :cstate, state = Int(IEC104.LINK_CLOSED), reason = 1)
++        expect(m, "Station getrennt"; kind = :sstate, state = Int(IEC104.LINK_CLOSED))
++        "beide Seiten getrennt"
++    end
++
++    run_step("Rahmenstatistik",
++             "Alle Rahmen der Leitstelle zählen und prüfen, ob jeder lesbar war",
++             "I-, S- und U-Rahmen in beide Richtungen, kein unlesbarer Rahmen") do
++        lf = [f for f in ST.frames if startswith(f[2], "Leitstelle")]
++        n(dir, k) = count(f -> f[2] == "Leitstelle $dir" && startswith(f[3], k), lf)
++        bad = count(f -> startswith(f[3], "?"), ST.frames)
++        bad == 0 || fail("$bad unlesbare Rahmen")
++        n("→", "I ") > 0 && n("←", "I ") > 0 && n("→", "U ") > 0 || fail("zu wenige Rahmen")
++        "gesendet I $(n("→", "I ")), S $(n("→", "S ")), U $(n("→", "U ")); " *
++        "empfangen I $(n("←", "I ")), S $(n("←", "S ")), U $(n("←", "U "))"
++    end
++
++    run_step("Fehler der Library",
++             "Fehler und Warnungen, die die Library während des Tests gemeldet hat",
++             "keine Fehler; Warnungen nur für die absichtlich provozierten negativen Antworten " *
++             "(Befehl abgelehnt, unbekannte IOA, unbekannte Station)") do
++        errors = seen(0; kind = :log, level = 0)
++        isempty(errors) || fail(join(unique(e.text for e in errors), "; "))
++        warnings = unique(e.text for e in seen(0; kind = :log, level = 1))
++        expected = r"negative answer.*(type 45, cause 7|type 102, cause 47|type 100, cause 46)"
++        other = filter(w -> !occursin(expected, w), warnings)
++        isempty(other) || fail("unerwartete Warnungen: " * join(other, "; "))
++        "keine Fehler; $(length(warnings)) erwartete Warnungen (negative Antworten)"
++    end
++
++    selftest_lib60870()
++end
++
++"Optional: lib60870 (simple_client) as independent controlling station against the test station."
++function selftest_lib60870()
++    title = "lib60870 als fremde Leitstelle"
++    purpose = "Eine unabhängige Implementierung (lib60870, simple_client) verbindet sich mit der Station"
++    i = findfirst(x -> x.key == "simple_client", PEER_PROGRAMS)
++    x = PEER_PROGRAMS[i]
++    if !peer_found(x)
++        skip_step(title, purpose, "übersprungen: kein lib60870-Ordner beim Start der GUI angegeben")
++        return
++    end
++    if peer_running()
++        skip_step(title, purpose, "übersprungen: eine Gegenstelle läuft bereits")
++        return
++    end
++    m = length(ST.events)
++    run_step(title, purpose,
++             "Verbindung, STARTDT, Generalabfrage und Testbefehl kommen an der Station an; simple_client endet mit 0") do
++        proc = peer_launch(x, ST.port)
++        wait_until(() -> !process_running(proc), 20.0) || fail("simple_client nach 20 s nicht beendet")
++        proc.exitcode == 0 || fail("simple_client endete mit $(proc.exitcode)")
++        isempty(seen(m; kind = :sstate, state = Int(IEC104.LINK_STARTED))) && fail("kein STARTDT")
++        isempty(seen(m; kind = :request, type = 100)) && fail("keine Generalabfrage")
++        isempty(seen(m; kind = :request, type = 107)) && fail("kein Testbefehl")
++        "verbunden, STARTDT, Generalabfrage, Testbefehl; Rückgabe 0"
++    end
++end
++
++# --- Page and report --------------------------------------------------------------------------
++
++duration(s::Step) = s.t_end > 0 ? s.t_end - s.t_start : time() - s.t_start
++status_word(s::Step) = s.running ? "LÄUFT" : s.ok === true ? "OK" : s.ok === false ? "FEHLER" : "ÜBERSPRUNGEN"
++seconds(x) = replace(string(round(x; digits = 1)), '.' => ',') * " s"
++
++function selftest_json(io)
++    print(io, "\"selftest\":{\"running\":", ST.running, ",\"total\":",
++          ST_STEPS + (any(peer_found, PEER_PROGRAMS) ? 1 : 0),
++          ",\"passed\":", count(s -> s.ok === true, ST.steps),
++          ",\"failed\":", count(s -> s.ok === false && !s.running, ST.steps), ",\"steps\":[")
++    for (n, s) in enumerate(ST.steps)
++        n > 1 && print(io, ',')
++        print(io, "{\"nr\":", s.nr, ",\"title\":")
++        jstr(io, s.title)
++        print(io, ",\"status\":")
++        jstr(io, status_word(s))
++        print(io, ",\"expected\":")
++        jstr(io, s.expected)
++        print(io, ",\"observed\":")
++        jstr(io, s.observed)
++        print(io, ",\"duration\":")
++        jstr(io, seconds(duration(s)))
++        print(io, '}')
++    end
++    print(io, "]}")
++end
++
++stamp(t) = Libc.strftime("%H:%M:%S", t) * "." * lpad(floor(Int, (t % 1) * 1000), 3, '0')
++
++"Text report: short = summary and failed steps with their frames; full = every step with frames."
++function selftest_report(full::Bool)
++    io = IOBuffer()
++    println(io, "IEC 60870-5-104 Selbsttest der Test-GUI")
++    println(io, "Library ", IEC104.version(), " · Julia ", VERSION, " · ", Sys.KERNEL, " ", Sys.ARCH,
++            " · ", ST.started > 0 ? Libc.strftime("%Y-%m-%d %H:%M:%S", ST.started) : "nicht gelaufen")
++    println(io, "Station und Leitstelle der Library auf 127.0.0.1:", ST.port,
++            "; Normwerte (t0 30 s, t1 15 s, t2 10 s, k 12, w 8), Leitstelle t3 = ", ST_T3_S, " s")
++    ST.running && println(io, "ACHTUNG: Selbsttest läuft noch")
++    passed = count(s -> s.ok === true, ST.steps)
++    run = count(s -> s.ok !== nothing && !s.running, ST.steps)
++    total = ST.finished > 0 ? seconds(ST.finished - ST.started) : "–"
++    println(io, "Ergebnis: ", passed, " von ", run, " bestanden",
++            run == passed ? "" : " – $(run - passed) FEHLER", " (Dauer ", total, ")")
++    println(io)
++    println(io, "Rahmen: → gesendet, ← empfangen; eigene Verbindung aus Sicht der Leitstelle")
++    println(io)
++    println(io, "Nr  Ergebnis      Dauer   Schritt")
++    for s in ST.steps
++        println(io, lpad(s.nr, 2, '0'), "  ", rpad(status_word(s), 12), "  ", lpad(seconds(duration(s)), 6),
++                "  ", s.title)
++    end
++    shown = full ? ST.steps : filter(s -> s.ok === false && !s.running, ST.steps)
++    if isempty(shown)
++        println(io)
++        println(io, "Alle Schritte bestanden. Vollständiges Protokoll mit allen Rahmen: „Protokoll speichern“.")
++    end
++    for s in shown
++        println(io)
++        println(io, "[", lpad(s.nr, 2, '0'), "] ", s.title, " – ", status_word(s), " (", seconds(duration(s)), ")")
++        println(io, "  Zweck:      ", s.purpose)
++        println(io, "  Erwartet:   ", s.expected)
++        println(io, "  Beobachtet: ", s.observed)
++        # Frames of the own connection once, as the controlling station sees them; the
++        # station's view only where another controlling station (lib60870) talks.
++        own = "Station($(ST_CLIENT_CONN[]))"
++        frames = s.first_frame <= s.last_frame ?
++                 [f for f in ST.frames[s.first_frame:s.last_frame] if !startswith(f[2], own)] : []
++        isempty(frames) && continue
++        println(io, "  Rahmen:")
++        for (t, who, summary, meaning) in frames
++            println(io, "    ", stamp(t), " ", who, " ", summary)
++            isempty(meaning) || println(io, "                 ", " "^length(who), " ↳ ", meaning)
++        end
++    end
++    return String(take!(io))
++end
+diff --git a/include/iec104/iec104.h b/include/iec104/iec104.h
+index e6141f3..cde4a6f 100644
+--- a/include/iec104/iec104.h
++++ b/include/iec104/iec104.h
+@@ -61,7 +61,7 @@ extern "C" {
+ /** @brief Major version of this header. Incompatible API changes increment it. */
+ #define IEC104_VERSION_MAJOR 0
+ /** @brief Minor version of this header. Compatible additions increment it. */
+-#define IEC104_VERSION_MINOR 7
++#define IEC104_VERSION_MINOR 8
+ /** @brief Patch version of this header. Fixes without API change increment it. */
+ #define IEC104_VERSION_PATCH 0
+ 
+diff --git a/tests/gui/test_frames.jl b/tests/gui/test_frames.jl
+new file mode 100644
+index 0000000..0442f55
+--- /dev/null
++++ b/tests/gui/test_frames.jl
+@@ -0,0 +1,90 @@
++# SPDX-FileCopyrightText: 2026 SOPTIM AG
++# SPDX-License-Identifier: LicenseRef-Proprietary
++# Author: Udo Schmitz (SOPTIM AG)
++# All rights reserved by SOPTIM AG.
++#
++# test_frames.jl - unit test of examples/julia/gui/frames.jl (description of
++# frames for the commented protocol of the test GUI).
++#
++#   julia tests/gui/test_frames.jl
++#
++# Reference frames marked "capture" are taken verbatim from
++# tests/data/lib60870_capture.txt (produced by lib60870-C, an independent
++# implementation). Frames marked "built" were assembled by hand from the field
++# layout in docs/02_Technik_und_Quellen.md.
++
++using Test
++include(joinpath(@__DIR__, "..", "..", "examples", "julia", "gui", "frames.jl"))
++using .Frames
++
++d(hex) = describe(parse_hex(hex))
++
++@testset "Frames" begin
++    # capture: SEND 68 04 07 00 00 00 / RCVD 68 04 0b 00 00 00
++    @test d("68 04 07 00 00 00") == ("U STARTDT act", "Leitstelle bittet, die Datenübertragung zu starten")
++    @test d("68 04 0b 00 00 00")[1] == "U STARTDT con"
++    # built: STOPDT and TESTFR function octets (docs/02)
++    @test d("68 04 13 00 00 00")[1] == "U STOPDT act"
++    @test d("68 04 23 00 00 00")[1] == "U STOPDT con"
++    @test d("68 04 43 00 00 00")[1] == "U TESTFR act"
++    @test d("68 04 83 00 00 00")[1] == "U TESTFR con"
++
++    # capture: SEND 68 04 01 00 14 00 (acknowledges up to N(R) = 10)
++    @test d("68 04 01 00 14 00") == ("S N(R)=10", "Quittung: alle I-Rahmen bis Nr. 9 sind angekommen")
++
++    # capture: general interrogation, originator 3, station 1
++    s, m = d("68 0e 00 00 04 00 64 01 06 03 01 00 00 00 00 14")
++    @test s == "I N(S)=0 N(R)=2 · 100 C_IC_NA_1 Generalabfrage · Ursache 6 Aktivierung · " *
++               "Station 1 · IOA 0 QOI 20 (Station)"
++    @test m == "Leitstelle fordert alle Werte an"
++    s, m = d("68 0e 04 00 02 00 64 01 07 03 01 00 00 00 00 14")
++    @test occursin("Ursache 7 Bestätigung", s) && m == "Station bestätigt die Generalabfrage"
++    @test d("68 0e 0e 00 02 00 64 01 0a 03 01 00 00 00 00 14")[2] ==
++          "Station meldet: alle Werte gesendet, die Generalabfrage ist beendet"
++
++    # capture: three scaled values in answer to the interrogation (IOA 100: -1)
++    s, m = d("68 1c 06 00 02 00 0b 03 14 03 01 00 64 00 00 ff ff 00 65 00 00 17 00 00 66 00 00 fc 08 00")
++    @test s == "I N(S)=3 N(R)=1 · 11 M_ME_NB_1 Messwert skaliert · Ursache 20 Generalabfrage · " *
++               "Station 1 · IOA 100 Wert -1 (+2 weitere)"
++    @test m == "Antwort auf die Generalabfrage"
++
++    # capture: sequence of 8 single points from IOA 300 (VSQ 0x88)
++    s, _ = d("68 15 0a 00 02 00 01 88 14 03 01 00 2c 01 00 01 00 01 00 01 00 01 00")
++    @test occursin("IOA 300 ein (+7 weitere)", s)
++
++    # capture: cyclic scaled value IOA 110
++    s, m = d("68 10 00 00 00 00 0b 01 01 00 01 00 6e 00 00 00 00 00")
++    @test occursin("Ursache 1 zyklisch", s) && occursin("IOA 110 Wert 0", s) && m == "Zyklische Meldung"
++
++    # capture: test command with time tag 2026-11-25 11:01:05.931 and its mirror
++    s, m = d("68 16 02 00 14 00 6b 01 06 03 01 00 00 00 00 38 49 2b 17 01 0b 19 0b 1a")
++    @test occursin("107 C_TS_TA_1", s) && occursin("Zähler 18744 Zeit 2026-11-25 11:01:05.931", s)
++    @test m == "Testbefehl: prüft die Verbindung bis in die Anwendung"
++    @test d("68 16 14 00 04 00 6b 01 07 03 01 00 00 00 00 38 49 2b 17 01 0b 19 0b 1a")[2] ==
++          "Station spiegelt den Testbefehl"
++
++    # built: short float 5.0 (00 00 a0 40), spontaneous, IOA 100
++    s, m = d("68 12 00 00 00 00 0d 01 03 00 01 00 64 00 00 00 00 a0 40 00")
++    @test occursin("IOA 100 Wert 5.0", s) && startswith(m, "Spontane Meldung")
++
++    # built: single command "on" with select (SCO 0x81) to IOA 6000, then negative confirmation
++    s, m = d("68 0e 00 00 00 00 2d 01 06 00 01 00 70 17 00 81")
++    @test occursin("IOA 6000 ein Select", s) && startswith(m, "Leitstelle wählt den Befehl aus")
++    @test d("68 0e 00 00 00 00 2d 01 47 00 01 00 70 17 00 01")[2] == "Station lehnt den Befehl ab"
++    @test d("68 0e 00 00 00 00 2d 01 0a 00 01 00 70 17 00 01")[2] == "Station meldet: Befehl ausgeführt"
++
++    # built: interrogation of unknown station 99 answered with cause 46, negative (0x6e)
++    s, m = d("68 0e 00 00 00 00 64 01 6e 00 63 00 00 00 00 14")
++    @test occursin("Ursache 46 Station unbekannt negativ", s) && occursin("Station 99", s)
++    @test m == "Station kennt die gemeinsame Adresse (Station) nicht"
++
++    # built: acknowledgement after the counter wrapped (N(R) = 0)
++    @test d("68 04 01 00 00 00")[2] == "Quittung: alle I-Rahmen bis Nr. 32767 sind angekommen"
++    # built: short float with only one value octet: header kept, element marked
++    s, m = d("68 0d 00 00 00 00 0d 01 03 00 01 00 64 00 00 41")
++    @test occursin("Station 1 · IOA 100 (Element unvollständig: 41)", s) && startswith(m, "Spontane Meldung")
++
++    # unreadable input never throws
++    @test startswith(d("68 0e 00 00")[1], "?")
++    @test startswith(d("01 02 03 04 05 06")[1], "?")
++end
+diff --git a/tests/gui/test_gui.sh b/tests/gui/test_gui.sh
+index 3c6f0fc..dfd1011 100755
+--- a/tests/gui/test_gui.sh
++++ b/tests/gui/test_gui.sh
+@@ -11,6 +11,7 @@
+ #   LIB60870_C  optional, sonst Umgebungsvariable IEC104_LIB60870: Ordner lib60870-C
+ #               mit gebauten Beispielen; dann zusätzlich die Gegenstelle lib60870
+ #   JULIA, CURL Programme, Default aus dem Suchpfad
++#   GUI_REPORT  Datei für das vollständige Protokoll des Selbsttests (optional)
+ #
+ # Alles läuft auf 127.0.0.1 mit Port 0: GUI und Station wählen freie Ports.
+ # Geprüft: Host- und Kopfzeilenschutz, nur GET; Station mit Datenpunkt (nur auf
+@@ -130,7 +131,7 @@ ok "ohne X-IEC104-GUI: 403"
+ ok "fremder Host, falscher Port: 403"
+ R="$("$CURL" -sS --max-time 5 -H 'X-IEC104-GUI: 1' -H "Host: localhost:$PORT" -w '\n%{http_code}' \
+     "$(url /api/state)")"
+-case "$R" in '{"client":'*$'\n'200) ok "Host localhost:$PORT: 200 JSON" ;; *) fail "Host localhost: $R" ;; esac
++case "$R" in '{"boot":'*$'\n'200) ok "Host localhost:$PORT: 200 JSON" ;; *) fail "Host localhost: $R" ;; esac
+ [ "$(status -X POST -H 'X-IEC104-GUI: 1' "$(url /api/state)")" = 405 ] || fail "POST nicht 405"
+ H="$("$CURL" -s -i --max-time 5 -X OPTIONS -H 'Origin: http://evil.example' \
+     -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: x-iec104-gui' \
+@@ -155,6 +156,8 @@ else
+ fi
+ 
+ # --- Station und Leitstelle der GUI ------------------------------------------------
++# Werte werden auch ohne laufende Station geprüft (sonst scheitert später der Start).
++act_rejected 'server/point?type=1&ioa=200&value=2' 'passt nicht zu Typ 1'
+ act 'server/listen?port=0&station=1'
+ SPORT="$(api state | grep -o '"server":{"running":true,"port":[0-9]*' | grep -o '[0-9]*$')"
+ [ -n "$SPORT" ] && [ "$SPORT" -gt 0 ] || fail "Station meldet keinen Port"
+@@ -200,4 +203,32 @@ if [ -n "$LIB60870" ]; then
+     act_rejected 'peer/stop' 'keine Gegenstelle aktiv'
+ fi
+ 
++# --- Selbsttest der GUI -------------------------------------------------------------------
++act 'selftest/start'
++act_rejected 'selftest/start' 'Selbsttest läuft bereits'
++T=""
++for _ in $(seq 1 600); do   # höchstens 120 s
++    T="$(api 'state?since=999999999' | grep -o '"selftest":{"running":[a-z]*,"total":[0-9]*,"passed":[0-9]*,"failed":[0-9]*')"
++    echo "$T" | grep -q -E '"running":false,"total":[0-9]+,"passed":[0-9]+,"failed":[0-9]+' &&
++        ! echo "$T" | grep -q '"passed":0,"failed":0' && break
++    sleep 0.2
++done
++echo "$T" | grep -q '"running":false' || fail "Selbsttest nach 120 s nicht beendet: $T"
++if ! echo "$T" | grep -q '"failed":0'; then
++    api 'selftest/report?full=0' >&2
++    fail "Selbsttest mit Fehlern: $T"
++fi
++REPORT="$(api 'selftest/report?full=1')"
++[ -n "${GUI_REPORT:-}" ] && printf '%s\n' "$REPORT" > "$GUI_REPORT"   # zum Ansehen
++echo "$REPORT" | grep -q '^Ergebnis: [0-9]* von [0-9]* bestanden (' || fail "Protokoll ohne Ergebnis"
++echo "$REPORT" | grep -q 'Leitstelle → U STARTDT act' || fail "Protokoll ohne Rahmen"
++echo "$REPORT" | grep -q '↳ Leitstelle fordert alle Werte an' || fail "Protokoll ohne Erklärungen"
++if [ -n "$LIB60870" ]; then
++    echo "$REPORT" | grep -q 'lib60870 als fremde Leitstelle – OK' || fail "Schritt lib60870 fehlt oder Fehler"
++else
++    echo "$REPORT" | grep -q 'lib60870 als fremde Leitstelle – ÜBERSPRUNGEN' ||
++        echo "$REPORT" | grep -q '^23  ÜBERSPRUNGEN' || fail "Schritt lib60870 nicht übersprungen"
++fi
++ok "Selbsttest: $(echo "$REPORT" | grep '^Ergebnis')"
++
+ echo "test_gui: bestanden"
+diff --git a/tools/wsl_ausprobieren.sh b/tools/wsl_ausprobieren.sh
+index 72e48f6..1935969 100755
+--- a/tools/wsl_ausprobieren.sh
++++ b/tools/wsl_ausprobieren.sh
+@@ -166,7 +166,7 @@ if [ "$LIB60870" = 1 ]; then
+     else
+         # Nur Gegenstelle: Die Beispielprogramme laufen als eigene Prozesse, nichts wird gelinkt.
+         [ -d "$(dirname "$L60870")/.git" ] ||
+-            git clone -q --depth 1 --branch v2.4.1 "${LIB60870_GIT:-https://github.com/mz-automation/lib60870.git}" \
++            git -c advice.detachedHead=false clone -q --depth 1 --branch v2.4.1 "${LIB60870_GIT:-https://github.com/mz-automation/lib60870.git}" \
+                 "$(dirname "$L60870")" || { FEHLER=1; echo "  git clone fehlgeschlagen (Netz/Proxy?)"; }
+         if [ -d "$L60870" ] && cmake -S "$L60870" -B "$L60870/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                 > lib60870-build.log 2>&1 && cmake --build "$L60870/build" >> lib60870-build.log 2>&1; then
