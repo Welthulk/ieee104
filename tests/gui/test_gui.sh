@@ -107,6 +107,7 @@ wait_state() { # Sekunden, Beschreibung, since, Muster...
 }
 
 # --- GUI starten ---------------------------------------------------------------
+: > "$LOG"   # exists before the loop below reads it
 IEC104_LIB="$LIB" IEC104_LIB60870="" IEC104_GUI_LISTE="$WORK/werteliste.tsv" "$JULIA" --startup-file=no "$GUI" 0 127.0.0.1 \
     ${LIB60870:+"$LIB60870"} < /dev/null > "$LOG" 2>&1 &
 GPID=$!
@@ -196,6 +197,9 @@ wait_state 10 "Rückmeldung mit Zeit" 0 '"cmds":\[\{"id":1,[^}]*"fb":1001,"tfb":
 act 'client/command?type=45&ioa=6001&value=0&mode=sbo'
 wait_state 10 "Select und Execute" 0 '"cmds":\[\{"id":2,[^}]*"tsel":[0-9]+,"tcon":[0-9]+,"tterm":[0-9]+,[^}]*"mode":"Select\+Execute"[^}]*"res":"ausgeführt"'
 act_rejected 'client/command?type=13&ioa=1&value=1' 'kein Befehl'
+act_rejected 'client/command?ioa=6001&value=1' 'Befehlstyp fehlt'   # nie stillschweigend Typ 45
+act_rejected 'client/command?type=45&ioa=6001&value=1&fb=abc' 'keine ganze Zahl'   # geprüft vor dem Senden
+act_rejected 'client/command?type=45&ioa=6001&value=1&fb=99999999' 'Rückmelde-IOA'
 act 'server/accept?on=0'
 act 'client/command?type=45&ioa=6001&value=1'
 wait_state 10 "abgelehnter Befehl" 0 '"cmds":\[\{"id":3,[^}]*"res":"abgelehnt"'

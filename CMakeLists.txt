@@ -6,7 +6,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(iec104
-    VERSION 0.9.0
+    VERSION 0.9.1
     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
     LANGUAGES C CXX)
 
@@ -330,6 +330,14 @@ if(IEC104_BUILD_TESTS AND BUILD_SHARED_LIBS)
         # Empty IEC104_LIB60870: without lib60870, even if set in the environment.
         set_tests_properties(Julia.Gui PROPERTIES TIMEOUT 300
             ENVIRONMENT "${_gui_env};IEC104_LIB60870=")
+        # The page script itself, run by gjs (GNOME JavaScript) against a running GUI.
+        find_program(IEC104_GJS gjs)
+        if(IEC104_GJS)
+            add_test(NAME Julia.GuiPage
+                COMMAND ${PROJECT_SOURCE_DIR}/tests/gui/test_page.sh $<TARGET_FILE:iec104>)
+            set_tests_properties(Julia.GuiPage PROPERTIES TIMEOUT 300
+                ENVIRONMENT "${_gui_env};GJS=${IEC104_GJS}")
+        endif()
         if(IEC104_LIB60870_DIR)
             get_filename_component(_lib60870 "${IEC104_LIB60870_DIR}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
             add_test(NAME Julia.GuiLib60870

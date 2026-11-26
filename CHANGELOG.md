@@ -1,5 +1,15 @@
 # Änderungen
 
+## 0.9.1 (26.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| Test-GUI | Korrektur: Die Seite fand Prozessabbild, Werteliste und Befehle nicht (falsche Verschachtelung im JSON), schickte dann bei jeder Aktualisierung `undefined` und die GUI meldete im Terminal laufend „invalid base 10 digit 'u'“; dadurch blieben Station, Selbsttest und Ereignisse auf der Seite leer |
+| Test-GUI | Befehle: Typ ist Pflicht; ein Listeneintrag mit einem Typ ohne Auswahlpunkt (z. B. 60) schickte stillschweigend einen Einzelbefehl (45). Alle Befehlstypen 45–51 und 58–64 wählbar; Rückmelde-IOA wird vor dem Senden geprüft (vorher: Befehl gesendet, aber Fehler gemeldet und nicht verfolgt) |
+| Test-GUI | Fehlerhafte Zahlen in Anfragen: bei der Zustandsabfrage Standardwert, bei Aktionen deutsche Meldung; ein Fehler im GUI-Programm antwortet mit 500 und erscheint im Terminal nur einmal; Pfad der Werteliste mit `~` |
+| Test | `tests/gui/test_page.js`: führt das Skript der Seite in gjs gegen eine laufende GUI aus (ctest `Julia.GuiPage`, wenn gjs vorhanden): unbekannte Element-IDs, Ausnahmen, Antworten ungleich 200, Fehlerzeile der Seite und Ausgaben der GUI im Terminal schlagen fehl |
+| Doku | Bild der Test-GUI im README (`docs/bilder/test_gui.png`, erzeugt mit `tools/gui_screenshot.sh` über WebKitGTK) |
+
 ## 0.9.0 (26.11.2026)
 
 | Bereich | Änderung |

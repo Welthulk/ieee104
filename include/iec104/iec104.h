@@ -63,7 +63,7 @@ extern "C" {
 /** @brief Minor version of this header. Compatible additions increment it. */
 #define IEC104_VERSION_MINOR 9
 /** @brief Patch version of this header. Fixes without API change increment it. */
-#define IEC104_VERSION_PATCH 0
+#define IEC104_VERSION_PATCH 1
 
 /**
  * @brief Default TCP port of an IEC 60870-5-104 connection without TLS.
@@ -468,8 +468,7 @@ IEC104_API const char* iec104_type_name(uint8_t type);
  */
 IEC104_API iec104_status iec104_decode_asdu(const iec104_link_config* config, const uint8_t* asdu,
                                             size_t length, iec104_asdu_info* info,
-                                            iec104_object* objects, size_t capacity,
-                                            size_t* count);
+                                            iec104_object* objects, size_t capacity, size_t* count);
 
 /** @brief Final result of a command sent by the client (see on_command_result). */
 /* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */

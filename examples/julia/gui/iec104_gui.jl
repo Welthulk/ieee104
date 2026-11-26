@@ -407,8 +407,22 @@ cb_log_server(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid 
 
 # --- Actions ---------------------------------------------------------------------
 
-p_int(p, k, d) = haskey(p, k) && !isempty(p[k]) ? parse(Int, p[k]) : d
-p_num(p, k, d) = haskey(p, k) && !isempty(p[k]) ? parse(Float64, replace(p[k], ',' => '.')) : d
+"Integer parameter @p k, @p d if missing; a bad number is an error with a German message."
+function p_int(p, k, d)
+    (haskey(p, k) && !isempty(p[k])) || return d
+    x = tryparse(Int, strip(p[k]))
+    x === nothing && throw(ArgumentError("$k: „$(p[k])“ ist keine ganze Zahl"))
+    return x
+end
+"Number parameter (decimal point or comma), as p_int."
+function p_num(p, k, d)
+    (haskey(p, k) && !isempty(p[k])) || return d
+    x = tryparse(Float64, replace(strip(p[k]), ',' => '.'))
+    x === nothing && throw(ArgumentError("$k: „$(p[k])“ ist keine Zahl"))
+    return x
+end
+"Integer of the state request; anything unreadable counts as @p d (the page then gets everything)."
+q_int(p, k, d) = (x = tryparse(Int, get(p, k, "")); x === nothing ? d : x)
 p_str(p, k) = get(p, k, "")
 
 function gui_client_connect(p)
@@ -476,8 +490,14 @@ const MODE_TEXT = Dict("direct" => "direkt", "sbo" => "Select+Execute", "select"
 
 function gui_client_command(p)
     need_client()
-    type = p_int(p, "type", 45)
+    # The type is required: a default could send another command than the user chose.
+    type = p_int(p, "type", 0)
+    type == 0 && throw(ArgumentError("Befehlstyp fehlt"))
     is_command(type) || throw(ArgumentError("Typ $type ist kein Befehl"))
+    # Everything is checked before sending, so that an error never follows a sent command.
+    fb_given = haskey(p, "fb") && !isempty(strip(p["fb"]))
+    fb_given && !(0 <= p_int(p, "fb", -1) <= 16777215) &&
+        throw(ArgumentError("Rückmelde-IOA 0…16777215 oder leer"))
     station = UInt16(p_int(p, "station", GUI.station))
     ioa = p_int(p, "ioa", 0)
     mode = get(MODE_TEXT, p_str(p, "mode"), nothing) === nothing ? "direct" : p_str(p, "mode")
@@ -498,8 +518,7 @@ function gui_client_command(p)
         client_send_command(GUI.client, station, o)
     end
     entry = get(GUI.list, (station, UInt32(ioa)), nothing)
-    fb = haskey(p, "fb") && !isempty(p["fb"]) ? p_int(p, "fb", -1) :
-         entry === nothing ? -1 : entry.feedback
+    fb = fb_given ? p_int(p, "fb", -1) : entry === nothing ? -1 : entry.feedback
     mode == "select" && (fb = -1)   # a select changes nothing
     GUI.cmd_id += 1
     push!(GUI.cmds, SentCommand(GUI.cmd_id, time(), station, o, MODE_TEXT[mode],
@@ -787,16 +806,16 @@ jfield(io, key, v::AbstractString) = (print(io, ",\"", key, "\":"); jstr(io, v))
 jfield(io, key, v) = print(io, ",\"", key, "\":", v)
 
 function state_json(p)
-    since = p_int(p, "since", 0)
+    since = q_int(p, "since", 0)
     io = IOBuffer()
     print(io, "{\"boot\":\"", BOOT, "\",\"client\":{\"state\":")
     jstr(io, GUI.client == C_NULL ? "–" : IEC104.state_string(GUI.client_state))
     print(io, ",\"text\":")
     jstr(io, GUI.client == C_NULL ? "nicht verbunden" : state_text(GUI.client_state))
-    print(io, ",\"station\":", GUI.station)
+    print(io, ",\"station\":", GUI.station, '}')
     # Process image: changed points only, all after a clear (epoch) or on the first request.
-    epoch = p_int(p, "pe", 0)
-    pv = epoch == GUI.image_epoch ? p_int(p, "pv", 0) : 0
+    epoch = q_int(p, "pe", 0)
+    pv = epoch == GUI.image_epoch ? q_int(p, "pv", 0) : 0
     print(io, ",\"epoch\":", GUI.image_epoch, ",\"pv\":", GUI.image_version, ",\"image\":[")
     n = 0
     for pt in values(GUI.image)
@@ -813,7 +832,7 @@ function state_json(p)
     print(io, ']')
     # Value list and commands: complete, when changed.
     print(io, ",\"lv\":", GUI.list_version)
-    if p_int(p, "lv", 0) != GUI.list_version
+    if q_int(p, "lv", 0) != GUI.list_version
         print(io, ",\"list\":[")
         for (k, e) in enumerate(sort!(collect(values(GUI.list)); by = e -> (e.station, e.ioa)))
             k > 1 && print(io, ',')
@@ -822,10 +841,11 @@ function state_json(p)
             print(io, '}')
         end
         print(io, ']')
-        jfield(io, "list_file", list_file())
+        f = list_file()
+        jfield(io, "list_file", startswith(f, homedir() * "/") ? "~" * f[length(homedir())+1:end] : f)
     end
     print(io, ",\"cv\":", GUI.cmds_version)
-    if p_int(p, "cv", 0) != GUI.cmds_version
+    if q_int(p, "cv", 0) != GUI.cmds_version
         print(io, ",\"cmds\":[")
         for (k, c) in enumerate(Iterators.reverse(GUI.cmds))
             k > 1 && print(io, ',')
@@ -843,7 +863,7 @@ function state_json(p)
         end
         print(io, ']')
     end
-    print(io, "},\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
+    print(io, ",\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
           GUI.server == C_NULL ? 0 : server_port(GUI.server), ",\"station\":", GUI.server_station,
           ",\"accept\":", GUI.accept_commands, ",\"connections\":[")
     for (n, (id, st)) in enumerate(sort!(collect(GUI.connections)))
@@ -1003,6 +1023,7 @@ function host_allowed(host::AbstractString)
 end
 
 const HEADERS_MAX = 100
+const WARNED = Set{String}()   # failures already reported in the terminal
 
 function handle(sock)
     try
@@ -1035,7 +1056,15 @@ function handle(sock)
                     "Cache-Control: no-store\r\nX-Frame-Options: DENY\r\n$(allow)Connection: close\r\n\r\n",
               body)
     catch e
-        e isa Base.IOError || @warn "request failed" exception = e
+        e isa Base.IOError && return
+        msg = sprint(showerror, e)
+        msg in WARNED || (push!(WARNED, msg); @warn "Anfrage gescheitert (weitere gleiche Meldungen unterdrückt)" exception = e)
+        try
+            body = "Fehler im GUI-Programm: $msg\n"
+            write(sock, "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\n" *
+                        "Content-Length: $(sizeof(body))\r\nConnection: close\r\n\r\n", body)
+        catch
+        end
     finally
         close(sock)
     end
