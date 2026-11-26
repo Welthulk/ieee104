@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
 Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
 
 ```bash
-cd iec104-0.8.0-linux-x86_64
+cd iec104-0.9.0-linux-x86_64
 julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
 julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
 ```
@@ -158,7 +158,14 @@ end
 
 ## 7. Test-GUI im Browser
 
-`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server), darunter lib60870 als fremde Leitstelle, ein Selbsttest und das Ereignisprotokoll mit erklärten Rahmen. Es braucht nur Julia, keine Pakete.
+`gui/iec104_gui.jl` ist Test-GUI und Prüfstand mit Oberfläche im Browser. Es braucht nur Julia, keine Pakete.
+
+| Reiter | Inhalt |
+| --- | --- |
+| Prüfstand (Leitstelle) | Leitstelle gegen eine Station, z. B. ein Gerät im Netz: Werteliste, Prozessabbild mit Zählern je Ursache, Befehle mit Laufzeiten (Abschnitt 7.4) |
+| Station und lib60870 | eigene Teststation und lib60870 als fremde Leitstelle (Abschnitt 7.1) |
+| Selbsttest | prüft die Library mit eigener Station und Leitstelle (Abschnitt 7.2) |
+| immer darunter | Telegramme und Ereignisse mit Filtern (Abschnitt 7.3) |
 
 ```bash
 julia julia/gui/iec104_gui.jl [port] [adresse] [lib60870]   # im Binärpaket; im Quellbaum examples/julia/gui/
@@ -174,12 +181,12 @@ Dann im Browser `http://localhost:8080` öffnen. Kommt unter WSL der Windows-Bro
 
 | Bereich | Funktionen |
 | --- | --- |
-| Leitstelle | Verbinden (Adresse, Port, Station, Timer, k, w, tolerant, TLS mit CA, Zertifikat, Schlüssel, Name), STARTDT, STOPDT, Trennen; Generalabfrage (Station, Gruppe 1–16), Zählerabfrage, Uhrzeit; Befehle 45–50 und 58–63 direkt oder mit Select/Execute |
-| Tabelle | jeder empfangene Punkt mit Typ, Wert, Qualität, Ursache (negativ rot), Zeitmarke, Anzahl, Alter; frische Werte hervorgehoben |
+| Leitstelle | Verbinden (Adresse, Port, Station, Timer, k, w, tolerant, TLS mit CA, Zertifikat, Schlüssel, Name; Zeitlimits der Befehle, mit oder ohne ACTTERM), auf Wunsch gleich STARTDT und Generalabfrage; STARTDT, STOPDT, Trennen; Generalabfrage (Station, Gruppe 1–16), Zählerabfrage (Gruppe, Einfrieren, Rücksetzen), Lesebefehl, Uhrzeit |
+| Befehle | Typen 45–50 und 58–63 mit QU/QL: direkt, Select dann Execute, nur Select, nur Execute; Tabelle mit Ergebnis und Laufzeiten |
 | Station | Starten auf Port/Station, Datenpunkte anlegen (Typen 1, 3, 5, 9, 11, 13, 15), Wert ändern und spontan senden (+1 für schnelle Tests), Befehle annehmen oder ablehnen, Verbindungen |
 | Gegenstelle lib60870 | ein Leitstellen-Beispiel von lib60870 gegen die eigene Station starten und beenden (Abschnitt 7.1) |
 | Selbsttest | prüft die Library mit eigener Station und Leitstelle (Abschnitt 7.2) |
-| Ereignisse | Zustände, Abfragen und Befehle an die Station, Befehlsergebnisse, TLS-Ereignisse, Fehler (rot) und Warnungen (braun) der Library, Ausgabe von lib60870; jeder gesendete und empfangene Rahmen dekodiert und erklärt (Abschnitt 7.3); „Ereignisse kopieren“ |
+| Telegramme und Ereignisse | Zustände, Abfragen und Befehle an die Station, Befehlsergebnisse, TLS-Ereignisse, Fehler (rot) und Warnungen (braun) der Library, Ausgabe von lib60870; jeder gesendete und empfangene Rahmen dekodiert und erklärt (Abschnitt 7.3) |
 
 Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Punkt anlegen, Leitstelle auf `127.0.0.1:2404` verbinden, STARTDT, Generalabfrage.
 
@@ -187,7 +194,7 @@ Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Pu
 | --- | --- |
 | GUI und Station lauschen nur auf `127.0.0.1` | die GUI hat keine Anmeldung, kann Befehle senden und Programme starten; eine andere Adresse nur bewusst als zweiter Parameter |
 | Anfragen nur mit Host `localhost` oder IP-Adresse samt Port der GUI, `/api/` nur mit Kopfzeile `X-IEC104-GUI: 1`, nur GET, kein CORS, nicht einbettbar | eine fremde Webseite im selben Browser kann die GUI nicht steuern, auch nicht über DNS-Rebinding |
-| Die GUI ist ein Testwerkzeug | eine Verbindung je Seite, kein Speichern der Einstellungen |
+| Die GUI ist ein Testwerkzeug | eine Verbindung je Seite; gespeichert wird nur die Werteliste |
 | Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`), `selftest.jl` (Selbsttest), `frames.jl` (Rahmen in Worten), `index.html` (Seite) |
 | Test | `tests/gui/test_gui.sh` mit Selbsttest; in `ctest` (Preset `shared`) als `Julia.Gui`, mit `IEC104_LIB60870_DIR` auch `Julia.GuiLib60870`; `tests/gui/test_frames.jl` als `Julia.Frames` (nur Julia) |
 
@@ -246,7 +253,17 @@ Ablauf: Station mit Station (CA) 1 starten, Datenpunkt anlegen, unter „Gegenst
 
 ### 7.3 Rahmen im Klartext
 
-Unter Ereignisse steht jeder Rahmen von Leitstelle und Station der GUI mit Richtung und Inhalt, darunter in einem Satz, was er bedeutet. „Rahmen“ und „Erklärungen“ blenden beides ein und aus.
+Unter „Telegramme und Ereignisse“ steht jeder Rahmen von Leitstelle und Station der GUI mit Richtung und Inhalt, darunter in einem Satz, was er bedeutet.
+
+| Schalter | Wirkung |
+| --- | --- |
+| Richtung, I, S, U, Rahmen, Ereignisse | nur diese Rahmen bzw. Meldungen zeigen |
+| Typ, Ursache, IOA, Text | nur Rahmen mit dieser Typkennung, Ursache oder IOA (auch das 5. von 8 Objekten); Text sucht in Zeile und Erklärung |
+| Erklärungen, alle Objekte, Hex | Satz zur Bedeutung, jedes Objekt in einer eigenen Zeile, Rahmen als Hexdump |
+| anhalten | Anzeige steht still, es wird weiter mitgeschrieben |
+| Angezeigte kopieren, speichern | genau das Gefilterte als Text, z. B. für einen Bericht |
+
+Die Seite behält die letzten 20000 Einträge und zeigt die letzten 1500 des Filters.
 
 ```
 09:12:03  Leitstelle → I N(S)=0 N(R)=1 · 100 C_IC_NA_1 Generalabfrage · Ursache 6 Aktivierung · Station 1 · IOA 0 QOI 20 (Station)
@@ -267,3 +284,26 @@ Unter Ereignisse steht jeder Rahmen von Leitstelle und Station der GUI mit Richt
 | `IOA … Wert …` | erstes Informationsobjekt mit Wert, Qualität (`[IV NT …]`) und Zeitmarke; „(+n weitere)“ bei mehreren Objekten |
 
 Die Beschreibung macht `frames.jl` ohne Aufruf der Library, für das Standardprofil (Ursache 2, Station 2, IOA 3 Oktette). Grundlage ist der Trace der Library (Log-Stufe 4, jeder Rahmen als Hexdump).
+
+### 7.4 Prüfstand: Station testen
+
+Ablauf gegen eine Station (z. B. ein Gerät, das im Netz erreichbar ist):
+
+1. Reiter „Prüfstand“: Adresse, Port (2404, mit TLS 19998) und Station (gemeinsame Adresse) eintragen, „Verbinden“. Mit dem Haken „nach dem Verbinden STARTDT und Generalabfrage“ füllt sich das Prozessabbild gleich.
+2. Werteliste anlegen: Station, IOA, Typ, Text und bei Befehlen die Rückmelde-IOA eintragen, „In die Liste“. „Empfangene übernehmen“ setzt alle Punkte der Generalabfrage auf einmal in die Liste; Texte dann mit ✎ ergänzen.
+3. Befehl senden: unter „aus der Werteliste“ wählen oder Typ, IOA, Wert selbst eintragen.
+4. Ergebnis in den Tabellen ablesen, bei Bedarf „Als Tabelle speichern“ und unten „Angezeigte speichern“.
+
+| Begriff | Bedeutung |
+| --- | --- |
+| Werteliste | die Punkte, die man erwartet: Station, IOA, erwarteter Typ (leer = beliebig), Text, Rückmelde-IOA. Wird bei jeder Änderung gespeichert und beim Start geladen: `~/.config/iec104/werteliste.tsv` (anders: Umgebungsvariable `IEC104_GUI_LISTE`) |
+| Rückmelde-IOA | Meldung, an der man sieht, dass ein Befehl gewirkt hat, z. B. Befehl „Schalter EIN“ auf IOA 6001, Schalterstellung auf IOA 1001 |
+| Prozessabbild | Liste und Empfangenes zusammen: grau = in der Liste, noch nichts empfangen; kursiv = empfangen, nicht in der Liste; gelb = Typ anders als in der Liste (mit und ohne Zeitmarke gilt als gleich) |
+| Zähler je Ursache | wie oft der Punkt kam: zyk (1), hgd (2), spo (3), GA (20–36), ZA (37–41), les (5), RM (11, 12), bef (6–10), sonst. So sieht man, ob jeder Punkt in der Generalabfrage und spontan kommt |
+| Befehle und Laufzeiten | je Befehl Ergebnis (ausgeführt, bestätigt, ausgewählt, abgelehnt, keine Bestätigung, keine Beendigung, Verbindung verloren) und Millisekunden ab Senden bis Select-Bestätigung, Bestätigung (ACTCON), Beendigung (ACTTERM), erster Wert der Rückmelde-IOA und Endergebnis |
+
+| Hinweis | Grund |
+| --- | --- |
+| Sendet die Station kein ACTTERM, unter „Timer, Fenster, Befehle, TLS“ den Haken „Befehle enden mit ACTTERM“ entfernen | sonst endet jeder Befehl mit „keine Beendigung“ |
+| Befehle mit Zeitmarke (58–63) tragen die Zeit in UTC, „Uhrzeit setzen“ ebenso | die Norm legt die Zeitzone nicht fest, sie wird mit der Gegenstelle vereinbart |
+| Ein Netz zur Station muss erreichbar sein | die GUI ändert keine Netz- oder Firewall-Einstellungen |

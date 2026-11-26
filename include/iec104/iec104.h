@@ -61,7 +61,7 @@ extern "C" {
 /** @brief Major version of this header. Incompatible API changes increment it. */
 #define IEC104_VERSION_MAJOR 0
 /** @brief Minor version of this header. Compatible additions increment it. */
-#define IEC104_VERSION_MINOR 8
+#define IEC104_VERSION_MINOR 9
 /** @brief Patch version of this header. Fixes without API change increment it. */
 #define IEC104_VERSION_PATCH 0
 
@@ -429,6 +429,47 @@ typedef struct iec104_asdu_info {
     uint8_t originator;      /**< Originator address. */
     uint16_t common_address; /**< Common address (station). */
 } iec104_asdu_info;
+
+/**
+ * @brief Name of a type identification as in the standard, e.g. "M_SP_NA_1" for 1.
+ *
+ * Covers the types of the library's type table (see the interoperability
+ * list). Intended for logs and test tools.
+ *
+ * @return Pointer to a static, NUL-terminated string. Never NULL. Types
+ *         outside the table (unknown, private) yield "unknown type".
+ */
+IEC104_API const char* iec104_type_name(uint8_t type);
+
+/**
+ * @brief Decodes a complete ASDU into its data unit identifier and objects.
+ *
+ * For applications and test tools that see raw ASDUs, e.g. in on_asdu or in
+ * a frame trace (the octets behind the 6 octets of the APCI). The decoding is
+ * the same the library uses for its own callbacks.
+ *
+ * @param config   Field lengths and strict/tolerant handling; NULL = values of
+ *                 the standard (iec104_link_config_init()).
+ * @param asdu     The ASDU octets.
+ * @param length   Number of octets at @p asdu.
+ * @param info     Receives the data unit identifier. Filled whenever the
+ *                 ASDU itself is well formed, also for IEC104_ERR_UNSUPPORTED.
+ * @param objects  Caller's array for the objects; may be NULL if @p capacity is 0.
+ * @param capacity Number of entries in @p objects. 127 is always enough.
+ * @param count    Receives the number of objects in the ASDU (also for
+ *                 IEC104_ERR_UNSUPPORTED, then without writing @p objects).
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL pointers or an
+ *         invalid @p config; IEC104_ERR_MALFORMED if the octets do not form
+ *         an ASDU (length does not match the objects, header too short);
+ *         IEC104_ERR_UNSUPPORTED if the type is not in the table or has no
+ *         mapping to ::iec104_object (see the table there);
+ *         IEC104_ERR_BUFFER_TOO_SMALL if @p capacity is less than the number
+ *         of objects.
+ */
+IEC104_API iec104_status iec104_decode_asdu(const iec104_link_config* config, const uint8_t* asdu,
+                                            size_t length, iec104_asdu_info* info,
+                                            iec104_object* objects, size_t capacity,
+                                            size_t* count);
 
 /** @brief Final result of a command sent by the client (see on_command_result). */
 /* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */

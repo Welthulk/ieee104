@@ -6,7 +6,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(iec104
-    VERSION 0.8.0
+    VERSION 0.9.0
     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
     LANGUAGES C CXX)
 

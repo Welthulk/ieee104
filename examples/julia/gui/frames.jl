@@ -14,7 +14,7 @@
 
 module Frames
 
-export describe, parse_hex
+export describe, parse_hex, details
 
 # Type identification -> (name, German short text).
 const TYPES = Dict{Int,Tuple{String,String}}(
@@ -115,6 +115,8 @@ function element(t::Int, b, i)
         "Wert " * string(round(i16(b, i) / 32768; digits = 5)) * quality(b[i+2])
     elseif base == 11
         "Wert $(i16(b, i))" * quality(b[i+2])
+    elseif base == 21
+        "Wert " * string(round(i16(b, i) / 32768; digits = 5))
     elseif base == 13
         "Wert " * string(reinterpret(Float32, u32(b, i))) * quality(b[i+4])
     elseif base == 15
@@ -271,6 +273,57 @@ function command_select(t::Int, b, i::Int)
     base = t >= 58 ? t - 13 : t
     q = base in (45, 46, 47) ? i : base in (48, 49) ? i + 2 : base == 50 ? i + 4 : 0
     return q != 0 && q <= length(b) && b[q] & 0x80 != 0
+end
+
+# Octets of one element (time tag included) per type; types not listed: unknown length.
+const ELEMENT_LENGTH = Dict(1 => 1, 3 => 1, 5 => 2, 7 => 5, 9 => 3, 11 => 3, 13 => 5, 15 => 5,
+    21 => 2, 30 => 8, 31 => 8, 32 => 9, 33 => 12, 34 => 10, 35 => 10, 36 => 12, 37 => 12,
+    45 => 1, 46 => 1, 47 => 1, 48 => 3, 49 => 3, 50 => 5, 51 => 4, 58 => 8, 59 => 8, 60 => 8,
+    61 => 10, 62 => 10, 63 => 12, 64 => 11, 70 => 1, 100 => 1, 101 => 1, 102 => 0, 103 => 7,
+    104 => 2, 105 => 1, 107 => 9)
+
+"""
+    details(apdu) -> NamedTuple
+
+Fields for filters and the object list: format ('I', 'S', 'U', '?'), type, cause,
+station (-1 without ASDU), negative, ioas (all objects) and objects (one line
+per object, "IOA 100 Wert 5.0"). Never throws.
+"""
+function details(b::AbstractVector{UInt8})
+    none = (format = '?', type = -1, cause = -1, station = -1, negative = false,
+            ioas = UInt32[], objects = String[])
+    try
+        length(b) >= 6 && b[1] == 0x68 || return none
+        b[3] & 0x01 == 0x01 && return (none..., format = b[3] & 0x03 == 0x01 ? 'S' : 'U')
+        length(b) >= 12 || return (none..., format = 'I')
+        t = Int(b[7])
+        n = Int(b[8] & 0x7f)
+        sq = b[8] & 0x80 != 0
+        ioas = UInt32[]
+        objects = String[]
+        len = get(ELEMENT_LENGTH, t, -1)
+        j = 13                       # first octet of the first object (1-based)
+        ioa = UInt32(0)
+        for k in 1:n
+            if k == 1 || !sq
+                j + 2 <= length(b) || break
+                ioa = UInt32(b[j]) | UInt32(b[j+1]) << 8 | UInt32(b[j+2]) << 16
+                j += 3
+            else
+                ioa += 1
+            end
+            push!(ioas, ioa)
+            e = len < 0 ? "" : j + len - 1 <= length(b) ? (try element(t, b, j) catch; "" end) :
+                "(Element unvollständig)"
+            push!(objects, "IOA $ioa" * (isempty(e) ? "" : " " * e))
+            len < 0 && break
+            j += len
+        end
+        return (format = 'I', type = t, cause = Int(b[9] & 0x3f), station = Int(u16(b, 11)),
+                negative = b[9] & 0x40 != 0, ioas = ioas, objects = objects)
+    catch
+        return none
+    end
 end
 
 end # module Frames

@@ -14,7 +14,7 @@
 module IEC104
 
 export LinkConfig, IecTime, Object, AsduInfo, Callbacks, Iec104Error, TlsConfig
-export version, tls_available, check
+export version, tls_available, check, type_name, decode_asdu, client_set_options
 export server_create, server_listen, server_port, server_add_point, server_update,
        server_poll, server_destroy
 export client_create, client_connect, client_start, client_stop, client_poll,
@@ -254,9 +254,39 @@ client_select_execute(c, station::Integer, o::Object) =
 client_set_tls(c, tls::Union{TlsConfig,Nothing}) =
     check(ccall((:iec104_client_set_tls, LIB), Cint, (Ptr{Cvoid}, Ptr{Cvoid}), c,
                 tls === nothing ? C_NULL : pointer_from_objref(tls)))
+"Time limits for commands (iec104_client_options); @p expect_termination false for peers without ACTTERM."
+function client_set_options(c; confirmation_ms::Integer = 10000, termination_ms::Integer = 10000,
+                            expect_termination::Bool = true)
+    o = (UInt32(confirmation_ms), UInt32(termination_ms), Cint(expect_termination))
+    check(ccall((:iec104_client_set_options, LIB), Cint, (Ptr{Cvoid}, Ref{NTuple{3,UInt32}}), c,
+                (o[1], o[2], reinterpret(UInt32, o[3]))))
+end
 "Log callback, see server_set_log."
 client_set_log(c, level::Integer, fn::Ptr{Cvoid}, user::Ptr{Cvoid}) =
     ccall((:iec104_client_set_log, LIB), Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}, Ptr{Cvoid}),
           c, level, fn, user)
+
+# --- Decoding (e.g. frames of a capture) -------------------------------------------
+
+"Name of a type as in the standard, e.g. \"M_SP_NA_1\"; \"unknown type\" if not in the table."
+type_name(t::Integer) = unsafe_string(ccall((:iec104_type_name, LIB), Cstring, (UInt8,), t))
+
+"""
+    decode_asdu(asdu) -> (status, info, objects)
+
+Decodes an ASDU (the octets behind the 6 octets of the APCI) with the profile of
+the standard. status 0 = ok; -6 (unsupported) still gives info. objects is
+empty unless status is 0.
+"""
+function decode_asdu(asdu::AbstractVector{UInt8})
+    info = Ref{AsduInfo}()
+    objects = Vector{Object}(undef, 127)
+    count = Ref{Csize_t}(0)
+    data = Vector{UInt8}(asdu)
+    st = ccall((:iec104_decode_asdu, LIB), Cint,
+               (Ptr{Cvoid}, Ptr{UInt8}, Csize_t, Ref{AsduInfo}, Ptr{Object}, Csize_t, Ref{Csize_t}),
+               C_NULL, data, length(data), info, objects, length(objects), count)
+    return st, (st == 0 || st == -6) ? info[] : nothing, st == 0 ? objects[1:count[]] : Object[]
+end
 
 end # module

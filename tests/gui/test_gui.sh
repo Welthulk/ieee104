@@ -107,7 +107,7 @@ wait_state() { # Sekunden, Beschreibung, since, Muster...
 }
 
 # --- GUI starten ---------------------------------------------------------------
-IEC104_LIB="$LIB" IEC104_LIB60870="" "$JULIA" --startup-file=no "$GUI" 0 127.0.0.1 \
+IEC104_LIB="$LIB" IEC104_LIB60870="" IEC104_GUI_LISTE="$WORK/werteliste.tsv" "$JULIA" --startup-file=no "$GUI" 0 127.0.0.1 \
     ${LIB60870:+"$LIB60870"} < /dev/null > "$LOG" 2>&1 &
 GPID=$!
 for _ in $(seq 1 1200); do   # der erste Julia-Start übersetzt einmalig
@@ -166,14 +166,42 @@ ok "Station auf 127.0.0.1:$SPORT"
 act 'server/point?type=13&ioa=100&value=42.5'
 wait_state 5 "Datenpunkt angelegt" 0 '"points":\[\{"ioa":100,"type":13,"value":42.5\}\]'
 
-act "client/connect?host=127.0.0.1&port=$SPORT&station=1"
-wait_state 10 "Leitstelle verbunden" 0 '"client":\{"state":"stopped"'
-act 'client/start'
-wait_state 10 "STARTDT" 0 '"client":\{"state":"started"'
-act 'client/gi?qoi=20'
-wait_state 10 "Generalabfrage: Punkt in der Tabelle" 0 \
-    '\{"station":1,"ioa":100,"type":13,"cause":20,"negative":false,"value":42.5,' \
-    'Station: Generalabfrage \(Typ 100, Ursache 6\)'
+# Prüfstand: Werteliste, automatischer Start, Prozessabbild mit Zählern je Ursache.
+act 'list/add?station=1&ioa=100&type=13&text=Spannung%20L1'
+act 'server/point?type=1&ioa=1001&value=0'
+act 'list/add?station=1&ioa=6001&type=45&text=Schalter%20Q1&fb=1001'
+wait_state 5 "Werteliste" 0 '"list":\[\{"st":1,"ioa":100,"ty":13,"fb":-1,"tx":"Spannung L1"\}' \
+    '\{"st":1,"ioa":6001,"ty":45,"fb":1001,"tx":"Schalter Q1"\}'
+grep -q $'^1\t6001\t45\t1001\tSchalter Q1$' "$WORK/werteliste.tsv" || fail "Werteliste nicht gespeichert"
+ok "Werteliste gespeichert"
+act_rejected 'list/add?station=0&ioa=1' 'Station 1'
+
+act "client/connect?host=127.0.0.1&port=$SPORT&station=1&auto=1&term=1"
+wait_state 10 "Verbinden mit STARTDT und Generalabfrage" 0 '"client":\{"state":"started"' \
+    '\{"st":1,"ioa":100,"ty":13,"c":20,"neg":false,"v":"Wert 42.5","tt":"","u":"[0-9:]*","n":\[0,0,0,1,0,0,0,0,0\]\}' \
+    '"kind":"frame","text":"Leitstelle → I [^"]*C_IC_NA_1[^"]*","explain":"Leitstelle fordert alle Werte an","dir":"out","f":"I","ty":100,"c":6,"io":\[0\]'
+act 'server/point?type=13&ioa=100&value=43'
+act 'client/read?ioa=100'
+wait_state 10 "spontan und gelesen gezählt" 0 \
+    '\{"st":1,"ioa":100,"ty":13,"c":5,"neg":false,"v":"Wert 43","tt":"","u":"[0-9:]*","n":\[0,0,1,1,0,1,0,0,0\]\}'
+act 'image/reset'
+wait_state 5 "Zähler auf 0" 0 '"ioa":100,[^}]*"n":\[0,0,0,0,0,0,0,0,0\]'
+
+# Befehl mit Laufzeiten; die Station nimmt alles an, die Rückmeldung setzt der Test.
+act 'client/command?type=45&ioa=6001&value=1&mode=direct'
+wait_state 10 "Befehl bestätigt und beendet" 0 \
+    '"cmds":\[\{"id":1,"st":1,"ioa":6001,"ty":45,"tsel":-1,"tcon":[0-9]+,"tterm":[0-9]+,"tfin":[0-9]+,"fb":1001,"tfb":-1,[^}]*"res":"ausgeführt"'
+act 'server/point?type=1&ioa=1001&value=1'
+wait_state 10 "Rückmeldung mit Zeit" 0 '"cmds":\[\{"id":1,[^}]*"fb":1001,"tfb":[0-9]+,[^}]*"fbv":"ein"'
+act 'client/command?type=45&ioa=6001&value=0&mode=sbo'
+wait_state 10 "Select und Execute" 0 '"cmds":\[\{"id":2,[^}]*"tsel":[0-9]+,"tcon":[0-9]+,"tterm":[0-9]+,[^}]*"mode":"Select\+Execute"[^}]*"res":"ausgeführt"'
+act_rejected 'client/command?type=13&ioa=1&value=1' 'kein Befehl'
+act 'server/accept?on=0'
+act 'client/command?type=45&ioa=6001&value=1'
+wait_state 10 "abgelehnter Befehl" 0 '"cmds":\[\{"id":3,[^}]*"res":"abgelehnt"'
+act 'server/accept?on=1'
+act 'list/take'
+wait_state 5 "empfangene Punkte übernommen" 0 '\{"st":1,"ioa":1001,"ty":1,"fb":-1,"tx":""\}'
 act 'client/close'
 
 # --- Gegenstelle lib60870 ---------------------------------------------------------------

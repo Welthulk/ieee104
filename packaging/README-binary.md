@@ -9,7 +9,7 @@ Geteilte Library für Linux x86-64 (Release, mit TLS).
 | `LICENSES/` | Lizenzen: Header Apache-2.0, Library proprietär |
 | `julia/` | Anbindung für Julia (`IEC104.jl`) mit Client- und Server-Beispiel, Test-GUI im Browser (`gui/`) |
 | `pruefen.sh` | prüft System, OpenSSL und Julia: `bash pruefen.sh` |
-| `gui.sh` | startet die Test-GUI: `bash gui.sh`, dann `http://localhost:8080` |
+| `gui.sh` | startet Test-GUI und Prüfstand: `bash gui.sh`, dann `http://localhost:8080` |
 | `beispiel.sh` | Julia-Station und -Leitstelle gegeneinander: `bash beispiel.sh` |
 
 ## Schnellstart (Linux oder WSL)
@@ -64,7 +64,7 @@ julia julia/server.jl 2404 &          # Station 1, Messwert IOA 100, steigt jede
 julia julia/client.jl 127.0.0.1 2404  # Generalabfrage, drei spontane Werte
 ```
 
-Test-GUI im Browser: `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080` öffnen (Leitstelle und Station, Abfragen, Befehle, TLS).
+Test-GUI und Prüfstand im Browser: `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080` öffnen (Leitstelle gegen eine Station mit Werteliste, Prozessabbild, Befehlslaufzeiten; Teststation, Selbsttest, Telegramme im Klartext; Anleitung `julia/` bzw. docs/07_Julia.md, Abschnitt 7.4).
 
 `IEC104.jl` findet die Library in `lib/` von selbst. Anleitung: `docs/07_Julia.md` im Quellpaket.
 

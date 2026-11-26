@@ -13,6 +13,7 @@
  */
 #include "api/values.hpp"
 
+#include <array>
 #include <cmath>
 
 namespace iec104::api {
@@ -538,6 +539,44 @@ iec104_status iec104_time_from_unix_ms(int64_t unix_ms, iec104_time* out) {
         return st;
     }
     *out = iec104::api::from_cp56(t);
+    return IEC104_OK;
+}
+
+iec104_status iec104_decode_asdu(const iec104_link_config* config, const uint8_t* asdu,
+                                 size_t length, iec104_asdu_info* info, iec104_object* objects,
+                                 size_t capacity, size_t* count) {
+    if (asdu == nullptr || info == nullptr || count == nullptr ||
+        (objects == nullptr && capacity > 0U)) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    iec104_link_config c{};
+    iec104_link_config_init(&c);
+    if (config != nullptr) {
+        c = *config;
+    }
+    const iec104::codec::AsduProfile profile = iec104::api::to_profile(c);
+    if (!iec104::codec::is_valid(profile)) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    std::array<iec104::codec::InformationObject, iec104::codec::kMaxObjects> decoded{};
+    iec104::codec::DecodedAsdu d{};
+    const iec104_status st =
+        iec104::codec::decode_asdu(asdu, length, profile, decoded.data(), decoded.size(), d);
+    if (st != IEC104_OK) {
+        return st;
+    }
+    *info = iec104::api::to_info(d.header);
+    *count = d.object_count;
+    if (d.type == nullptr || !iec104::api::value_type_supported(d.header.type_id)) {
+        return IEC104_ERR_UNSUPPORTED;
+    }
+    if (capacity < d.object_count) {
+        return IEC104_ERR_BUFFER_TOO_SMALL;
+    }
+    for (std::size_t i = 0; i < d.object_count; ++i) {
+        // from_codec() only fails for types without mapping, excluded above.
+        (void)iec104::api::from_codec(d.header.type_id, decoded[i], objects[i]);
+    }
     return IEC104_OK;
 }
 

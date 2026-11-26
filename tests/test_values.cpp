@@ -14,6 +14,7 @@
 #include "api/values.hpp"
 #include "iec104/iec104.h"
 
+#include <array>
 #include <gtest/gtest.h>
 
 using namespace iec104;
@@ -124,4 +125,70 @@ TEST(Values, UnixTime) {
     ASSERT_EQ(iec104_time_from_unix_ms(iec104_time_to_unix_ms(&leap), &back), IEC104_OK);
     EXPECT_EQ(back.month, 2U);
     EXPECT_EQ(back.day, 29U);
+}
+
+// Rule: iec104_decode_asdu() yields the data unit identifier and the objects
+// as the callbacks do. Reference: tests/data/lib60870_capture.txt (lib60870-C),
+// answer to an interrogation with three scaled values from IOA 100.
+TEST(DecodeAsdu, ScaledValuesFromCapture) {
+    const std::uint8_t asdu[] = {0x0b, 0x03, 0x14, 0x03, 0x01, 0x00, 0x64, 0x00,
+                                 0x00, 0xff, 0xff, 0x00, 0x65, 0x00, 0x00, 0x17,
+                                 0x00, 0x00, 0x66, 0x00, 0x00, 0xfc, 0x08, 0x00};
+    iec104_asdu_info info{};
+    std::array<iec104_object, 4> objects{};
+    std::size_t count = 0;
+    ASSERT_EQ(iec104_decode_asdu(nullptr, asdu, sizeof asdu, &info, objects.data(), objects.size(),
+                                 &count),
+              IEC104_OK);
+    EXPECT_EQ(info.type, 11);
+    EXPECT_EQ(info.cause, 20);
+    EXPECT_EQ(info.originator, 3);
+    EXPECT_EQ(info.common_address, 1);
+    ASSERT_EQ(count, 3U);
+    EXPECT_EQ(objects[0].ioa, 100U);
+    EXPECT_EQ(objects[0].value, -1.0);
+    EXPECT_EQ(objects[1].ioa, 101U);
+    EXPECT_EQ(objects[1].value, 23.0);
+    EXPECT_EQ(objects[2].ioa, 102U);
+    EXPECT_EQ(objects[2].value, 2300.0);
+}
+
+// Rule: types without mapping to iec104_object still give header and count;
+// errors of the octets and of the arguments are reported.
+TEST(DecodeAsdu, UnsupportedAndErrors) {
+    // M_EP_TD_1 (38), event of protection equipment with CP56: one object.
+    const std::uint8_t ep[] = {0x26, 0x01, 0x03, 0x00, 0x01, 0x00, 0x0a, 0x00, 0x00, 0x01,
+                               0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x1a};
+    iec104_asdu_info info{};
+    iec104_object object{};
+    std::size_t count = 0;
+    EXPECT_EQ(iec104_decode_asdu(nullptr, ep, sizeof ep, &info, &object, 1, &count),
+              IEC104_ERR_UNSUPPORTED);
+    EXPECT_EQ(info.type, 38);
+    EXPECT_EQ(count, 1U);
+
+    // Single point, two objects announced (VSQ 2) but only one present.
+    const std::uint8_t short_sp[] = {0x01, 0x02, 0x03, 0x00, 0x01, 0x00, 0x64, 0x00, 0x00, 0x01};
+    EXPECT_EQ(iec104_decode_asdu(nullptr, short_sp, sizeof short_sp, &info, &object, 1, &count),
+              IEC104_ERR_MALFORMED);
+    const std::uint8_t sp2[] = {0x01, 0x02, 0x03, 0x00, 0x01, 0x00, 0x64,
+                                0x00, 0x00, 0x01, 0x65, 0x00, 0x00, 0x00};
+    EXPECT_EQ(iec104_decode_asdu(nullptr, sp2, sizeof sp2, &info, &object, 1, &count),
+              IEC104_ERR_BUFFER_TOO_SMALL);
+    EXPECT_EQ(iec104_decode_asdu(nullptr, nullptr, 0, &info, &object, 1, &count),
+              IEC104_ERR_INVALID_ARGUMENT);
+    iec104_link_config bad{};
+    iec104_link_config_init(&bad);
+    bad.ioa_length = 4;
+    EXPECT_EQ(iec104_decode_asdu(&bad, sp2, sizeof sp2, &info, &object, 1, &count),
+              IEC104_ERR_INVALID_ARGUMENT);
+}
+
+// Rule: names as in the standard; unknown types give a fixed text.
+TEST(TypeName, KnownAndUnknown) {
+    EXPECT_STREQ(iec104_type_name(1), "M_SP_NA_1");
+    EXPECT_STREQ(iec104_type_name(100), "C_IC_NA_1");
+    EXPECT_STREQ(iec104_type_name(107), "C_TS_TA_1");
+    EXPECT_STREQ(iec104_type_name(0), "unknown type");
+    EXPECT_STREQ(iec104_type_name(200), "unknown type");
 }

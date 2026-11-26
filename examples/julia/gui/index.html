@@ -42,14 +42,28 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
   .hint { font-size: 12px; color: #555; margin: 4px 0; }
   code { font: 12px ui-monospace, monospace; background: #f0f2f5; padding: 0 3px; border-radius: 3px; }
   option:disabled { color: #999; }
+  nav { display: flex; gap: 4px; padding: 8px 12px 0; }
+  nav button { border-radius: 6px 6px 0 0; border-bottom: none; background: #e3e6ea; }
+  nav button.on { background: #fff; font-weight: bold; }
+  .tab[hidden] { display: none; }
+  tr.missing td { color: #999; } tr.foreign td.tx { color: #777; font-style: italic; }
+  tr.warn td { background: #fff4d6; }
+  #log .command { color: #6a2c91; font-weight: bold; } #log .obj { color: #555; } #log .hex { color: #999; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; font-size: 12px; }
+  .filters label { flex-direction: row; gap: 4px; align-items: center; }
 </style>
 </head>
 <body>
-<header><h1>IEC 60870-5-104 Test-GUI</h1><span id="err"></span></header>
+<header><h1>IEC 60870-5-104 Test-GUI und Prüfstand</h1><span id="err"></span></header>
+<nav>
+  <button id="tb-pruef" class="on" onclick="tab('pruef')">Prüfstand (Leitstelle)</button>
+  <button id="tb-station" onclick="tab('station')">Station und lib60870</button>
+  <button id="tb-selbst" onclick="tab('selbst')">Selbsttest</button>
+</nav>
 <main>
 
-<section>
-  <h2>Leitstelle (Client) <span id="cstate" class="state">–</span></h2>
+<section class="tab" data-tab="pruef">
+  <h2>Verbindung zur Station <span id="cstate" class="state">–</span></h2>
   <div class="row">
     <label>Adresse<input id="host" class="m" value="127.0.0.1"></label>
     <label>Port<input id="port" class="s" value="2404"></label>
@@ -59,7 +73,9 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
     <label>&nbsp;<button onclick="act('client/stop')">STOPDT</button></label>
     <label>&nbsp;<button onclick="act('client/close')">Trennen</button></label>
   </div>
-  <details><summary>Timer, Fenster, TLS</summary>
+  <div class="row"><label style="flex-direction: row; gap: 4px"><input id="auto" type="checkbox" checked>
+    nach dem Verbinden STARTDT und Generalabfrage</label></div>
+  <details><summary>Timer, Fenster, Befehle, TLS</summary>
     <div class="row">
       <label>t0 s<input id="t0" class="s" placeholder="30"></label>
       <label>t1 s<input id="t1" class="s" placeholder="15"></label>
@@ -70,35 +86,96 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
       <label>tolerant<input id="tolerant" type="checkbox"></label>
     </div>
     <div class="row">
+      <label>Befehle enden mit ACTTERM<input id="term" type="checkbox" checked></label>
+      <label>Bestätigung bis s<input id="conf_to" class="s" placeholder="10"></label>
+      <label>Beendigung bis s<input id="term_to" class="s" placeholder="10"></label>
+    </div>
+    <div class="row">
       <label>TLS<input id="tls" type="checkbox"></label>
       <label>CA (PEM)<input id="ca" class="l"></label>
       <label>Zertifikat<input id="cert" class="l"></label>
       <label>Schlüssel<input id="key" class="l"></label>
       <label>Name der Gegenstelle<input id="peer" class="m"></label>
     </div>
+    <p class="hint">Wirkt beim nächsten Verbinden. Ohne TLS ist der Port der Norm 2404, mit TLS 19998.</p>
   </details>
   <div class="row">
-    <button onclick="act('client/gi', {qoi: document.getElementById('qoi').value})">Generalabfrage</button>
+    <button onclick="act('client/gi', {qoi: v('qoi')})">Generalabfrage</button>
     <select id="qoi"><option value="20">Station</option></select>
-    <button onclick="act('client/ci')">Zählerabfrage</button>
-    <button onclick="act('client/clock')">Uhrzeit setzen</button>
-    <button onclick="act('client/clear')">Tabelle leeren</button>
+    <button onclick="act('client/ci', {rqt: v('rqt'), frz: v('frz')})">Zählerabfrage</button>
+    <select id="rqt"><option value="5">alle</option><option value="1">Gruppe 1</option><option value="2">Gruppe 2</option><option value="3">Gruppe 3</option><option value="4">Gruppe 4</option></select>
+    <select id="frz"><option value="0">lesen</option><option value="1">einfrieren</option><option value="2">einfrieren + rücksetzen</option><option value="3">rücksetzen</option></select>
   </div>
   <div class="row">
-    <label>Befehl<select id="ctype" onchange="ranges()"></select></label>
-    <label>IOA<input id="cioa" class="m" value="6000"></label>
-    <label>Wert <span id="crange" class="hint"></span><input id="cvalue" class="s" value="1"></label>
-    <label>Ablauf<select id="cmode"><option value="direct">direkt</option><option value="sbo">Select/Execute</option></select></label>
-    <label>&nbsp;<button class="main" onclick="command()">Senden</button></label>
+    <label>Lesebefehl IOA<input id="rioa" class="m"></label>
+    <label>&nbsp;<button onclick="act('client/read', {ioa: v('rioa')})">Lesen</button></label>
+    <label>&nbsp;<button onclick="act('client/clock')">Uhrzeit setzen (UTC)</button></label>
   </div>
-  <div class="scroll"><table>
-    <thead><tr><th>Stat.</th><th>IOA</th><th>Typ</th><th>Wert</th><th>Qualität</th><th>Ursache</th><th>Zeitmarke</th><th>Anz.</th><th>Alter s</th></tr></thead>
-    <tbody id="rows"></tbody>
-  </table></div>
 </section>
 
-<section>
-  <h2>Station (Server) <span id="sstate" class="state">aus</span></h2>
+<section class="tab" data-tab="pruef">
+  <h2>Befehl</h2>
+  <div class="row">
+    <label>aus der Werteliste<select id="cpick" onchange="pickCommand()"><option value="">–</option></select></label>
+  </div>
+  <div class="row">
+    <label>Typ<select id="ctype" onchange="ranges()"></select></label>
+    <label>IOA<input id="cioa" class="m" value="6000"></label>
+    <label>Wert <span id="crange" class="hint"></span><input id="cvalue" class="s" value="1"></label>
+    <label>QU/QL<input id="cqu" class="s" value="0"></label>
+  </div>
+  <div class="row">
+    <label>Ablauf<select id="cmode"><option value="direct">direkt</option><option value="sbo">Select, dann Execute</option><option value="select">nur Select</option><option value="execute">nur Execute</option></select></label>
+    <label>Rückmelde-IOA<input id="cfb" class="m" placeholder="aus der Liste"></label>
+    <label>&nbsp;<button class="main" onclick="command()">Senden</button></label>
+  </div>
+  <p class="hint">Die Rückmelde-IOA ist die Meldung, an der man sieht, dass der Befehl gewirkt hat
+    (z. B. Befehl „Schalter EIN“ auf IOA 6001, Stellung des Schalters auf IOA 1001). Ihr erster neuer Wert nach dem
+    Befehl wird mit Zeit angezeigt.</p>
+</section>
+
+<section class="tab wide" data-tab="pruef">
+  <h2>Befehle und Laufzeiten <button onclick="cmds = []; renderCmds()">Leeren</button></h2>
+  <div class="scroll" style="max-height: 220px"><table>
+    <thead><tr><th>Nr.</th><th>Zeit</th><th>Stat.</th><th>IOA</th><th>Text</th><th>Typ</th><th>Befehl</th><th>Ablauf</th>
+      <th>Ergebnis</th><th title="Select bestätigt">Select ms</th><th title="Bestätigung (ACTCON)">Bestät. ms</th>
+      <th title="Beendigung (ACTTERM)">Beend. ms</th><th>Rückmeldung</th><th>gesamt ms</th></tr></thead>
+    <tbody id="cmds"></tbody></table></div>
+</section>
+
+<section class="tab wide" data-tab="pruef">
+  <h2>Werteliste und Prozessabbild <span id="pcount" class="state"></span></h2>
+  <div class="row">
+    <label>Station<input id="lst" class="s" value="1"></label>
+    <label>IOA<input id="lioa" class="m"></label>
+    <label>Typ (leer = beliebig)<select id="lty"><option value="0">–</option></select></label>
+    <label>Text<input id="ltx" class="l"></label>
+    <label>Rückmelde-IOA<input id="lfb" class="m"></label>
+    <label>&nbsp;<button class="main" onclick="listAdd()">In die Liste</button></label>
+    <label>&nbsp;<button onclick="act('list/take')" title="alle empfangenen Punkte, die noch fehlen">Empfangene übernehmen</button></label>
+  </div>
+  <div class="row filters">
+    <label>Filter<input id="pfilter" class="m" placeholder="IOA, Text, Wert" oninput="renderImage()"></label>
+    <label><select id="pshow" onchange="renderImage()"><option value="all">alle</option><option value="recv">empfangen</option>
+      <option value="missing">in der Liste, noch nichts empfangen</option><option value="foreign">nicht in der Liste</option>
+      <option value="warn">Typ anders als in der Liste</option></select></label>
+    <button onclick="act('image/reset')">Zähler auf 0</button>
+    <button onclick="act('client/clear')">Werte leeren</button>
+    <button onclick="saveImage()">Als Tabelle speichern</button>
+    <button onclick="if (confirm('Ganze Werteliste löschen?')) act('list/clear')">Liste löschen</button>
+    <span id="listfile" class="hint"></span>
+  </div>
+  <div class="scroll" style="max-height: 420px"><table>
+    <thead><tr><th>Stat.</th><th>IOA</th><th>Text</th><th>Typ</th><th>Wert</th><th>Ursache</th><th>Zeitmarke</th><th>zuletzt</th>
+      <th title="zyklisch (1)">zyk</th><th title="Hintergrund (2)">hgd</th><th title="spontan (3)">spo</th>
+      <th title="Generalabfrage (20–36)">GA</th><th title="Zählerabfrage (37–41)">ZA</th><th title="Lesen (5)">les</th>
+      <th title="Rückmeldung (11, 12)">RM</th><th title="Antworten auf Befehle (6–10)">bef</th><th title="andere Ursachen">sonst</th>
+      <th></th></tr></thead>
+    <tbody id="image"></tbody></table></div>
+</section>
+
+<section class="tab" data-tab="station" hidden>
+  <h2>Teststation (Server) <span id="sstate" class="state">aus</span></h2>
   <div class="row">
     <label>Port<input id="sport" class="s" value="2404"></label>
     <label>Station (CA)<input id="sstation" class="s" value="1"></label>
@@ -119,7 +196,7 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
   <p>Verbindungen: <span id="conns">keine</span></p>
 </section>
 
-<section class="wide">
+<section class="tab" data-tab="station" hidden>
   <h2>Gegenstelle lib60870 (Leitstelle) <span id="pstate" class="state">–</span></h2>
   <div id="peeron" hidden>
     <div class="row">
@@ -142,7 +219,7 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
   </div>
 </section>
 
-<section class="wide">
+<section class="tab wide" data-tab="selbst" hidden>
   <h2>Selbsttest <span id="tstate" class="state">nicht gelaufen</span></h2>
   <div class="row">
     <button class="main" onclick="act('selftest/start')">Selbsttest starten</button>
@@ -156,19 +233,33 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
     <thead><tr><th>Nr.</th><th>Schritt</th><th>Ergebnis</th><th>Erwartet</th><th>Beobachtet</th><th>Dauer</th></tr></thead>
     <tbody id="steps"></tbody>
   </table></div>
-  <div id="copyarea" hidden><p class="hint">Die Zwischenablage ist über diese Adresse gesperrt:
-    Text ist markiert, mit Strg+C kopieren.</p><textarea id="copybox" readonly></textarea></div>
 </section>
 
 <section class="wide">
-  <h2>Ereignisse
-    <span class="row" style="margin: 0">
-      <label style="flex-direction: row; gap: 4px">Rahmen<input id="showframes" type="checkbox" checked onchange="renderLog()"></label>
-      <label style="flex-direction: row; gap: 4px">Erklärungen<input id="showexplain" type="checkbox" checked onchange="renderLog()"></label>
-      <button onclick="copyText(logText())">Ereignisse kopieren</button>
-      <button onclick="entries = []; renderLog()">Leeren</button>
-    </span>
-  </h2>
+  <h2>Telegramme und Ereignisse <span id="lcount" class="state"></span></h2>
+  <div class="filters">
+    <label><select id="fdir" onchange="renderLog()"><option value="">beide Richtungen</option><option value="in">nur empfangen ←</option><option value="out">nur gesendet →</option></select></label>
+    <label><input id="fI" type="checkbox" checked onchange="renderLog()">I</label>
+    <label><input id="fS" type="checkbox" checked onchange="renderLog()">S</label>
+    <label><input id="fU" type="checkbox" checked onchange="renderLog()">U</label>
+    <label><input id="showframes" type="checkbox" checked onchange="renderLog()">Rahmen</label>
+    <label><input id="fev" type="checkbox" checked onchange="renderLog()">Ereignisse</label>
+    <label>Typ<input id="fty" class="s" oninput="renderLog()"></label>
+    <label>Ursache<input id="fc" class="s" oninput="renderLog()"></label>
+    <label>IOA<input id="fioa" class="s" oninput="renderLog()"></label>
+    <label>Text<input id="ftext" class="m" oninput="renderLog()"></label>
+  </div>
+  <div class="filters" style="margin: 4px 0">
+    <label><input id="showexplain" type="checkbox" checked onchange="renderLog()">Erklärungen</label>
+    <label><input id="showobj" type="checkbox" onchange="renderLog()">alle Objekte</label>
+    <label><input id="showhex" type="checkbox" onchange="renderLog()">Hex</label>
+    <label><input id="pause" type="checkbox">anhalten</label>
+    <button onclick="copyText(logText())">Angezeigte kopieren</button>
+    <button onclick="saveText(logText(), 'iec104_telegramme')">Angezeigte speichern</button>
+    <button onclick="entries = []; renderLog()">Leeren</button>
+  </div>
+  <div id="copyarea" hidden><p class="hint">Die Zwischenablage ist über diese Adresse gesperrt:
+    Text ist markiert, mit Strg+C kopieren.</p><textarea id="copybox" readonly></textarea></div>
   <div id="log"></div>
 </section>
 </main>
@@ -191,6 +282,7 @@ const CAUSES = {1:'zyklisch', 2:'Hintergrund', 3:'spontan', 4:'initialisiert', 5
 for (let g = 1; g <= 16; g++) CAUSES[20 + g] = 'Gruppe ' + g;
 const opt = (sel, keys) => keys.forEach(k => sel.add(new Option(k + ' ' + TYPES[k], k)));
 opt(document.getElementById('ctype'), [45, 46, 47, 48, 49, 50, 58, 59, 61, 62, 63]);
+opt(document.getElementById('lty'), [1, 3, 5, 7, 9, 11, 13, 15, 30, 31, 34, 35, 36, 37, 45, 46, 47, 48, 49, 50, 58, 59, 61, 62, 63]);
 opt(document.getElementById('ptype'), [1, 3, 5, 9, 11, 13, 15]);
 document.getElementById('ptype').value = 13;
 const qoi = document.getElementById('qoi');
@@ -217,14 +309,131 @@ async function act(path, params = {}) {
   document.getElementById('err').textContent = j.ok ? '' : j.error;
   refresh();
 }
+function tab(name) {
+  for (const s of document.querySelectorAll('section.tab')) s.hidden = s.dataset.tab !== name;
+  for (const b of document.querySelectorAll('nav button')) b.className = b.id === 'tb-' + name ? 'on' : '';
+}
+const checked = id => document.getElementById(id).checked ? 1 : 0;
 function connect() {
-  const checked = id => document.getElementById(id).checked ? 1 : 0;
   const p = {host: v('host'), port: v('port'), station: v('station'), tls: checked('tls'),
-             tolerant: checked('tolerant')};
-  for (const k of ['t0', 't1', 't2', 't3', 'k', 'w', 'ca', 'cert', 'key', 'peer']) p[k] = v(k);
+             tolerant: checked('tolerant'), auto: checked('auto'), term: checked('term')};
+  for (const k of ['t0', 't1', 't2', 't3', 'k', 'w', 'ca', 'cert', 'key', 'peer', 'conf_to', 'term_to']) p[k] = v(k);
   act('client/connect', p);
 }
-function command() { act('client/command', {type: v('ctype'), ioa: v('cioa'), value: v('cvalue'), mode: v('cmode')}); }
+function command() {
+  act('client/command', {station: v('station'), type: v('ctype'), ioa: v('cioa'), value: v('cvalue'),
+                         qu: v('cqu'), mode: v('cmode'), fb: v('cfb')});
+}
+
+// --- Value list, process image, commands -------------------------------------
+let list = [], image = new Map(), cmds = [];
+let pe = 0, pv = 0, lv = 0, cv = 0;
+const key = (st, ioa) => st * 16777216 + ioa;
+function listAdd() {
+  act('list/add', {station: v('lst'), ioa: v('lioa'), type: v('lty'), text: v('ltx'), fb: v('lfb')});
+}
+function listEdit(st, ioa) {
+  const e = list.find(x => x.st === st && x.ioa === ioa);
+  document.getElementById('lst').value = st;
+  document.getElementById('lioa').value = ioa;
+  document.getElementById('lty').value = e ? e.ty : (image.get(key(st, ioa)) || {}).ty || 0;
+  document.getElementById('ltx').value = e ? e.tx : '';
+  document.getElementById('lfb').value = e && e.fb >= 0 ? e.fb : '';
+}
+function pickCommand() {
+  const e = list.find(x => key(x.st, x.ioa) === Number(v('cpick')));
+  if (!e) return;
+  document.getElementById('station').value = e.st;
+  document.getElementById('cioa').value = e.ioa;
+  if (e.ty) document.getElementById('ctype').value = e.ty;
+  document.getElementById('cfb').value = e.fb >= 0 ? e.fb : '';
+  ranges();
+}
+const isCommand = t => (t >= 45 && t <= 51) || (t >= 58 && t <= 64);
+// Same type, or the variant with/without time tag (1 <-> 30, 3 <-> 31, 45 <-> 58, ...).
+const BASE = {30: 1, 31: 3, 32: 5, 33: 7, 34: 9, 35: 11, 36: 13, 37: 15, 58: 45, 59: 46, 60: 47, 61: 48,
+              62: 49, 63: 50, 64: 51};
+const sameType = (a, b) => (BASE[a] || a) === (BASE[b] || b);
+function rows() {
+  const out = new Map();
+  for (const e of list) out.set(key(e.st, e.ioa), {st: e.st, ioa: e.ioa, li: e, p: null});
+  for (const [k, p] of image) (out.get(k) || out.set(k, {st: p.st, ioa: p.ioa, li: null}).get(k)).p = p;
+  return [...out.values()].sort((a, b) => a.st - b.st || a.ioa - b.ioa);
+}
+function rowClass(r) {
+  if (r.li && !r.p) return 'missing';
+  if (!r.li) return 'foreign';
+  if (r.li.ty && !sameType(r.li.ty, r.p.ty)) return 'warn';
+  return '';
+}
+let imageTimer = null;
+function renderImage() {
+  if (imageTimer) return;   // at most every 300 ms, many values may arrive
+  imageTimer = setTimeout(() => { imageTimer = null; drawImage(); }, 300);
+}
+function drawImage() {
+  const body = document.getElementById('image');
+  const f = v('pfilter').toLowerCase(), show = v('pshow');
+  const all = rows();
+  let shown = 0, html = [];
+  for (const r of all) {
+    const cls = rowClass(r);
+    if (show === 'recv' && !r.p) continue;
+    if (show !== 'all' && show !== 'recv' && cls !== show) continue;
+    const text = r.li ? r.li.tx : '';
+    if (f && !(String(r.ioa).includes(f) || text.toLowerCase().includes(f) || (r.p && r.p.v.toLowerCase().includes(f)))) continue;
+    if (++shown > 2000) continue;
+    const p = r.p;
+    const ty = p ? p.ty + ' ' + typeName(p.ty) : r.li && r.li.ty ? '(' + r.li.ty + ' ' + typeName(r.li.ty) + ')' : '';
+    const tip = cls === 'warn' ? ` title="Liste erwartet Typ ${r.li.ty}"` : cls === 'foreign' ? ' title="nicht in der Werteliste"' : '';
+    html.push(`<tr class="${cls}"${tip}><td>${r.st}</td><td class="num">${r.ioa}</td>` +
+      `<td class="tx">${esc(text || (r.li ? '' : 'nicht in der Liste'))}${r.li && r.li.fb >= 0 ? ' <span class="hint">→ RM ' + r.li.fb + '</span>' : ''}</td>` +
+      `<td>${esc(ty)}</td><td>${p ? esc(p.v) : ''}</td>` +
+      `<td class="${p && p.neg ? 'neg' : ''}">${p ? p.c + ' ' + esc(CAUSES[p.c] || '') + (p.neg ? ' negativ' : '') : ''}</td>` +
+      `<td>${p ? esc(p.tt) : ''}</td><td>${p ? p.u : ''}</td>` +
+      (p ? p.n.map(x => `<td class="num">${x || ''}</td>`).join('') : '<td></td>'.repeat(9)) +
+      `<td><button onclick="listEdit(${r.st}, ${r.ioa})" title="in die Eingabezeile der Liste">✎</button>` +
+      (r.li ? ` <button onclick="act('list/remove', {station: ${r.st}, ioa: ${r.ioa}})" title="aus der Liste">✕</button>` : '') +
+      `</td></tr>`);
+  }
+  body.innerHTML = html.join('') + (shown > 2000 ? `<tr><td colspan="18" class="hint">… ${shown - 2000} weitere, Filter benutzen</td></tr>` : '');
+  document.getElementById('pcount').textContent = `${list.length} in der Liste, ${image.size} empfangen`;
+}
+function saveImage() {
+  const head = 'Station;IOA;Text;Typ;Wert;Ursache;Zeitmarke;zuletzt;zyklisch;Hintergrund;spontan;GA;Zählerabfrage;Lesen;Rückmeldung;Befehl;sonst';
+  const lines = rows().map(r => [r.st, r.ioa, (r.li ? r.li.tx : '').replace(/;/g, ','), r.p ? r.p.ty : (r.li ? r.li.ty || '' : ''),
+    r.p ? r.p.v : '', r.p ? r.p.c : '', r.p ? r.p.tt : '', r.p ? r.p.u : '', ...(r.p ? r.p.n : Array(9).fill(''))].join(';'));
+  saveText([head, ...lines].join('\n') + '\n', 'iec104_prozessabbild', 'csv');
+}
+const ms = x => x >= 0 ? x : '';
+function renderCmds() {
+  document.getElementById('cmds').innerHTML = cmds.map(c => `<tr><td class="num">${c.id}</td><td>${c.t}</td>` +
+    `<td>${c.st}</td><td class="num">${c.ioa}</td><td>${esc(c.tx)}</td><td>${c.ty}</td><td>${esc(c.v)}</td><td>${esc(c.mode)}</td>` +
+    `<td class="${/abgelehnt|keine|verloren/.test(c.res) ? 'neg' : ''}">${esc(c.res || 'läuft …')}</td>` +
+    `<td class="num">${ms(c.tsel)}</td><td class="num">${ms(c.tcon)}</td><td class="num">${ms(c.tterm)}</td>` +
+    `<td>${c.fb >= 0 ? (c.tfb >= 0 ? c.tfb + ' ms, IOA ' + c.fb + ': ' + esc(c.fbv) : 'IOA ' + c.fb + ' …') : ''}</td>` +
+    `<td class="num">${ms(c.tfin)}</td></tr>`).join('');
+}
+function showList(s) {
+  if (s.list === undefined) return;
+  list = s.list;
+  lv = s.lv;
+  document.getElementById('listfile').textContent = 'gespeichert in ' + s.list_file;
+  const sel = document.getElementById('cpick'), old = sel.value;
+  sel.innerHTML = '<option value="">–</option>' + list.filter(e => isCommand(e.ty) || e.fb >= 0).map(e =>
+    `<option value="${key(e.st, e.ioa)}">${e.st}/${e.ioa} ${esc(e.tx)}${e.ty ? ' (Typ ' + e.ty + ')' : ''}</option>`).join('');
+  sel.value = old;
+  renderImage();
+}
+function saveText(text, name, ext = 'txt') {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain;charset=utf-8'}));
+  const d = new Date(), z = n => String(n).padStart(2, '0');
+  a.download = `${name}_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_` +
+               `${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.${ext}`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);   // the download needs the URL a moment longer
+}
 function sendPoint(ioa, type, delta) {
   const input = document.getElementById('pv' + ioa);
   const value = delta === undefined ? input.value : String(Number(input.value) + delta);
@@ -283,16 +492,7 @@ async function report(full) {
   return r.text();
 }
 async function copyReport() { copyText(await report(false)); }
-async function saveReport() {
-  const text = await report(true);
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain;charset=utf-8'}));
-  const d = new Date(), z = n => String(n).padStart(2, '0');
-  a.download = `iec104_selbsttest_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_` +
-               `${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.txt`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);   // the download needs the URL a moment longer
-}
+async function saveReport() { saveText(await report(true), 'iec104_selbsttest'); }
 function showSelftest(t) {
   const ts = document.getElementById('tstate');
   if (t.steps.length === 0) { ts.textContent = 'nicht gelaufen'; ts.className = 'state'; }
@@ -308,28 +508,44 @@ function showSelftest(t) {
     `<td class="num">${esc(x.duration)}</td></tr>`).join('');
 }
 
-// Event list: kept here, shown with or without frames and explanations.
+// Event list: kept here (at most 20000), filtered and shown (the last 1500).
 let entries = [];
-const ENTRIES_MAX = 3000;
-const PAD = ' '.repeat(10);
-function entryText(e, explain) {
-  return e.time + '  ' + e.text + (explain && e.explain ? '\n' + PAD + '↳ ' + e.explain : '');
+const ENTRIES_MAX = 20000, SHOW_MAX = 1500;
+const PAD = ' '.repeat(14);
+function entryText(e) {
+  let t = e.time + '  ' + e.text;
+  if (e.kind === 'frame' && checked('showhex')) t += '\n' + PAD + '[' + e.hex + ']';
+  if (e.explain && checked('showexplain')) t += '\n' + PAD + '↳ ' + e.explain;
+  if (e.obj && checked('showobj')) t += e.obj.map(o => '\n' + PAD + '  ' + o).join('');
+  return t;
 }
 function visible() {
-  const frames = document.getElementById('showframes').checked;
-  return entries.filter(e => frames || e.kind !== 'frame');
+  const dir = v('fdir'), ty = v('fty'), c = v('fc'), ioa = v('fioa'), text = v('ftext').toLowerCase();
+  const frameFilter = dir || ty || c || ioa;
+  return entries.filter(e => {
+    if (e.kind === 'frame') {
+      if (!checked('showframes') || ('ISU'.includes(e.f) && !checked('f' + e.f))) return false;
+      if (dir && e.dir !== dir) return false;
+      if (ty !== '' && e.ty !== Number(ty)) return false;
+      if (c !== '' && e.c !== Number(c)) return false;
+      if (ioa !== '' && !e.io.includes(Number(ioa))) return false;
+    } else if (!checked('fev') || frameFilter) return false;
+    return !text || (e.text + ' ' + e.explain).toLowerCase().includes(text);
+  });
 }
-function logText() {
-  const explain = document.getElementById('showexplain').checked;
-  return visible().map(e => entryText(e, explain)).join('\n') + '\n';
-}
+function logText() { return visible().map(entryText).join('\n') + '\n'; }
+let logTimer = null;
 function renderLog() {
+  if (logTimer) return;
+  logTimer = setTimeout(() => { logTimer = null; drawLog(); }, 200);
+}
+function drawLog() {
   const log = document.getElementById('log');
-  const explain = document.getElementById('showexplain').checked;
   const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
-  log.innerHTML = visible().map(e =>
-    `<div class="${e.kind}">${esc(e.time + '  ' + e.text)}` +
-    (explain && e.explain ? `<div class="explain">${esc(PAD + '↳ ' + e.explain)}</div>` : '') + '</div>').join('');
+  const sel = visible();
+  log.innerHTML = sel.slice(-SHOW_MAX).map(e => `<div class="${e.kind}">${esc(entryText(e))}</div>`).join('');
+  document.getElementById('lcount').textContent = `${sel.length} von ${entries.length}` +
+    (sel.length > SHOW_MAX ? `, angezeigt die letzten ${SHOW_MAX}` : '');
   if (atEnd) log.scrollTop = log.scrollHeight;
 }
 
@@ -345,7 +561,7 @@ async function refresh() {
 async function update() {
   let s;
   try {
-    const r = await fetch('/api/state?since=' + since, GUI_HEADER);
+    const r = await fetch('/api/state?' + new URLSearchParams({since, pe, pv, lv, cv}), GUI_HEADER);
     if (!r.ok) { document.getElementById('err').textContent = await r.text(); return; }
     s = await r.json();
   } catch (e) { document.getElementById('err').textContent = 'GUI-Programm nicht erreichbar'; return; }
@@ -354,19 +570,18 @@ async function update() {
   if (s.boot !== boot) {   // GUI program (re)started: its event numbers start again
     const restarted = boot !== '';
     boot = s.boot;
-    if (restarted) { since = 0; entries = []; pointsShown = ''; renderLog(); return; }   // next round: all events
+    if (restarted) {   // next round: everything anew
+      since = 0; entries = []; pointsShown = ''; pe = pv = lv = cv = 0; image.clear(); renderLog(); return;
+    }
   }
   const cs = document.getElementById('cstate');
   cs.textContent = s.client.text || s.client.state;
   cs.className = 'state ' + (s.client.state === 'started' ? 'started' : s.client.state === 'closed' ? 'closed' : '');
-  document.getElementById('rows').innerHTML = s.client.rows.map(r =>
-    `<tr class="${r.age < 2 ? 'fresh' : ''}"><td>${r.station}</td><td class="num">${r.ioa}</td>` +
-    `<td title="${esc(TYPES[r.type] || '')}">${r.type} ${esc(typeName(r.type))}</td>` +
-    `<td class="num">${r.type === 7 ? '0x' + r.bits.toString(16) : r.value}</td><td>${esc(r.quality)}</td>` +
-    `<td class="${r.negative ? 'neg' : ''}">${r.cause} ${esc(CAUSES[r.cause] || '')}${r.negative ? ' negativ' : ''}</td>` +
-    `<td>${esc(r.time)}</td><td class="num">${r.count}</td><td class="num">${r.age}</td></tr>`).join('') +
-    (s.client.rows_total > s.client.rows.length
-      ? `<tr><td colspan="9" class="hint">… ${s.client.rows_total - s.client.rows.length} weitere Punkte nicht angezeigt</td></tr>` : '');
+  if (s.epoch !== pe) { image.clear(); pe = s.epoch; }
+  for (const p of s.image) image.set(key(p.st, p.ioa), p);
+  if (s.image.length || s.pv !== pv) { pv = s.pv; renderImage(); }
+  showList(s);
+  if (s.cmds !== undefined) { cmds = s.cmds; cv = s.cv; renderCmds(); }
   const ss = document.getElementById('sstate');
   ss.textContent = s.server.running ? 'Port ' + s.server.port + ', Station ' + s.server.station : 'aus';
   ss.className = 'state ' + (s.server.running ? 'started' : '');
@@ -392,7 +607,7 @@ async function update() {
     added = true;
   }
   if (entries.length > ENTRIES_MAX) entries = entries.slice(-ENTRIES_MAX);
-  if (added) renderLog();
+  if (added && !checked('pause')) renderLog();
 }
 ranges();
 setInterval(refresh, 500);

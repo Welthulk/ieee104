@@ -14,6 +14,7 @@
  */
 #include "iec104/iec104.h"
 
+#include "codec/type_table.hpp"
 #include "transport/tls.hpp"
 
 /*
@@ -117,6 +118,11 @@ const char* iec104_log_level_string(iec104_log_level level) {
         return "trace";
     }
     return "unknown level";
+}
+
+const char* iec104_type_name(uint8_t type) {
+    const iec104::codec::TypeInfo* info = iec104::codec::find_type(type);
+    return info != nullptr ? info->name : "unknown type";
 }
 
 const char* iec104_command_result_string(iec104_command_result result) {

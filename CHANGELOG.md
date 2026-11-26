@@ -1,9 +1,13 @@
 # Änderungen
 
-## Unveröffentlicht
+## 0.9.0 (26.11.2026)
 
 | Bereich | Änderung |
 | --- | --- |
+| Test-GUI | Prüfstand: Reiter „Prüfstand (Leitstelle)“ gegen eine Station. Werteliste direkt in der GUI (Station, IOA, Typ, Text, Rückmelde-IOA), automatisch gespeichert (`~/.config/iec104/werteliste.tsv`), „Empfangene übernehmen“; Prozessabbild aus Liste und Empfangenem mit Zählern je Ursache (zyklisch, Hintergrund, spontan, GA, Zählerabfrage, Lesen, Rückmeldung, Befehl, sonst), Markierung fehlender, fremder und abweichender Punkte, als Tabelle speichern |
+| Test-GUI | Befehle mit QU/QL, Ablauf direkt, Select+Execute, nur Select, nur Execute; Tabelle mit Ergebnis und Laufzeiten bis Select-Bestätigung, ACTCON, ACTTERM, Rückmeldung und Endergebnis; Zeitlimits und „ohne ACTTERM“ einstellbar; nach dem Verbinden auf Wunsch STARTDT und Generalabfrage; Lesebefehl, Zählerabfrage mit Gruppe und Einfrieren |
+| Test-GUI | Telegramme: Filter nach Richtung, I/S/U, Typ, Ursache, IOA, Text; alle Objekte, Hex; anhalten; Angezeigtes kopieren und speichern; 20000 Einträge. Reiter für Prüfstand, Station und lib60870, Selbsttest. Trenngründe auf Deutsch |
+| API | `iec104_decode_asdu()`: ASDU in Kopf und Objekte zerlegen (z. B. für Mitschnitte), `iec104_type_name()`; in Julia `decode_asdu`, `type_name`, `client_set_options` |
 | Transport | Reihenfolge der Ereignisse: Eine angenommene Verbindung meldet „verbunden“ jetzt vor ihren ersten Rahmen. Bisher kam die Meldung erst danach, wenn die Gegenstelle STARTDT gleich nach dem Verbindungsaufbau schickte |
 | Test | `Operation.ConnectedReportedBeforeFirstFrame` prüft diese Reihenfolge; `run_lib60870.sh` las den Port gelegentlich aus dem Log des vorigen Laufs (Fall „Server <- Client“ schlug selten fehl) |
 

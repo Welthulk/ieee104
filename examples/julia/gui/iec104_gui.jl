@@ -35,43 +35,113 @@ using .Frames
 
 # --- State ---------------------------------------------------------------------
 
-"One received data point of the client."
-mutable struct Row
+# Counters per cause of a point, in this order (page: zyk, hgd, spo, GA, ZA, les, RM, bef, sonst).
+const CAUSE_SLOTS = 9
+function cause_slot(c::Integer)
+    c == 1 && return 1                  # periodic
+    c == 2 && return 2                  # background scan
+    c == 3 && return 3                  # spontaneous
+    20 <= c <= 36 && return 4           # interrogation (station, groups)
+    37 <= c <= 41 && return 5           # counter interrogation
+    c == 5 && return 6                  # request (read)
+    c in (11, 12) && return 7           # return information (feedback)
+    6 <= c <= 10 && return 8            # answers to commands
+    return 9
+end
+
+"One point of the process image of the controlling station: last value and counters per cause."
+mutable struct Point
     station::UInt16
     ioa::UInt32
     type::UInt8
     cause::UInt8
     negative::Bool
-    value::Float64
-    bits::UInt32
-    quality::UInt8
-    time::IecTime
-    count::Int
+    value::String       # in words, e.g. "ein [IV]", "Wert 5.5"
+    timetag::String     # time tag of the last value, "" if none
+    counts::Vector{Int}
     updated::Float64
+    version::Int
+end
+
+"One entry of the value list: entered in the GUI, saved in LIST_FILE."
+mutable struct ListEntry
+    station::UInt16
+    ioa::UInt32
+    type::Int           # expected type, 0 = any
+    text::String
+    feedback::Int       # IOA that reports the result of a command, -1 = none
+end
+
+"A command sent by the controlling station and its run times (ms after sending, -1 = not yet)."
+mutable struct SentCommand
+    id::Int
+    sent::Float64
+    station::UInt16
+    object::Object
+    mode::String
+    text::String
+    result::String
+    final::Bool
+    t_select::Int
+    t_con::Int
+    t_term::Int
+    t_final::Int
+    feedback::Int
+    t_feedback::Int
+    feedback_value::String
+end
+
+"One line of the event list; frames carry their fields for the filters of the page."
+struct LogEntry
+    seq::Int
+    time::Float64
+    kind::String        # "event", "frame", "command", "warning", "error"
+    text::String
+    explain::String
+    dir::String         # frames: "out" (sent by this side) or "in"; else ""
+    format::Char        # 'I', 'S', 'U', '?' or ' '
+    type::Int
+    cause::Int
+    ioas::Vector{UInt32}
+    hex::String
+    objects::Vector{String}
 end
 
 mutable struct Gui
-    # Controlling station (client)
+    # Controlling station (client) = test bench against a controlled station
     client::Ptr{Cvoid}
     client_state::Cint
     client_reason::Cint
     station::UInt16
-    rows::Dict{Tuple{UInt16,UInt32,UInt8},Row}
+    auto_step::Int      # 1: STARTDT when connected, 2: interrogation when started, 0: done
+    image::Dict{Tuple{UInt16,UInt32},Point}
+    image_version::Int
+    image_epoch::Int    # changes when the image is cleared: the page loads it anew
+    list::Dict{Tuple{UInt16,UInt32},ListEntry}
+    list_version::Int
+    cmds::Vector{SentCommand}
+    cmd_id::Int
+    cmds_version::Int
     # Controlled station (server)
     server::Ptr{Cvoid}
     server_station::UInt16
     accept_commands::Bool
     points::Dict{UInt32,Object}
     connections::Dict{UInt32,Cint}
-    # Event list shown on the page: number, time, kind ("event", "frame", "error"), text, meaning
-    log::Vector{Tuple{Int,Float64,String,String,String}}
+    # Event list shown on the page
+    log::Vector{LogEntry}
     log_seq::Int
+    Gui() = new(C_NULL, IEC104.LINK_CLOSED, 0, 1, 0, Dict(), 0, 1, Dict(), 1, SentCommand[], 0, 1,
+                C_NULL, 1, true, Dict(), Dict(), LogEntry[], 0)
 end
 
-const GUI = Gui(C_NULL, IEC104.LINK_CLOSED, 0, 1, Dict(), C_NULL, 1, true, Dict(), Dict(), [], 0)
-const LOG_MAX = 3000   # frames included
-const ROWS_MAX = 1000  # rows of the client table sent to the page
+const GUI = Gui()
+const LOG_MAX = 20000  # frames included
+const CMDS_MAX = 200
 const BOOT = string(round(Int, time() * 1000))   # identifies this run of the GUI for the page
+
+"File of the value list: IEC104_GUI_LISTE, else ~/.config/iec104/werteliste.tsv."
+list_file() = get(ENV, "IEC104_GUI_LISTE", joinpath(homedir(), ".config", "iec104", "werteliste.tsv"))
 
 # Address and port of the GUI, set by main(). The station listens on the same address.
 const GUI_ADDRESS = Ref("127.0.0.1")
@@ -103,12 +173,15 @@ const PEER_PROGRAMS = [
 ]
 const PEER_LINE_MAX = 300   # longer output lines are cut
 
-note(text::AbstractString; kind = "event", explain = "") = begin
+function add_log(kind, text, explain = ""; dir = "", format = ' ', type = -1, cause = -1,
+                 ioas = UInt32[], hex = "", objects = String[], t = time())
     GUI.log_seq += 1
-    push!(GUI.log, (GUI.log_seq, time(), String(kind), String(text), String(explain)))
+    push!(GUI.log, LogEntry(GUI.log_seq, t, String(kind), String(text), String(explain), dir,
+                            format, type, cause, ioas, String(hex), objects))
     length(GUI.log) > LOG_MAX && popfirst!(GUI.log)
     nothing
 end
+note(text::AbstractString; kind = "event", explain = "") = add_log(kind, text, explain)
 
 # --- Plain German texts for the page --------------------------------------------
 
@@ -118,7 +191,7 @@ state_text(state::Integer) = get(Dict(0 => "verbinde …",
     2 => "STARTDT gesendet, warte auf Bestätigung", 3 => "Datenübertragung läuft",
     4 => "STOPDT gesendet, warte auf Bestätigung", 5 => "getrennt"), Int(state), "Zustand $state")
 
-"Hint for a close reason (iec104_close_reason), \"\" if none."
+"Close reason (iec104_close_reason) in words with a hint what to check."
 close_hint(reason::Integer) = get(Dict(
     1 => "von dieser Seite getrennt",
     2 => "Gegenstelle hat die Verbindung beendet",
@@ -126,7 +199,8 @@ close_hint(reason::Integer) = get(Dict(
     4 => "keine Antwort innerhalb t0 – Adresse im Netz erreichbar?",
     5 => "Gegenstelle hat nicht rechtzeitig quittiert (t1) – Timer der Gegenstelle prüfen",
     9 => "Rahmen im falschen Zustand oder in falscher Rolle",
-    11 => "TLS-Fehler, siehe TLS-Ereignis"), Int(reason), "")
+    11 => "TLS-Fehler, siehe TLS-Ereignis"), Int(reason),
+    "Grund $(reason): " * IEC104.close_reason_string(reason))
 
 # Allowed values per type (time-tagged types like their base type).
 const RANGES = Dict(1 => "0 oder 1", 3 => "0…3 (1 = aus, 2 = ein)", 5 => "−64…63",
@@ -157,47 +231,119 @@ end
 function cb_client_state(::Ptr{Cvoid}, ::UInt32, state::Cint, reason::Cint)::Cvoid
     GUI.client_state = state
     GUI.client_reason = reason
-    hint = state == IEC104.LINK_CLOSED ? close_hint(reason) : ""
     note("Leitstelle: " * state_text(state) *
-         (state == IEC104.LINK_CLOSED ? " (" * IEC104.close_reason_string(reason) * ")" : "") *
-         (isempty(hint) ? "" : " – " * hint))
+         (state == IEC104.LINK_CLOSED ? " – " * close_hint(reason) : "");
+         kind = state == IEC104.LINK_CLOSED && reason != 1 ? "warning" : "event")
+    state == IEC104.LINK_CLOSED && (GUI.auto_step = 0)
     return nothing
+end
+
+is_command(t::Integer) = 45 <= t <= 51 || 58 <= t <= 64
+cmd_ms(c::SentCommand) = round(Int, (time() - c.sent) * 1000)
+
+const DOUBLE_TEXT = ("unbestimmt", "aus", "ein", "gestört")
+const STEP_TEXT = ("nicht erlaubt", "tiefer", "höher", "nicht erlaubt")
+pick(names, v) = 0 <= v <= 3 && isinteger(v) ? names[Int(v)+1] : "Wert $v"
+num_text(v::Float64) = isinteger(v) && abs(v) < 1e15 ? string(Int(v)) : string(round(v; sigdigits = 7))
+
+"Value of an object in words, e.g. \"ein [IV]\", \"Wert 5.5\", \"Sollwert 3 QL 1 Select\" (time tag apart)."
+function value_text(o::Object)
+    t = get(BASE_TYPE, Int(o.type), Int(o.type))
+    q = isempty(quality_text(o.quality)) ? "" : " [" * quality_text(o.quality) * "]"
+    cmd(setpoint) = (o.qualifier != 0 ? (setpoint ? " QL " : " QU ") * string(o.qualifier) : "") *
+                    (o.select != 0 ? " Select" : "")
+    t == 1 && return (o.value != 0 ? "ein" : "aus") * q
+    t == 3 && return pick(DOUBLE_TEXT, o.value) * q
+    t == 5 && return "Stufe $(num_text(o.value))" * (o.flags & 0x01 != 0 ? " (läuft)" : "") * q
+    t in (7, 33) && return "Bits 0x" * string(o.bits; base = 16, pad = 8) * q
+    t in (9, 11, 13, 21) && return "Wert " * num_text(o.value) * q
+    t == 15 && return "Zähler $(num_text(o.value)) Folge $(o.qualifier)" * q
+    t == 45 && return (o.value != 0 ? "ein" : "aus") * cmd(false)
+    t == 46 && return pick(DOUBLE_TEXT, o.value) * cmd(false)
+    t == 47 && return pick(STEP_TEXT, o.value) * cmd(false)
+    t in (48, 49, 50) && return "Sollwert " * num_text(o.value) * cmd(true)
+    t in (51, 64) && return "Bits 0x" * string(o.bits; base = 16, pad = 8)
+    return num_text(o.value)
+end
+has_timetag(t::Integer) = 30 <= t <= 37 || 58 <= t <= 64
+
+"Stores a received object in the process image (also used for captured frames)."
+function image_update(station::UInt16, o::Object, cause::Integer, negative::Bool; t = time())
+    key = (station, o.ioa)
+    p = get(GUI.image, key, nothing)
+    if p === nothing
+        p = Point(station, o.ioa, o.type, cause, negative, "", "", zeros(Int, CAUSE_SLOTS), t, 0)
+        GUI.image[key] = p
+    end
+    p.type = o.type
+    p.cause = cause
+    p.negative = negative
+    p.value = value_text(o)
+    p.timetag = has_timetag(o.type) ? time_text(o.time) : ""
+    p.counts[cause_slot(cause)] += 1
+    p.updated = t
+    GUI.image_version += 1
+    p.version = GUI.image_version
+    return p
 end
 
 function cb_client_object(::Ptr{Cvoid}, ::UInt32, info::Ptr{AsduInfo}, obj::Ptr{Object})::Cvoid
     i = unsafe_load(info)
     o = unsafe_load(obj)
-    key = (i.common_address, o.ioa, i.type)
-    row = get(GUI.rows, key, nothing)
-    if row === nothing
-        GUI.rows[key] = Row(i.common_address, o.ioa, i.type, i.cause, i.negative != 0, o.value,
-                            o.bits, o.quality, o.time, 1, time())
-    else
-        row.cause = i.cause
-        row.negative = i.negative != 0
-        row.value = o.value
-        row.bits = o.bits
-        row.quality = o.quality
-        row.time = o.time
-        row.count += 1
-        row.updated = time()
+    t = Int(o.type)
+    (1 <= t <= 44 || is_command(t)) || return nothing   # answers to interrogations: in the log only
+    image_update(i.common_address, o, i.cause, i.negative != 0)
+    if t <= 44
+        # Feedback of sent commands: first value of the feedback IOA after sending.
+        for c in GUI.cmds
+            if c.feedback == o.ioa && c.t_feedback < 0 && c.station == i.common_address
+                c.t_feedback = cmd_ms(c)
+                c.feedback_value = value_text(o)
+                GUI.cmds_version += 1
+            end
+        end
+        return nothing
+    end
+    # Confirmation (7) and termination (10) of the newest open command with this address.
+    for c in Iterators.reverse(GUI.cmds)
+        (c.station == i.common_address && c.object.ioa == o.ioa && c.object.type == o.type &&
+         !c.final) || continue
+        if i.cause == 7
+            o.select != 0 ? (c.t_select < 0 && (c.t_select = cmd_ms(c))) :
+                            (c.t_con < 0 && (c.t_con = cmd_ms(c)))
+        elseif i.cause == 10 && c.t_term < 0
+            c.t_term = cmd_ms(c)
+        end
+        GUI.cmds_version += 1
+        break
     end
     return nothing
 end
 
+const RESULT_TEXT = Dict(0 => "bestätigt", 1 => "ausgeführt", 2 => "ausgewählt", 3 => "abgelehnt",
+                         4 => "keine Bestätigung", 5 => "keine Beendigung", 6 => "Verbindung verloren")
+
 function cb_command_result(::Ptr{Cvoid}, station::UInt16, cmd::Ptr{Object}, result::Cint)::Cvoid
-    c = unsafe_load(cmd)
-    note("Befehl Typ $(c.type) an $station/$(c.ioa), Wert $(c.value): " *
-         IEC104.command_result_string(result))
+    o = unsafe_load(cmd)
+    res = get(RESULT_TEXT, Int(result), "Ergebnis $result")
+    for c in Iterators.reverse(GUI.cmds)
+        (c.station == station && c.object.ioa == o.ioa && c.object.type == o.type && !c.final) || continue
+        c.final = true
+        c.result = res
+        c.t_final = cmd_ms(c)
+        GUI.cmds_version += 1
+        note("Befehl $(c.id) Typ $(o.type) an $station/$(o.ioa) ($(c.mode)): $res nach $(c.t_final) ms";
+             kind = result in (0, 1, 2) ? "command" : "warning")
+        return nothing
+    end
+    note("Befehl Typ $(o.type) an $station/$(o.ioa): $res"; kind = "command")
     return nothing
 end
 
 function cb_server_state(::Ptr{Cvoid}, conn::UInt32, state::Cint, reason::Cint)::Cvoid
     if state == IEC104.LINK_CLOSED
         delete!(GUI.connections, conn)
-        hint = close_hint(reason)
-        note("Station: Verbindung $conn getrennt (" * IEC104.close_reason_string(reason) * ")" *
-             (isempty(hint) ? "" : " – " * hint))
+        note("Station: Verbindung $conn getrennt – " * close_hint(reason))
     else
         GUI.connections[conn] = state
         note("Station: Verbindung $conn " * state_text(state))
@@ -241,9 +387,14 @@ function log_entry(side::String, level::Cint, conn::UInt32, message::Cstring)
         elseif level == 4
             sent = startswith(m, "sent ")
             (sent || startswith(m, "received ")) || return nothing
-            summary, meaning = Frames.describe(Frames.parse_hex(m[(sent ? 6 : 10):end]))
+            hex = m[(sent ? 6 : 10):end]
+            b = Frames.parse_hex(hex)
+            summary, meaning = Frames.describe(b)
+            d = Frames.details(b)
             who = side == "L" ? "Leitstelle" : "Station($conn)"
-            note(who * (sent ? " → " : " ← ") * summary; kind = "frame", explain = meaning)
+            add_log("frame", who * (sent ? " → " : " ← ") * summary, meaning;
+                    dir = sent ? "out" : "in", format = d.format, type = d.type, cause = d.cause,
+                    ioas = d.ioas, hex = hex, objects = d.objects)
         end
     catch
     end
@@ -283,6 +434,9 @@ function gui_client_connect(p)
         on_security = @cfunction(cb_security, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cstring)))
     GUI.client = client_create(cfg, cb)
     client_set_log(GUI.client, 4, @cfunction(cb_log_client, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
+    client_set_options(GUI.client; confirmation_ms = round(Int, p_num(p, "conf_to", 10) * 1000),
+                       termination_ms = round(Int, p_num(p, "term_to", 10) * 1000),
+                       expect_termination = get(p, "term", "1") == "1")
     if get(p, "tls", "") == "1"
         t = TlsConfig()
         for (k, f) in (("ca", :ca_file), ("cert", :certificate_file), ("key", :private_key_file),
@@ -296,24 +450,143 @@ function gui_client_connect(p)
     port = p_int(p, "port", get(p, "tls", "") == "1" ? 19998 : 2404)
     IEC104.client_connect(GUI.client, host, port)
     GUI.client_state = IEC104.LINK_CONNECTING
-    note("Leitstelle: verbinde mit $host:$port" * (get(p, "tls", "") == "1" ? " (TLS)" : ""))
+    GUI.auto_step = get(p, "auto", "0") == "1" ? 1 : 0
+    note("Leitstelle: verbinde mit $host:$port, Station $(GUI.station)" *
+         (get(p, "tls", "") == "1" ? " (TLS)" : "") *
+         (GUI.auto_step == 1 ? ", danach STARTDT und Generalabfrage" : ""))
+end
+
+"Runs STARTDT and the general interrogation after connecting (called by the poll task)."
+function auto_start()
+    GUI.client == C_NULL && return
+    if GUI.auto_step == 1 && GUI.client_state == IEC104.LINK_STOPPED
+        GUI.auto_step = 2
+        client_start(GUI.client)
+    elseif GUI.auto_step == 2 && GUI.client_state == IEC104.LINK_STARTED
+        GUI.auto_step = 0
+        client_interrogation(GUI.client, GUI.station, 20)
+        note("Leitstelle: Generalabfrage an Station $(GUI.station) gesendet")
+    end
 end
 
 need_client() = GUI.client == C_NULL && throw(ArgumentError("keine Verbindung"))
 
+const MODE_TEXT = Dict("direct" => "direkt", "sbo" => "Select+Execute", "select" => "nur Select",
+                       "execute" => "nur Execute")
+
 function gui_client_command(p)
     need_client()
     type = p_int(p, "type", 45)
-    o = Object(type, p_int(p, "ioa", 0), p_num(p, "value", 0.0))
-    if type >= 58   # with time tag: now
-        o = Object(o.type, o.ioa, o.value, 0, 0, 0, 0, 0, time_now())
-    end
-    if get(p, "mode", "direct") == "sbo"
-        client_select_execute(GUI.client, GUI.station, o)
-        note("Leitstelle: Auswahl und Ausführung Typ $type IOA $(o.ioa) Wert $(o.value)")
+    is_command(type) || throw(ArgumentError("Typ $type ist kein Befehl"))
+    station = UInt16(p_int(p, "station", GUI.station))
+    ioa = p_int(p, "ioa", 0)
+    mode = get(MODE_TEXT, p_str(p, "mode"), nothing) === nothing ? "direct" : p_str(p, "mode")
+    bits = UInt32(0)
+    value = 0.0
+    if type in (51, 64)
+        s = strip(p_str(p, "value"))
+        bits = parse(UInt32, startswith(s, "0x") ? s[3:end] : s; base = startswith(s, "0x") ? 16 : 10)
     else
-        client_send_command(GUI.client, GUI.station, o)
-        note("Leitstelle: Befehl Typ $type IOA $(o.ioa) Wert $(o.value)")
+        value = p_num(p, "value", 0.0)
+    end
+    qu = p_int(p, "qu", 0)
+    o = Object(UInt8(type), UInt32(ioa), value, bits, 0x00, 0x00, UInt8(qu),
+               UInt8(mode == "select" ? 1 : 0), type >= 58 ? time_now() : IecTime())
+    if mode == "sbo"
+        client_select_execute(GUI.client, station, o)
+    else
+        client_send_command(GUI.client, station, o)
+    end
+    entry = get(GUI.list, (station, UInt32(ioa)), nothing)
+    fb = haskey(p, "fb") && !isempty(p["fb"]) ? p_int(p, "fb", -1) :
+         entry === nothing ? -1 : entry.feedback
+    mode == "select" && (fb = -1)   # a select changes nothing
+    GUI.cmd_id += 1
+    push!(GUI.cmds, SentCommand(GUI.cmd_id, time(), station, o, MODE_TEXT[mode],
+                        entry === nothing ? "" : entry.text, "", false, -1, -1, -1, -1, fb, -1, ""))
+    length(GUI.cmds) > CMDS_MAX && popfirst!(GUI.cmds)
+    GUI.cmds_version += 1
+    note("Leitstelle: Befehl $(GUI.cmd_id) Typ $type an $station/$ioa: $(value_text(o)) ($(MODE_TEXT[mode]))" *
+         (fb >= 0 ? ", Rückmeldung erwartet auf IOA $fb" : ""); kind = "command")
+end
+
+# --- Value list (entered in the GUI, saved as tab-separated file) ---------------
+
+function list_save()
+    f = list_file()
+    mkpath(dirname(f))
+    tmp = f * ".neu"
+    open(tmp, "w") do io
+        println(io, "# Werteliste der IEC 104 Test-GUI: Station, IOA, Typ, Rückmelde-IOA, Text")
+        for e in sort!(collect(values(GUI.list)); by = e -> (e.station, e.ioa))
+            println(io, e.station, '\t', e.ioa, '\t', e.type, '\t', e.feedback, '\t',
+                    replace(e.text, '\t' => ' ', '\n' => ' '))
+        end
+    end
+    mv(tmp, f; force = true)
+    GUI.list_version += 1
+end
+
+function list_load()
+    f = list_file()
+    isfile(f) || return
+    n = 0
+    for line in eachline(f)
+        (isempty(strip(line)) || startswith(line, '#')) && continue
+        x = split(line, '\t'; limit = 5)
+        try
+            e = ListEntry(parse(UInt16, x[1]), parse(UInt32, x[2]), parse(Int, x[3]),
+                          length(x) >= 5 ? String(x[5]) : "", parse(Int, x[4]))
+            GUI.list[(e.station, e.ioa)] = e
+            n += 1
+        catch
+            note("Werteliste $f: Zeile nicht lesbar: $line"; kind = "warning")
+        end
+    end
+    GUI.list_version += 1
+    note("Werteliste geladen: $n Einträge aus $f")
+end
+
+function gui_list_add(p)
+    station = p_int(p, "station", 1)
+    ioa = p_int(p, "ioa", -1)
+    1 <= station <= 65534 || throw(ArgumentError("Station 1…65534"))
+    0 <= ioa <= 16777215 || throw(ArgumentError("IOA 0…16777215"))
+    fb = haskey(p, "fb") && !isempty(p["fb"]) ? p_int(p, "fb", -1) : -1
+    -1 <= fb <= 16777215 || throw(ArgumentError("Rückmelde-IOA 0…16777215 oder leer"))
+    GUI.list[(UInt16(station), UInt32(ioa))] =
+        ListEntry(station, ioa, p_int(p, "type", 0), strip(p_str(p, "text")), fb)
+    list_save()
+end
+
+function gui_list_remove(p)
+    delete!(GUI.list, (UInt16(p_int(p, "station", 1)), UInt32(p_int(p, "ioa", 0))))
+    list_save()
+end
+
+"Puts every received point that is not yet in the list into the list (type as received)."
+function gui_list_take(p)
+    n = 0
+    for pt in values(GUI.image)
+        haskey(GUI.list, (pt.station, pt.ioa)) && continue
+        GUI.list[(pt.station, pt.ioa)] = ListEntry(pt.station, pt.ioa, pt.type, "", -1)
+        n += 1
+    end
+    list_save()
+    note("Werteliste: $n empfangene Punkte übernommen")
+end
+
+function gui_image_clear(p)
+    empty!(GUI.image)
+    GUI.image_epoch += 1
+    GUI.image_version += 1
+end
+
+function gui_image_reset(p)
+    for pt in values(GUI.image)
+        fill!(pt.counts, 0)
+        GUI.image_version += 1
+        pt.version = GUI.image_version
     end
 end
 
@@ -469,10 +742,17 @@ const ACTIONS = Dict{String,Function}(
     "/api/client/stop" => p -> (need_client(); client_stop(GUI.client)),
     "/api/client/close" => p -> (need_client(); client_close(GUI.client)),
     "/api/client/gi" => p -> (need_client(); client_interrogation(GUI.client, GUI.station, p_int(p, "qoi", 20))),
-    "/api/client/ci" => p -> (need_client(); client_counter_interrogation(GUI.client, GUI.station)),
+    "/api/client/ci" => p -> (need_client(); client_counter_interrogation(GUI.client, GUI.station,
+                                                                          p_int(p, "rqt", 5), p_int(p, "frz", 0))),
+    "/api/client/read" => p -> (need_client(); client_read(GUI.client, GUI.station, p_int(p, "ioa", 0))),
     "/api/client/clock" => p -> (need_client(); client_clock_sync(GUI.client, GUI.station)),
     "/api/client/command" => gui_client_command,
-    "/api/client/clear" => p -> empty!(GUI.rows),
+    "/api/client/clear" => gui_image_clear,
+    "/api/image/reset" => gui_image_reset,
+    "/api/list/add" => gui_list_add,
+    "/api/list/remove" => gui_list_remove,
+    "/api/list/take" => gui_list_take,
+    "/api/list/clear" => p -> (empty!(GUI.list); list_save()),
     "/api/server/listen" => gui_server_listen,
     "/api/server/stop" => p -> (GUI.server != C_NULL && server_destroy(GUI.server); GUI.server = C_NULL;
                                 empty!(GUI.connections); note("Station: beendet")),
@@ -503,30 +783,67 @@ time_text(t::IecTime) = t.year == 0 ? "" :
     @sprintf("%04d-%02d-%02d %02d:%02d:%02d.%03d%s%s", t.year, t.month, t.day, t.hour, t.minute,
              t.second, t.millisecond, t.summer_time != 0 ? " SU" : "", t.invalid != 0 ? " IV" : "")
 
-function state_json(since::Int)
+jfield(io, key, v::AbstractString) = (print(io, ",\"", key, "\":"); jstr(io, v))
+jfield(io, key, v) = print(io, ",\"", key, "\":", v)
+
+function state_json(p)
+    since = p_int(p, "since", 0)
     io = IOBuffer()
     print(io, "{\"boot\":\"", BOOT, "\",\"client\":{\"state\":")
     jstr(io, GUI.client == C_NULL ? "–" : IEC104.state_string(GUI.client_state))
     print(io, ",\"text\":")
     jstr(io, GUI.client == C_NULL ? "nicht verbunden" : state_text(GUI.client_state))
-    print(io, ",\"station\":", GUI.station, ",\"rows\":[")
-    rows = sort!(collect(values(GUI.rows)); by = r -> (r.station, r.ioa, r.type))
-    total = length(rows)
-    length(rows) > ROWS_MAX && (rows = rows[1:ROWS_MAX])   # the page stays fast
-    for (n, r) in enumerate(rows)
+    print(io, ",\"station\":", GUI.station)
+    # Process image: changed points only, all after a clear (epoch) or on the first request.
+    epoch = p_int(p, "pe", 0)
+    pv = epoch == GUI.image_epoch ? p_int(p, "pv", 0) : 0
+    print(io, ",\"epoch\":", GUI.image_epoch, ",\"pv\":", GUI.image_version, ",\"image\":[")
+    n = 0
+    for pt in values(GUI.image)
+        pt.version > pv || continue
+        n += 1
         n > 1 && print(io, ',')
-        print(io, "{\"station\":", r.station, ",\"ioa\":", r.ioa, ",\"type\":", r.type,
-              ",\"cause\":", r.cause, ",\"negative\":", r.negative, ",\"value\":")
-        jnum(io, r.value)
-        print(io, ",\"bits\":", r.bits, ",\"quality\":")
-        jstr(io, quality_text(r.quality))
-        print(io, ",\"time\":")
-        jstr(io, time_text(r.time))
-        print(io, ",\"count\":", r.count, ",\"age\":")
-        jnum(io, round(time() - r.updated; digits = 1))
-        print(io, '}')
+        print(io, "{\"st\":", pt.station, ",\"ioa\":", pt.ioa, ",\"ty\":", pt.type, ",\"c\":",
+              pt.cause, ",\"neg\":", pt.negative)
+        jfield(io, "v", pt.value)
+        jfield(io, "tt", pt.timetag)
+        jfield(io, "u", Libc.strftime("%H:%M:%S", pt.updated))
+        print(io, ",\"n\":[", join(pt.counts, ','), "]}")
     end
-    print(io, "],\"rows_total\":", total, "},\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
+    print(io, ']')
+    # Value list and commands: complete, when changed.
+    print(io, ",\"lv\":", GUI.list_version)
+    if p_int(p, "lv", 0) != GUI.list_version
+        print(io, ",\"list\":[")
+        for (k, e) in enumerate(sort!(collect(values(GUI.list)); by = e -> (e.station, e.ioa)))
+            k > 1 && print(io, ',')
+            print(io, "{\"st\":", e.station, ",\"ioa\":", e.ioa, ",\"ty\":", e.type, ",\"fb\":", e.feedback)
+            jfield(io, "tx", e.text)
+            print(io, '}')
+        end
+        print(io, ']')
+        jfield(io, "list_file", list_file())
+    end
+    print(io, ",\"cv\":", GUI.cmds_version)
+    if p_int(p, "cv", 0) != GUI.cmds_version
+        print(io, ",\"cmds\":[")
+        for (k, c) in enumerate(Iterators.reverse(GUI.cmds))
+            k > 1 && print(io, ',')
+            print(io, "{\"id\":", c.id, ",\"st\":", c.station, ",\"ioa\":", c.object.ioa,
+                  ",\"ty\":", c.object.type, ",\"tsel\":", c.t_select, ",\"tcon\":", c.t_con,
+                  ",\"tterm\":", c.t_term, ",\"tfin\":", c.t_final, ",\"fb\":", c.feedback,
+                  ",\"tfb\":", c.t_feedback)
+            jfield(io, "t", Libc.strftime("%H:%M:%S", c.sent))
+            jfield(io, "v", value_text(c.object))
+            jfield(io, "mode", c.mode)
+            jfield(io, "tx", c.text)
+            jfield(io, "res", c.result)
+            jfield(io, "fbv", c.feedback_value)
+            print(io, '}')
+        end
+        print(io, ']')
+    end
+    print(io, "},\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
           GUI.server == C_NULL ? 0 : server_port(GUI.server), ",\"station\":", GUI.server_station,
           ",\"accept\":", GUI.accept_commands, ",\"connections\":[")
     for (n, (id, st)) in enumerate(sort!(collect(GUI.connections)))
@@ -559,18 +876,29 @@ function state_json(since::Int)
     selftest_json(io)
     print(io, ",\"log\":[")
     first = true
-    for (seq, t, kind, text, explain) in GUI.log
-        seq <= since && continue
+    for e in GUI.log
+        e.seq <= since && continue
         first || print(io, ',')
         first = false
-        print(io, "{\"seq\":", seq, ",\"time\":")
-        jstr(io, Libc.strftime("%H:%M:%S", t))
-        print(io, ",\"kind\":")
-        jstr(io, kind)
-        print(io, ",\"text\":")
-        jstr(io, text)
-        print(io, ",\"explain\":")
-        jstr(io, explain)
+        print(io, "{\"seq\":", e.seq)
+        jfield(io, "time", Libc.strftime("%H:%M:%S", e.time) * @sprintf(".%03d", round(Int, (e.time % 1) * 1000) % 1000))
+        jfield(io, "kind", e.kind)
+        jfield(io, "text", e.text)
+        jfield(io, "explain", e.explain)
+        if e.kind == "frame"
+            jfield(io, "dir", e.dir)
+            jfield(io, "f", string(e.format))
+            print(io, ",\"ty\":", e.type, ",\"c\":", e.cause, ",\"io\":[", join(e.ioas, ','), ']')
+            jfield(io, "hex", e.hex)
+            if length(e.objects) > 1
+                print(io, ",\"obj\":[")
+                for (k, o) in enumerate(e.objects)
+                    k > 1 && print(io, ',')
+                    jstr(io, o)
+                end
+                print(io, ']')
+            end
+        end
         print(io, '}')
     end
     print(io, "]}")
@@ -613,6 +941,7 @@ const ACTION_NAMES = Dict(
     "/api/client/stop" => "STOPDT", "/api/client/close" => "Trennen",
     "/api/client/gi" => "Generalabfrage", "/api/client/ci" => "Zählerabfrage",
     "/api/client/clock" => "Uhrzeit setzen", "/api/client/command" => "Befehl",
+    "/api/client/read" => "Lesebefehl", "/api/list/add" => "Werteliste",
     "/api/server/listen" => "Station starten", "/api/server/point" => "Datenpunkt",
     "/api/peer/start" => "Gegenstelle starten", "/api/peer/stop" => "Gegenstelle beenden",
     "/api/selftest/start" => "Selbsttest")
@@ -637,7 +966,7 @@ end
 
 function route(path, p)
     path == "/" && return ("200 OK", "text/html; charset=utf-8", PAGE)
-    path == "/api/state" && return ("200 OK", "application/json", state_json(p_int(p, "since", 0)))
+    path == "/api/state" && return ("200 OK", "application/json", state_json(p))
     path == "/api/selftest/report" &&
         return ("200 OK", "text/plain; charset=utf-8", selftest_report(p_str(p, "full") == "1"))
     action = get(ACTIONS, path, nothing)
@@ -725,6 +1054,7 @@ function main(port = 8080, address = "127.0.0.1", lib60870 = "")
     println("IEC 104 Test-GUI (Library ", IEC104.version(), "): http://localhost:$(GUI_PORT[])")
     flush(stdout)   # scripts wait for this line
     note("GUI gestartet, Library " * IEC104.version())
+    list_load()
     if !isempty(PEER.folder)
         found = [x.key for x in PEER_PROGRAMS if peer_found(x)]
         note("Gegenstelle lib60870: $(PEER.folder), " *
@@ -732,6 +1062,13 @@ function main(port = 8080, address = "127.0.0.1", lib60870 = "")
     end
     @async while true   # poll task: the library runs here, callbacks included
         GUI.client != C_NULL && client_poll(GUI.client, 0)
+        try
+            auto_start()
+        catch e
+            GUI.auto_step = 0
+            note("Leitstelle: automatischer Start: " * error_text(e, "/api/client", Dict{String,String}());
+                 kind = "warning")
+        end
         GUI.server != C_NULL && server_poll(GUI.server, 0)
         selftest_poll()
         sleep(0.02)

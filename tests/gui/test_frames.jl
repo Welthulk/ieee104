@@ -84,6 +84,21 @@ d(hex) = describe(parse_hex(hex))
     s, m = d("68 0d 00 00 00 00 0d 01 03 00 01 00 64 00 00 41")
     @test occursin("Station 1 · IOA 100 (Element unvollständig: 41)", s) && startswith(m, "Spontane Meldung")
 
+    # details: fields for the filters and one line per object
+    x = details(parse_hex("68 1c 06 00 02 00 0b 03 14 03 01 00 64 00 00 ff ff 00 65 00 00 17 00 00 66 00 00 fc 08 00"))
+    @test (x.format, x.type, x.cause, x.station, x.negative) == ('I', 11, 20, 1, false)
+    @test x.ioas == [100, 101, 102]
+    @test x.objects == ["IOA 100 Wert -1", "IOA 101 Wert 23", "IOA 102 Wert 2300"]
+    # capture: sequence (SQ = 1) of 8 single points from IOA 300
+    x = details(parse_hex("68 15 0a 00 02 00 01 88 14 03 01 00 2c 01 00 01 00 01 00 01 00 01 00"))
+    @test x.ioas == collect(UInt32(300):UInt32(307)) && x.objects[2] == "IOA 301 aus"
+    @test details(parse_hex("68 04 01 00 14 00")).format == 'S'
+    @test details(parse_hex("68 04 43 00 00 00")).format == 'U'
+    # built: negative answer (P/N) to an interrogation of station 99
+    x = details(parse_hex("68 0e 00 00 00 00 64 01 6e 00 63 00 00 00 00 14"))
+    @test x.negative && x.cause == 46 && x.station == 99
+    @test details(parse_hex("01 02 03")).format == '?'
+
     # unreadable input never throws
     @test startswith(d("68 0e 00 00")[1], "?")
     @test startswith(d("01 02 03 04 05 06")[1], "?")
