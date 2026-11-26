@@ -163,6 +163,7 @@ end
 | Reiter | Inhalt |
 | --- | --- |
 | Prüfstand (Leitstelle) | Leitstelle gegen eine Station, z. B. ein Gerät im Netz: Werteliste, Prozessabbild mit Zählern je Ursache, Befehle mit Laufzeiten (Abschnitt 7.4) |
+| Mithören | Verkehr zwischen fremder Leitstelle und Station aus einem Mitschnitt (tcpdump, Wireshark), auch live (Abschnitt 7.5) |
 | Station und lib60870 | eigene Teststation und lib60870 als fremde Leitstelle (Abschnitt 7.1) |
 | Selbsttest | prüft die Library mit eigener Station und Leitstelle (Abschnitt 7.2) |
 | immer darunter | Telegramme und Ereignisse mit Filtern (Abschnitt 7.3) |
@@ -195,8 +196,8 @@ Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Pu
 | GUI und Station lauschen nur auf `127.0.0.1` | die GUI hat keine Anmeldung, kann Befehle senden und Programme starten; eine andere Adresse nur bewusst als zweiter Parameter |
 | Anfragen nur mit Host `localhost` oder IP-Adresse samt Port der GUI, `/api/` nur mit Kopfzeile `X-IEC104-GUI: 1`, nur GET, kein CORS, nicht einbettbar | eine fremde Webseite im selben Browser kann die GUI nicht steuern, auch nicht über DNS-Rebinding |
 | Die GUI ist ein Testwerkzeug | eine Verbindung je Seite; gespeichert wird nur die Werteliste |
-| Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`), `selftest.jl` (Selbsttest), `frames.jl` (Rahmen in Worten), `index.html` (Seite) |
-| Test | `tests/gui/test_gui.sh` mit Selbsttest; in `ctest` (Preset `shared`) als `Julia.Gui`, mit `IEC104_LIB60870_DIR` auch `Julia.GuiLib60870`; `tests/gui/test_frames.jl` als `Julia.Frames` (nur Julia) |
+| Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`), `selftest.jl` (Selbsttest), `frames.jl` (Rahmen in Worten), `capture.jl` (Mitschnitte lesen), `index.html` (Seite) |
+| Test | `tests/gui/test_gui.sh` mit Selbsttest und Mithören; in `ctest` (Preset `shared`) als `Julia.Gui`, mit `IEC104_LIB60870_DIR` auch `Julia.GuiLib60870`; `tests/gui/test_page.js` (Seitenskript in gjs) als `Julia.GuiPage`; `tests/gui/test_frames.jl` und `tests/gui/test_capture.jl` als `Julia.Frames` und `Julia.Capture` (nur Julia) |
 
 ### 7.1 Gegenstelle lib60870
 
@@ -294,6 +295,10 @@ Ablauf gegen eine Station (z. B. ein Gerät, das im Netz erreichbar ist):
 3. Befehl senden: unter „aus der Werteliste“ wählen oder Typ, IOA, Wert selbst eintragen.
 4. Ergebnis in den Tabellen ablesen, bei Bedarf „Als Tabelle speichern“ und unten „Angezeigte speichern“.
 
+Begriffe wie Station, Leitstelle, Adresse und Datenpunkt erklärt `docs/10_Glossar.md`.
+
+![Reiter Prüfstand mit Teststation: Befehle mit Laufzeiten, Werteliste und Prozessabbild, Telegramme](bilder/test_gui.png)
+
 | Begriff | Bedeutung |
 | --- | --- |
 | Werteliste | die Punkte, die man erwartet: Station, IOA, erwarteter Typ (leer = beliebig), Text, Rückmelde-IOA. Wird bei jeder Änderung gespeichert und beim Start geladen: `~/.config/iec104/werteliste.tsv` (anders: Umgebungsvariable `IEC104_GUI_LISTE`) |
@@ -307,3 +312,27 @@ Ablauf gegen eine Station (z. B. ein Gerät, das im Netz erreichbar ist):
 | Sendet die Station kein ACTTERM, unter „Timer, Fenster, Befehle, TLS“ den Haken „Befehle enden mit ACTTERM“ entfernen | sonst endet jeder Befehl mit „keine Beendigung“ |
 | Befehle mit Zeitmarke (58–63) tragen die Zeit in UTC, „Uhrzeit setzen“ ebenso | die Norm legt die Zeitzone nicht fest, sie wird mit der Gegenstelle vereinbart |
 | Ein Netz zur Station muss erreichbar sein | die GUI ändert keine Netz- oder Firewall-Einstellungen |
+
+### 7.5 Mithören
+
+Reiter „Mithören“: Verkehr zwischen einer fremden Leitstelle und einer Station aus einem Mitschnitt lesen, ohne selbst etwas zu senden.
+
+| Schritt | Was |
+| --- | --- |
+| 1. Mitschneiden | auf einem Rechner, der den Verkehr sieht (z. B. Spiegelport), mit den nötigen Rechten: `sudo tcpdump -i any -U -w /tmp/iec104.pcap 'tcp port 2404'` (die GUI zeigt den Befehl mit Datei und Port zum Kopieren); oder Wireshark, gespeichert als pcap oder pcapng (`docs/04_Selbsttest.md`, Abschnitt 4.8) |
+| 2. Live | „Live mitlesen“: die GUI verfolgt die Datei, während tcpdump schreibt; beginnt tcpdump neu in dieselbe Datei, liest sie von vorn |
+| 3. Nachher | „Datei auswerten“: eine fertige Datei einmal ganz lesen |
+
+| Merkmal | Verhalten |
+| --- | --- |
+| Rechte | die GUI liest nur die Datei; Mitschnittrechte braucht allein tcpdump bzw. Wireshark |
+| Dateien | pcap (tcpdump, µs und ns) und pcapng (Wireshark), beide Byte-Reihenfolgen |
+| Netz | Ethernet (auch VLAN), `-i any` (Linux cooked v1/v2), Loopback, rohes IP; IPv4 und IPv6 |
+| TCP | je Richtung zusammengesetzt: Wiederholungen, vertauschte Segmente, Rahmen über mehrere Segmente; beginnt der Mitschnitt mitten in der Verbindung, ab dem ersten vollständigen Rahmen; Lücken werden gemeldet |
+| Anzeige | jeder Rahmen unter Telegramme mit „Mithören“, Richtung, Adressen und Zeit des Mitschnitts; Filter „Text: Mithören“ |
+| Prozessabbild | auf Wunsch Werte der Station (dekodiert von der Library, `iec104_decode_asdu`) mit Zählern je Ursache |
+| Port | Port der Station, Standard 2404; Verbindungen auf 19998 (TLS) sind verschlüsselt und werden nur gemeldet |
+
+Nur dort mithören, wo es erlaubt ist.
+
+![Reiter Mithören nach Auswertung eines Beispiel-Mitschnitts](bilder/test_gui_mithoeren.png)

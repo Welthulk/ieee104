@@ -9,7 +9,7 @@
 # Aufruf, z. B. aus dem Windows-Checkout heraus:
 #   bash /mnt/c/<pfad>/<repo>/tools/wsl_ausprobieren.sh [ZIEL] [--ohne-bauen] [--mit-lib60870]
 #
-#   ZIEL            Arbeitsordner, Default ~/src/iee104
+#   ZIEL            Arbeitsordner, Default ~/src/iec104
 #   --ohne-bauen    nur die fertig gebaute Library prüfen, nicht aus den Quellen bauen
 #   --mit-lib60870  lib60870-C v2.4.1 (fremde Gegenstelle für die Test-GUI) neben ZIEL
 #                   holen (GitHub, Variable LIB60870_GIT) und ohne TLS bauen
@@ -28,7 +28,7 @@
 set -u
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
-ZIEL="$HOME/src/iee104"
+ZIEL="$HOME/src/iec104"
 BAUEN=1
 LIB60870=0
 for arg in "$@"; do

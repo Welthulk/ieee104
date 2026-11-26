@@ -32,6 +32,8 @@ using Sockets
 using Printf
 include(joinpath(@__DIR__, "frames.jl"))   # description of frames for the commented protocol
 using .Frames
+include(joinpath(@__DIR__, "capture.jl"))  # listening in: frames from a pcap/pcapng file
+using .Capture
 
 # --- State ---------------------------------------------------------------------
 
@@ -692,6 +694,98 @@ function gui_server_point(p)
     GUI.points[o.ioa] = o   # only after the library accepted it
 end
 
+# --- Listening in: frames from a capture file (tcpdump, Wireshark) ----------------
+
+"A capture file being read: once (mode :file) or followed while tcpdump writes it (:live)."
+mutable struct Listening
+    mode::Symbol                     # :off, :file, :live
+    path::String
+    io::Union{IOStream,Nothing}
+    reader::Capture.Reader
+    to_image::Bool
+    pos::Int                         # bytes read
+    state::String                    # in words for the page
+end
+const LISTEN = Listening(:off, "", nothing, Capture.Reader(), true, 0, "aus")
+const LISTEN_CHUNK = 1 << 20         # bytes per poll round: the GUI stays responsive
+
+function gui_listen_start(p)
+    path = expanduser(strip(p_str(p, "path")))
+    isempty(path) && throw(ArgumentError("Datei angeben, z. B. /tmp/iec104.pcap"))
+    live = get(p, "live", "0") == "1"
+    isfile(path) || live || throw(ArgumentError("Datei $path gibt es nicht"))
+    ports = [p_int(p, "port", 2404)]
+    1 <= ports[1] <= 65535 || throw(ArgumentError("Port 1…65535"))
+    listen_stop()
+    LISTEN.mode = live ? :live : :file
+    LISTEN.path = path
+    LISTEN.io = isfile(path) ? open(path, "r") : nothing
+    LISTEN.reader = Capture.Reader(; ports)
+    LISTEN.to_image = get(p, "image", "1") == "1"
+    LISTEN.pos = 0
+    LISTEN.state = live ? (LISTEN.io === nothing ? "warte auf die Datei" : "liest mit") : "wertet aus"
+    note("Mithören: $(live ? "lese live mit" : "werte aus"): $(home_short(path)) (Port $(ports[1]))")
+end
+
+function listen_stop()
+    LISTEN.io === nothing || close(LISTEN.io)
+    LISTEN.io = nothing
+    LISTEN.mode == :off && return
+    r = LISTEN.reader
+    note("Mithören beendet: $(r.packets) Pakete, $(r.frames) Rahmen" *
+         (r.gaps > 0 ? ", $(r.gaps) Lücken" : "") * (r.skipped > 0 ? ", $(r.skipped) andere Pakete übergangen" : ""))
+    LISTEN.mode = :off
+    LISTEN.state = "aus"
+end
+
+"Called by the poll task: reads the next part of the file and handles what was found."
+function listen_poll()
+    LISTEN.mode == :off && return
+    if LISTEN.io === nothing                      # live: tcpdump has not created the file yet
+        isfile(LISTEN.path) || return
+        LISTEN.io = open(LISTEN.path, "r")
+        LISTEN.state = "liest mit"
+    end
+    if filesize(LISTEN.path) < LISTEN.pos         # new capture into the same file
+        close(LISTEN.io)
+        LISTEN.io = open(LISTEN.path, "r")
+        LISTEN.pos = 0
+        LISTEN.reader = Capture.Reader(; ports = LISTEN.reader.ports)
+        note("Mithören: Datei neu begonnen, lese von vorn")
+    end
+    bytes = read(LISTEN.io, LISTEN_CHUNK)
+    LISTEN.pos += length(bytes)
+    isempty(bytes) || Capture.feed!(LISTEN.reader, bytes)
+    for e in Capture.events!(LISTEN.reader)
+        listen_event(e)
+    end
+    LISTEN.reader.format == :bad && return listen_stop()
+    LISTEN.mode == :file && isempty(bytes) && listen_stop()
+end
+
+function listen_event(e::Capture.Event)
+    if e.kind == :note
+        note("Mithören: " * e.text; kind = "warning")
+        return
+    end
+    summary, meaning = Frames.describe(e.apdu)
+    d = Frames.details(e.apdu)
+    who = e.from_station ? "Station $(e.src) → Leitstelle $(e.dst)" : "Leitstelle $(e.src) → Station $(e.dst)"
+    add_log("frame", "Mithören · " * who * " · " * summary, meaning;
+            dir = e.from_station ? "in" : "out", format = d.format, type = d.type, cause = d.cause,
+            ioas = d.ioas, hex = Frames.hexdump(e.apdu), objects = d.objects, t = e.time)
+    # Values of the station into the process image, decoded by the library.
+    if LISTEN.to_image && e.from_station && d.format == 'I'
+        st, info, objects = IEC104.decode_asdu(e.apdu[7:end])
+        st == 0 || return
+        for o in objects
+            t = Int(o.type)
+            (1 <= t <= 44 || is_command(t)) &&
+                image_update(info.common_address, o, info.cause, info.negative != 0; t = e.time)
+        end
+    end
+end
+
 # --- Counterpart lib60870 (process, normal tasks; never inside a callback) -----
 
 "lib60870-C folder from the start argument, else IEC104_LIB60870; the parent folder lib60870 is accepted."
@@ -807,6 +901,8 @@ const ACTIONS = Dict{String,Function}(
                                 empty!(GUI.connections); note("Station: beendet")),
     "/api/server/point" => gui_server_point,
     "/api/server/accept" => p -> (GUI.accept_commands = get(p, "on", "1") == "1"),
+    "/api/listen/start" => gui_listen_start,
+    "/api/listen/stop" => p -> listen_stop(),
     "/api/peer/start" => gui_peer_start,
     "/api/peer/stop" => gui_peer_stop,
     "/api/selftest/start" => selftest_start,
@@ -834,6 +930,9 @@ time_text(t::IecTime) = t.year == 0 ? "" :
 
 jfield(io, key, v::AbstractString) = (print(io, ",\"", key, "\":"); jstr(io, v))
 jfield(io, key, v) = print(io, ",\"", key, "\":", v)
+
+"Path for the page: below the home folder as ~/…"
+home_short(f::AbstractString) = startswith(f, homedir() * "/") ? "~" * f[length(homedir())+1:end] : String(f)
 
 function state_json(p)
     since = q_int(p, "since", 0)
@@ -871,8 +970,7 @@ function state_json(p)
             print(io, '}')
         end
         print(io, ']')
-        f = list_file()
-        jfield(io, "list_file", startswith(f, homedir() * "/") ? "~" * f[length(homedir())+1:end] : f)
+        jfield(io, "list_file", home_short(list_file()))
     end
     print(io, ",\"cv\":", GUI.cmds_version)
     if q_int(p, "cv", 0) != GUI.cmds_version
@@ -923,6 +1021,13 @@ function state_json(p)
         print(io, ",\"available\":", peer_found(x), '}')
     end
     print(io, "]},")
+    r = LISTEN.reader
+    print(io, "\"listen\":{\"mode\":")
+    jstr(io, String(LISTEN.mode))
+    jfield(io, "state", LISTEN.state)
+    jfield(io, "path", home_short(LISTEN.path))
+    print(io, ",\"packets\":", r.packets, ",\"frames\":", r.frames, ",\"gaps\":", r.gaps,
+          ",\"skipped\":", r.skipped, ",\"bytes\":", LISTEN.pos, "},")
     selftest_json(io)
     print(io, ",\"log\":[")
     first = true
@@ -993,6 +1098,7 @@ const ACTION_NAMES = Dict(
     "/api/client/gi" => "Generalabfrage", "/api/client/ci" => "Zählerabfrage",
     "/api/client/clock" => "Uhrzeit setzen", "/api/client/command" => "Befehl",
     "/api/client/read" => "Lesebefehl", "/api/list/add" => "Werteliste",
+    "/api/listen/start" => "Mithören",
     "/api/server/listen" => "Station starten", "/api/server/point" => "Datenpunkt",
     "/api/peer/start" => "Gegenstelle starten", "/api/peer/stop" => "Gegenstelle beenden",
     "/api/selftest/start" => "Selbsttest")
@@ -1131,6 +1237,15 @@ function main(port = 8080, address = "127.0.0.1", lib60870 = "")
         end
         GUI.server != C_NULL && server_poll(GUI.server, 0)
         selftest_poll()
+        try
+            listen_poll()
+        catch e
+            note("Mithören abgebrochen: " * sprint(showerror, e); kind = "error")
+            LISTEN.io === nothing || close(LISTEN.io)
+            LISTEN.io = nothing
+            LISTEN.mode = :off
+            LISTEN.state = "aus"
+        end
         sleep(0.02)
     end
     while true

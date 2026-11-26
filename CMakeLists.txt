@@ -319,6 +319,10 @@ if(IEC104_BUILD_TESTS)
         add_test(NAME Julia.Frames
             COMMAND ${IEC104_JULIA} --startup-file=no ${PROJECT_SOURCE_DIR}/tests/gui/test_frames.jl)
         set_tests_properties(Julia.Frames PROPERTIES TIMEOUT 300)
+        # Listening in: pcap/pcapng, link layers, TCP reassembly (pure Julia, no library).
+        add_test(NAME Julia.Capture
+            COMMAND ${IEC104_JULIA} --startup-file=no ${PROJECT_SOURCE_DIR}/tests/gui/test_capture.jl)
+        set_tests_properties(Julia.Capture PROPERTIES TIMEOUT 300)
     endif()
 endif()
 if(IEC104_BUILD_TESTS AND BUILD_SHARED_LIBS)

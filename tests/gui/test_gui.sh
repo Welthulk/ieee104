@@ -216,6 +216,32 @@ wait_state 5 "Befehle geleert" 0 '"cmds":\[\]'
 act_rejected 'server/listen?port=0&station=70000' 'Station (CA) 1…65534'
 wait_state 5 "Station läuft nach falscher Eingabe weiter" 0 "\"server\":\\{\"running\":true,\"port\":$SPORT"
 wait_state 5 "empfangene Punkte übernommen" 0 '\{"st":1,"ioa":1001,"ty":1,"fb":-1,"tx":""\}'
+# --- Mithören: Mitschnitt aus tests/gui/test_capture.jl (pcap, Ethernet, 6 Rahmen) ------------
+"$JULIA" --startup-file=no "$ROOT/tests/gui/test_capture.jl" --sample "$WORK/sample.pcap" ||
+    fail "Beispiel-Mitschnitt nicht erzeugt"
+act "listen/start?path=$WORK/sample.pcap&port=2404&image=1"
+wait_state 10 "Mitschnitt ausgewertet" 0 \
+    '"text":"Mithören · Station 10.0.0.5:2404 → Leitstelle 10.0.0.9:51000 · I N\(S\)=3 N\(R\)=1 · 11 M_ME_NB_1' \
+    '"text":"Mithören · Leitstelle 10.0.0.9:51000 → Station 10.0.0.5:2404 · U STARTDT act"' \
+    '"text":"Mithören beendet: 10 Pakete, 6 Rahmen"' \
+    '\{"st":1,"ioa":101,"ty":11,"c":20,"neg":false,"v":"Wert 23"' \
+    '"listen":\{"mode":"off"'
+# Live: tcpdump schreibt noch; die Datei kommt in zwei Teilen, dazwischen neu begonnen.
+head -c 200 "$WORK/sample.pcap" > "$WORK/live.pcap"
+act "listen/start?path=$WORK/live.pcap&live=1&image=0"
+wait_state 5 "Live: liest mit (erste 200 Byte gelesen)" 0 '"listen":\{"mode":"live","state":"liest mit",[^}]*"bytes":200\}'
+S2="$(last_seq)"
+: > "$WORK/live.pcap"
+sleep 0.5
+cat "$WORK/sample.pcap" > "$WORK/live.pcap"
+wait_state 10 "Live: neu begonnene Datei vollständig gelesen" "$S2" \
+    '"text":"Mithören: Datei neu begonnen, lese von vorn"' '"listen":\{"mode":"live","state":"liest mit","path":"[^"]*","packets":10,"frames":6,'
+act 'listen/stop'
+printf 'kein Mitschnitt' > "$WORK/bad.pcap"
+act "listen/start?path=$WORK/bad.pcap"
+wait_state 5 "keine pcap-Datei erkannt" 0 '"text":"Mithören: keine pcap- oder pcapng-Datei'
+act_rejected 'listen/start?path=/gibt/es/nicht.pcap' 'gibt es nicht'
+
 act 'client/close'
 
 # --- Gegenstelle lib60870 ---------------------------------------------------------------

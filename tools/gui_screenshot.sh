@@ -3,47 +3,66 @@
 # SPDX-License-Identifier: LicenseRef-Proprietary
 # Author: Udo Schmitz (SOPTIM AG)
 # All rights reserved by SOPTIM AG.
-# gui_screenshot.sh – Bild der Test-GUI für die Doku (docs/bilder/test_gui.png).
+# gui_screenshot.sh – Bilder der Test-GUI für die Doku (docs/bilder/).
 #
-# Aufruf: tools/gui_screenshot.sh LIBRARY [AUSGABE.png]
+# Aufruf: tools/gui_screenshot.sh LIBRARY [ORDNER]
 #
-# Startet die GUI auf 127.0.0.1 (freier Port) mit leerer Werteliste in einem eigenen Home-Ordner,
-# legt eine Teststation mit Beispielwerten an, füllt die Werteliste, verbindet
-# die Leitstelle (STARTDT, Generalabfrage), sendet einen Befehl mit
-# Rückmeldung und rendert die Seite mit WebKitGTK (tools/gui_screenshot.js).
-# Braucht julia, curl, gjs und WebKitGTK 4.0 sowie ein Display (DISPLAY).
+# Erzeugt im ORDNER (Standard docs/bilder):
+#   test_gui.png             Reiter „Prüfstand“: Teststation mit Beispielwerten, Werteliste,
+#                            Leitstelle mit STARTDT und Generalabfrage, Befehle mit Rückmeldung
+#   test_gui_station.png     Reiter „Station und lib60870“ derselben Sitzung
+#   test_gui_mithoeren.png   Reiter „Mithören“ nach Auswertung eines Beispiel-Mitschnitts
+#                            (eigene Sitzung, damit nur mitgehörte Rahmen zu sehen sind)
+# Die GUI läuft auf 127.0.0.1 (freier Port) mit eigenem Home-Ordner (leere Werteliste,
+# die echte bleibt unberührt). Gerendert wird mit WebKitGTK (tools/gui_screenshot.js).
+# Braucht julia, curl, gjs, WebKitGTK 4.0 und ein Display (DISPLAY).
 
 set -u
 LIB="${1:?Library fehlt (libiec104.so.0)}"
+LIB="$(cd "$(dirname "$LIB")" && pwd)/$(basename "$LIB")"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="${2:-$ROOT/docs/bilder/test_gui.png}"
+OUT="${2:-$ROOT/docs/bilder}"
 WORK="$(mktemp -d)"
 GPID=""
-cleanup() {
+PORT=""
+DEPOT="${JULIA_DEPOT_PATH:-$HOME/.julia}"   # the real one: compiled code is reused
+JULIA_BIN="$(julia --startup-file=no -e 'print(first(Base.julia_cmd().exec))')"
+
+stop_gui() {
     [ -n "$GPID" ] && kill "$GPID" 2> /dev/null && wait "$GPID" 2> /dev/null
-    rm -rf "$WORK"
+    GPID=""
 }
+cleanup() { stop_gui; rm -rf "$WORK"; }
 trap cleanup EXIT
 
-# Own home folder: the value list goes to its ~/.config/iec104/ (shown as such), never into the real one.
-JULIA_BIN="$(julia --startup-file=no -e 'print(first(Base.julia_cmd().exec))')"
-mkdir -p "$WORK/home"
-: > "$WORK/gui.log"   # exists before the loop below reads it
-HOME="$WORK/home" JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-$HOME/.julia}" IEC104_LIB="$(cd "$(dirname "$LIB")" && pwd)/$(basename "$LIB")" IEC104_LIB60870="" \
-    "$JULIA_BIN" --startup-file=no \
-    "$ROOT/examples/julia/gui/iec104_gui.jl" 0 127.0.0.1 < /dev/null > "$WORK/gui.log" 2>&1 &
-GPID=$!
-PORT=""
-for _ in $(seq 1 1200); do
-    PORT="$(sed -n 's|^IEC 104 Test-GUI .*http://localhost:\([0-9]*\)$|\1|p' "$WORK/gui.log")"
-    [ -n "$PORT" ] && break
-    kill -0 "$GPID" 2> /dev/null || { cat "$WORK/gui.log" >&2; exit 1; }
-    sleep 0.25
-done
-[ -n "$PORT" ] || { echo "GUI meldet keinen Port" >&2; exit 1; }
+start_gui() {
+    rm -rf "$WORK/home"
+    mkdir -p "$WORK/home"
+    : > "$WORK/gui.log"   # exists before the loop below reads it
+    HOME="$WORK/home" JULIA_DEPOT_PATH="$DEPOT" IEC104_LIB="$LIB" IEC104_LIB60870="" \
+        "$JULIA_BIN" --startup-file=no "$ROOT/examples/julia/gui/iec104_gui.jl" 0 127.0.0.1 \
+        < /dev/null > "$WORK/gui.log" 2>&1 &
+    GPID=$!
+    PORT=""
+    for _ in $(seq 1 1200); do
+        PORT="$(sed -n 's|^IEC 104 Test-GUI .*http://localhost:\([0-9]*\)$|\1|p' "$WORK/gui.log")"
+        [ -n "$PORT" ] && return 0
+        kill -0 "$GPID" 2> /dev/null || { cat "$WORK/gui.log" >&2; exit 1; }
+        sleep 0.25
+    done
+    echo "GUI meldet keinen Port" >&2
+    exit 1
+}
 api() { curl -sS --max-time 5 -H 'X-IEC104-GUI: 1' "http://127.0.0.1:$PORT/api/$1" > /dev/null; }
 q() { printf '%s' "$1" | sed 's/ /%20/g'; }
+shot() { # Reiter, Datei
+    gjs "$ROOT/tools/gui_screenshot.js" "http://localhost:$PORT/#$1" "$OUT/$2" 1500 4000 2>&1 |
+        grep -v '^libEGL'
+}
+mkdir -p "$OUT"
 
+# --- Sitzung 1: Prüfstand gegen die Teststation ------------------------------------------
+start_gui
 api 'server/listen?port=0&station=1'
 SPORT="$(curl -sS -H 'X-IEC104-GUI: 1' "http://127.0.0.1:$PORT/api/state" |
          grep -o '"server":{"running":true,"port":[0-9]*' | grep -o '[0-9]*$')"
@@ -76,6 +95,13 @@ api 'server/point?type=13&ioa=2003&value=12.5'
 api 'server/point?type=13&ioa=2001&value=231.1'
 api 'client/ci?rqt=5&frz=0'
 sleep 1.5
+shot pruef test_gui.png
+shot station test_gui_station.png
+stop_gui
 
-mkdir -p "$(dirname "$OUT")"
-gjs "$ROOT/tools/gui_screenshot.js" "http://localhost:$PORT/" "$OUT" 1500 4000
+# --- Sitzung 2: Mithören eines Beispiel-Mitschnitts -----------------------------------------
+start_gui
+"$JULIA_BIN" --startup-file=no "$ROOT/tests/gui/test_capture.jl" --sample "$WORK/home/iec104.pcap"
+api "listen/start?path=$WORK/home/iec104.pcap&port=2404&image=1"
+sleep 1.5
+shot mithoeren test_gui_mithoeren.png

@@ -7,6 +7,10 @@
 | Test-GUI | Korrektur: „Senden“ beim Befehl tat in aktuellen Browsern nichts. Die Funktion hieß `command()`, und Buttons haben dort eine eigene Eigenschaft `command`, die im `onclick` vorgeht; jetzt `sendCommand()` |
 | Test-GUI | „aus der Werteliste“ zeigt bei leerer Liste, wie sie sich füllt; gescheiterter Verbindungsaufbau nur noch als deutsche Meldung (ohne englische Zeile der Library); Lesebefehl ohne „(Element fehlt)“ |
 | Test | `test_page.js` prüft jeden Namen in `onclick`/`onchange`/`oninput`: Funktion des Seitenskripts und keine Eigenschaft von Element oder Dokument |
+| Test-GUI | Mithören (Reiter): IEC-104-Verkehr aus einem Mitschnitt, Datei auswerten oder live mitlesen, während tcpdump schreibt; pcap und pcapng, Ethernet/VLAN, `-i any`, Loopback, IPv4/IPv6; TCP je Richtung zusammengesetzt (Wiederholungen, Reihenfolge, Lücken, Start mitten in der Verbindung); Rahmen unter Telegramme, Werte auf Wunsch ins Prozessabbild; TLS-Verbindungen werden gemeldet. Die GUI braucht keine Mitschnittrechte |
+| Test-GUI | Befunde einer unabhängigen Prüfung: Antworten gehören zum ältesten offenen Befehl (wie in der Library); neu verbinden beendet offene Befehle; „Leeren“ der Befehle wirkt dauerhaft; Station starten prüft Eingaben vorher; unlesbare Werteliste beendet die GUI nicht; Checkbox „Befehle annehmen“ zeigt den echten Zustand; Fehlerzeile verschwindet wieder; +1 zählt weiter; CSV mit BOM für Excel; Typen und Ursachen vollständig; Doppelbefehl 0/3 „nicht erlaubt“, Zähler CY/CA, Ende der Initialisierung nach Parameteränderung; Reiter per Adresse (`#mithoeren`) |
+| Doku | Glossar `docs/10_Glossar.md` (Rollen, Adressen, Datenpunkt, Befehle, Abfragen, Verbindung, GUI); `docs/07_Julia.md` Abschnitt 7.5 Mithören; Bilder der Reiter Mithören und Station |
+| Test | `tests/gui/test_capture.jl` (ctest `Julia.Capture`): pcap/pcapng, Verbindungsschichten, TCP; `test_gui.sh` prüft Mithören aus Datei und live |
 | Werkzeug | `wsl_ausprobieren.sh` nimmt immer das neueste Paket und entpackt ein Zip, das neuer ist als die entpackten Ordner (vorher blieb ein älterer Ordner stehen) |
 
 ## 0.9.1 (26.11.2026)
@@ -58,7 +62,7 @@
 
 | Bereich | Änderung |
 | --- | --- |
-| Lieferung | `beispiel.sh` konnte „connection closed, reason 3“ melden: Julia puffert die Ausgabe in eine Datei, „listening“ kam erst beim Ende der Station an, die Leitstelle verband sich zu spät. `server.jl` leert die Ausgabe jetzt sofort |
+| Paket | `beispiel.sh` konnte „connection closed, reason 3“ melden: Julia puffert die Ausgabe in eine Datei, „listening“ kam erst beim Ende der Station an, die Leitstelle verband sich zu spät. `server.jl` leert die Ausgabe jetzt sofort |
 | Julia | `server.jl [port] [sekunden] [adresse]`: optionale Adresse; `beispiel.sh` startet die Station nur auf `127.0.0.1` und zeigt bei Fehlern Log und Portzustand der Station |
 
 ## 0.6.1 (25.11.2026)
@@ -67,7 +71,7 @@
 | --- | --- |
 | Build | Ohne installiertes GoogleTest lädt CMake GoogleTest 1.14.0 von GitHub (feste Prüfsumme, nur für die Tests); abschaltbar mit `IEC104_FETCH_GTEST=OFF` |
 | Werkzeug | `wsl_ausprobieren.sh`: GoogleTest nicht mehr Pflicht; geht der Download nicht, Bau ohne Unit-Tests und Selbsttests über TCP, TLS und Umschaltung |
-| Lieferung | `gui.sh [port] [adresse]`: mit `0.0.0.0` aus dem Windows-Browser über die WSL-Adresse erreichbar; `beispiel.sh` wartet bis zu 5 Minuten auf den ersten Julia-Start |
+| Paket | `gui.sh [port] [adresse]`: mit `0.0.0.0` aus dem Windows-Browser über die WSL-Adresse erreichbar; `beispiel.sh` wartet bis zu 5 Minuten auf den ersten Julia-Start |
 
 ## 0.6.0 (25.11.2026)
 
@@ -80,8 +84,8 @@
 | Server | Broadcast-Abfrage ohne bekannte Station wird einmal mit der Broadcast-Adresse bestätigt (vorher keine Antwort) |
 | Server | `iec104_server_set_options` prüft `cause_of_init` (≤ 127) und übernimmt bei Fehler nichts |
 | Werkzeug | `iec104_interop_list`: exakte Zeitwerte, fehlende Optionswerte als Fehler, CSV mit BOM und Parametern in der Rollenspalte |
-| Lieferung | Binärpaket mit `pruefen.sh`, `gui.sh`, `beispiel.sh` für Linux und WSL |
-| Werkzeug | `tools/wsl_ausprobieren.sh`: Repo nach `~/src/iee104` holen, Voraussetzungen prüfen, fertige Library testen, bauen, alle Tests |
+| Paket | Binärpaket mit `pruefen.sh`, `gui.sh`, `beispiel.sh` für Linux und WSL |
+| Werkzeug | `tools/wsl_ausprobieren.sh`: Repo nach `~/src/iec104` holen, Voraussetzungen prüfen, fertige Library testen, bauen, alle Tests |
 | Julia | `client_read` in `IEC104.jl` |
 
 ## 0.5.0 (25.11.2026)
@@ -109,7 +113,7 @@
 | Konfiguration | Schlüssel `group`, `event_buffer_size`, `overflow` |
 | Selbsttest | Server `--group`, `--buffer`, `--overflow`, `--broadcast`; Client `--switchover`; ctest `SelfTest.SwitchOver` |
 | Festlegung | E10: Redundanzgruppen |
-| Lieferung | fertig gebaute Library auf das Nötigste reduziert: `lib/libiec104.so.0`, Header, Lizenzen, Julia-Anbindung, Kurzanleitung |
+| Paket | fertig gebaute Library auf das Nötigste reduziert: `lib/libiec104.so.0`, Header, Lizenzen, Julia-Anbindung, Kurzanleitung |
 | Julia | `examples/julia/IEC104.jl` (Anbindung per `ccall`), Client- und Server-Beispiel; Anleitung `docs/07_Julia.md` |
 
 ## 0.3.0 (25.11.2026)
@@ -123,7 +127,7 @@
 | Konfiguration | Schlüssel `tls`, `tls_*`; relative Pfade ab dem Verzeichnis der Datei |
 | Selbsttest | Optionen `--tls*`; ctest auch über TLS; Test-PKI `tools/make_test_certs.sh` |
 | Build | Option `IEC104_TLS` (Default an); `find_package(iec104)` zieht OpenSSL nach |
-| Lieferung | zusätzlich fertig gebaute Library `iec104-<version>-linux-x86_64.zip` |
+| Paket | zusätzlich fertig gebaute Library `iec104-<version>-linux-x86_64.zip` |
 | Festlegung | E9: TLS-Handshake fällt unter t0 |
 
 ## 0.2.0 (25.11.2026)
@@ -141,4 +145,4 @@
 
 ## 0.1.0 (25.11.2026)
 
-Erste Lieferung: Codec aller Typen, Zustandsmaschine der Verbindung, TCP, C-API, Abläufe der gesteuerten Station (Generalabfrage, Zählerabfrage, Uhrzeit, Befehle), Befehlsmodelle mit Select/Execute, maximale Befehlsverzögerung, Befehlsverfolgung am Client, Selbsttest-Programme.
+Erste Version: Codec aller Typen, Zustandsmaschine der Verbindung, TCP, C-API, Abläufe der gesteuerten Station (Generalabfrage, Zählerabfrage, Uhrzeit, Befehle), Befehlsmodelle mit Select/Execute, maximale Befehlsverzögerung, Befehlsverfolgung am Client, Selbsttest-Programme.

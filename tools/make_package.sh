@@ -67,6 +67,27 @@ fail() {
     exit 1
 }
 
+# Spuren des Bau- und Entwicklungsrechners und des Arbeitsablaufs, unabhängig von der
+# Begriffsliste: Benutzer, Gruppe, Rechner, Domäne, Home und Repo-Pfad (wörtlich, aus der
+# Umgebung) sowie feste Muster (Windows-Arbeitsordner, Repo-Namen, Sync, Aufgabennummern).
+# Bilder werden über ihre Zeichenketten mitgeprüft (Textblöcke im PNG).
+trace_check() { # Ordner, Beschreibung
+    local dir="$1" lit=() h
+    lit+=(-e "$HOME" -e "$ROOT")
+    for h in "$(hostname -s 2> /dev/null)" "$(hostname -f 2> /dev/null)" "$(hostname -d 2> /dev/null)" \
+             "$(id -gn 2> /dev/null)"; do
+        [ -n "$h" ] && [ "${#h}" -ge 4 ] && lit+=(-e "$h")
+    done
+    find "$dir" -type f -name '*.png' -exec strings -a {} + > "$WORK/png_strings.txt" 2> /dev/null
+    if grep -r -n -F -i "${lit[@]}" "$dir" "$WORK/png_strings.txt" > "$WORK/trace.log" ||
+       grep -r -n -w -F "$(id -un)" "$dir" "$WORK/png_strings.txt" >> "$WORK/trace.log" ||
+       grep -r -n -I -i -E '/c/rd/|/mnt/c/rd|[a-z]:[\\/]rd[\\/]|ieee104|iee104|privat(e[nms]?)? (repo|repository)|lieferpatch|sync_lieferung|lieferung-[0-9]|task[-_ ]?[0-9]{2,}' \
+           "$dir" "$WORK/png_strings.txt" >> "$WORK/trace.log"; then
+        head -20 "$WORK/trace.log" >&2
+        fail "Spuren des Bau-Rechners oder des Arbeitsablaufs in $2"
+    fi
+}
+
 "$ROOT/tools/check_neutral.sh" --root "$WORK/$NAME" > "$WORK/neutral.log" 2>&1 \
     || { cat "$WORK/neutral.log" >&2; fail "verbotene Begriffe im Zip"; }
 
@@ -76,6 +97,8 @@ if grep -r -I -n -i -E 'intern/|tasks/|TASK-[0-9]|CLAUDE|claude|anthropic|check_
     cat "$WORK/refs.log" >&2
     fail "Verweise auf interne Unterlagen im Zip"
 fi
+
+trace_check "$WORK/$NAME" "den Quellen"
 
 echo "make_package: $OUT (${#FILES[@]} Dateien, geprüft)"
 
@@ -134,6 +157,7 @@ if grep -r -n -i -E "intern/|tasks/|TASK-[0-9]|claude|anthropic|$HOME|$ROOT" \
     head -20 "$WORK/binrefs.log" >&2
     fail "interne Verweise oder Pfade des Bau-Rechners in den Binärdateien"
 fi
+trace_check "$WORK/bincheck" "den Binärdateien"
 
 # Benötigte Symbolversionen: höchstens glibc 2.34, OpenSSL 3.0.0.
 newest() { objdump -T "${ELF[@]}" | grep -o "$1[0-9.]*" | sed "s/^$1//" | sort -V -u | tail -1; }

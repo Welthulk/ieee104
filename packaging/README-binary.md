@@ -22,7 +22,7 @@ bash gui.sh 8080 127.0.0.1 ~/src/lib60870/lib60870-C   # dazu lib60870 als fremd
 bash beispiel.sh       # Station und Leitstelle in Julia gegeneinander
 ```
 
-Unter WSL geht das direkt im Windows-Ordner, z. B. `cd /mnt/c/rd/.../iec104-<version>-linux-x86_64`.
+Unter WSL geht das direkt im Windows-Ordner, z. B. `cd /mnt/c/<pfad>/iec104-<version>-linux-x86_64`.
 
 ## Voraussetzungen
 
@@ -66,6 +66,6 @@ julia julia/client.jl 127.0.0.1 2404  # Generalabfrage, drei spontane Werte
 
 Test-GUI und Prüfstand im Browser: `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080` öffnen (Leitstelle gegen eine Station mit Werteliste, Prozessabbild, Befehlslaufzeiten; Teststation, Selbsttest, Telegramme im Klartext; Anleitung `julia/` bzw. docs/07_Julia.md, Abschnitt 7.4).
 
-`IEC104.jl` findet die Library in `lib/` von selbst. Anleitung: `docs/07_Julia.md` im Quellpaket.
+`IEC104.jl` findet die Library in `lib/` von selbst. Anleitung: `docs/07_Julia.md` in den Quellen der Library.
 
-Server und Client mit Messwerten, Befehlen, Redundanz und TLS: Anleitung `docs/06_Anleitung.md` im Quellpaket `iec104-@VERSION@.zip`.
+Server und Client mit Messwerten, Befehlen, Redundanz und TLS: Anleitung `docs/06_Anleitung.md` in den Quellen der Library (Version @VERSION@).

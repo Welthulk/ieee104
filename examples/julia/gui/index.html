@@ -57,6 +57,7 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
 <header><h1>IEC 60870-5-104 Test-GUI und Prüfstand</h1><span id="err"></span></header>
 <nav>
   <button id="tb-pruef" class="on" onclick="tab('pruef')">Prüfstand (Leitstelle)</button>
+  <button id="tb-mithoeren" onclick="tab('mithoeren')">Mithören</button>
   <button id="tb-station" onclick="tab('station')">Station und lib60870</button>
   <button id="tb-selbst" onclick="tab('selbst')">Selbsttest</button>
 </nav>
@@ -172,6 +173,33 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
       <th title="Rückmeldung (11, 12)">RM</th><th title="Antworten auf Befehle (6–10)">bef</th><th title="andere Ursachen">sonst</th>
       <th></th></tr></thead>
     <tbody id="image"></tbody></table></div>
+</section>
+
+<section class="tab wide" data-tab="mithoeren" hidden>
+  <h2>Mithören: Verkehr zwischen Leitstelle und Station aus einem Mitschnitt <span id="lstate" class="state">aus</span></h2>
+  <div class="row">
+    <label>Mitschnitt-Datei (pcap oder pcapng)<input id="lpath" class="l" value="/tmp/iec104.pcap"></label>
+    <label>Port der Station<input id="lport" class="s" value="2404"></label>
+    <label>ins Prozessabbild<input id="limage" type="checkbox" checked></label>
+    <label>&nbsp;<button class="main" onclick="listenStart(0)">Datei auswerten</button></label>
+    <label>&nbsp;<button onclick="listenStart(1)">Live mitlesen</button></label>
+    <label>&nbsp;<button onclick="act('listen/stop')">Beenden</button></label>
+  </div>
+  <p id="lstats" class="hint"></p>
+  <table style="width: auto">
+    <tr><th>Schritt</th><th>Was</th></tr>
+    <tr><td>1. Mitschneiden</td><td style="white-space: normal">Auf einem Rechner, der den Verkehr sieht (z. B. mit einem
+      Spiegelport), in einem eigenen Terminal mit den nötigen Rechten:<br>
+      <code id="tcpdumpcmd"></code> <button onclick="copyText(document.getElementById('tcpdumpcmd').textContent)">kopieren</button><br>
+      <code>-i any</code> = alle Netzschnittstellen, <code>-U</code> = jedes Paket sofort in die Datei. Beenden mit Strg+C.
+      Alternativ Wireshark: Mitschnitt als pcap oder pcapng speichern.</td></tr>
+    <tr><td>2. Live</td><td style="white-space: normal">„Live mitlesen“ verfolgt die Datei, während tcpdump schreibt.
+      Die GUI braucht dafür keine besonderen Rechte, sie liest nur die Datei.</td></tr>
+    <tr><td>3. Nachher</td><td style="white-space: normal">„Datei auswerten“ liest eine fertige Datei einmal ganz.</td></tr>
+  </table>
+  <p class="hint">Jeder Rahmen erscheint unten unter Telegramme mit „Mithören“, Richtung, Adressen und Zeit des Mitschnitts;
+    Filter „Text: Mithören“ zeigt nur diese. Werte der Station kommen auf Wunsch ins Prozessabbild (Reiter Prüfstand).
+    Verbindungen mit TLS (Port 19998) sind verschlüsselt und werden nur gemeldet. Nur mithören, wo es erlaubt ist.</p>
 </section>
 
 <section class="tab" data-tab="station" hidden>
@@ -331,6 +359,24 @@ function connect() {
              tolerant: checked('tolerant'), auto: checked('auto'), term: checked('term')};
   for (const k of ['t0', 't1', 't2', 't3', 'k', 'w', 'ca', 'cert', 'key', 'peer', 'conf_to', 'term_to']) p[k] = v(k);
   act('client/connect', p);
+}
+function listenStart(live) {
+  act('listen/start', {path: v('lpath'), port: v('lport'), live, image: checked('limage')});
+}
+function tcpdumpCommand() {
+  document.getElementById('tcpdumpcmd').textContent =
+    `sudo tcpdump -i any -U -w ${v('lpath')} 'tcp port ${v('lport')}'`;
+}
+function showListen(l) {
+  if (!l) return;
+  const st = document.getElementById('lstate');
+  st.textContent = l.mode === 'off' ? 'aus' : l.state;
+  st.className = 'state ' + (l.mode === 'off' ? '' : 'started');
+  const lp = document.getElementById('lpath');
+  if (l.path && l.mode !== 'off' && document.activeElement !== lp && lp.value !== l.path) { lp.value = l.path; tcpdumpCommand(); }
+  document.getElementById('lstats').textContent = l.path ?
+    `${l.path}: ${l.packets} Pakete, ${l.frames} Rahmen` + (l.gaps ? `, ${l.gaps} Lücken` : '') +
+    (l.skipped ? `, ${l.skipped} andere Pakete übergangen` : '') + `, ${Math.round(l.bytes / 1024)} KiB gelesen` : '';
 }
 function sendCommand() {   // not command(): buttons have their own property "command"
   act('client/command', {station: v('station'), type: v('ctype'), ioa: v('cioa'), value: v('cvalue'),
@@ -621,6 +667,7 @@ async function update() {
     s.server.connections.map(c => c.id + ': ' + c.state).join(', ') || 'keine';
   showPeer(s.peer);
   showSelftest(s.selftest);
+  showListen(s.listen);
   let added = false;
   for (const e of s.log) {
     if (e.seq <= since) continue;
@@ -632,6 +679,10 @@ async function update() {
   if (added && !checked('pause')) renderLog();
 }
 ranges();
+tcpdumpCommand();
+// A tab can be opened by the address, e.g. http://localhost:8080/#mithoeren
+if (location.hash && document.getElementById('tb-' + location.hash.slice(1))) tab(location.hash.slice(1));
+document.getElementById('lpath').oninput = document.getElementById('lport').oninput = tcpdumpCommand;
 setInterval(refresh, 500);
 refresh();
 </script>

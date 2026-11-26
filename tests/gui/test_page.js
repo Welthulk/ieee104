@@ -61,6 +61,7 @@ URLSearchParams.prototype.toString = function () {
   return Object.entries(this.o).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(String(v))).join('&');
 };
 globalThis.isSecureContext = true;   // in gjs, window is the global object itself
+globalThis.location = {hash: "", href: "http://localhost/"};
 globalThis.navigator = {clipboard: {writeText: async t => { globalThis.clipboard = t; }}};
 globalThis.alert = t => { globalThis.lastAlert = t; };
 globalThis.confirm = () => true;

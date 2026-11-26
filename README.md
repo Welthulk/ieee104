@@ -8,14 +8,14 @@ Stand: 26.11.2026, Version 0.9.2, Linux x86-64.
 
 | Was | Wo |
 | --- | --- |
-| Fertig gebaute Library für Linux x86-64 (Release, mit TLS) | `dist/iec104-<version>-linux-x86_64/` (in der Lieferung als gleichnamiges Zip): `lib/libiec104.so.0`, `include/iec104/iec104.h`, Kurzanleitung `README.md` |
+| Fertig gebaute Library für Linux x86-64 (Release, mit TLS) | `dist/iec104-<version>-linux-x86_64/` (auch als gleichnamiges Zip): `lib/libiec104.so.0`, `include/iec104/iec104.h`, Kurzanleitung `README.md` |
 | Beispielprogramme für Julia | `julia/` im selben Ordner bzw. `examples/julia/`: `IEC104.jl` (Anbindung), `client.jl`, `server.jl`; Anleitung `docs/07_Julia.md` |
-| Test-GUI und Prüfstand im Browser | `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080`: Leitstelle gegen eine Station mit Werteliste, Prozessabbild mit Zählern je Ursache, Befehlen mit Laufzeiten, TLS; Teststation, lib60870 als Gegenstelle; Selbsttest mit Protokoll zum Weitergeben; Telegramme im Klartext mit Filtern (`docs/07_Julia.md`, Abschnitt 7) |
+| Test-GUI und Prüfstand im Browser | `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080`: Leitstelle gegen eine Station mit Werteliste, Prozessabbild mit Zählern je Ursache, Befehlen mit Laufzeiten, TLS; Teststation, lib60870 als Gegenstelle; Selbsttest mit Protokoll zum Weitergeben; Telegramme im Klartext mit Filtern; Mithören aus Mitschnitten, auch live (`docs/07_Julia.md`, Abschnitt 7) |
 | Beispielprogramme in C | `examples/hello_server.c`, `examples/hello_client.c`; Anleitung `docs/06_Anleitung.md` |
 
 Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab 2.34, OpenSSL 3).
 
-Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iee104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
+Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iec104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
 
 ```bash
 cd dist/iec104-0.9.2-linux-x86_64
@@ -29,7 +29,13 @@ julia julia/gui/iec104_gui.jl                                                   
 
 ![Test-GUI im Browser: Verbindung, Befehl, Befehle mit Laufzeiten, Werteliste mit Prozessabbild, Telegramme im Klartext](docs/bilder/test_gui.png)
 
-Reiter „Prüfstand“ mit Teststation als Gegenstelle: Befehle mit Laufzeiten bis Bestätigung, Beendigung und Rückmeldung; Werteliste und Prozessabbild mit Zählern je Ursache (grau: in der Liste, noch nicht empfangen); darunter die Telegramme mit Erklärung. Bild neu erzeugen: `tools/gui_screenshot.sh build/shared/libiec104.so.0`.
+Reiter „Prüfstand“ mit Teststation als Gegenstelle: Befehle mit Laufzeiten bis Bestätigung, Beendigung und Rückmeldung; Werteliste und Prozessabbild mit Zählern je Ursache (grau: in der Liste, noch nicht empfangen); darunter die Telegramme mit Erklärung. Begriffe: `docs/10_Glossar.md`.
+
+| Reiter „Mithören“ (Mitschnitt mit tcpdump oder Wireshark) | Reiter „Station und lib60870“ (Teststation) |
+| --- | --- |
+| ![Mithören](docs/bilder/test_gui_mithoeren.png) | ![Teststation](docs/bilder/test_gui_station.png) |
+
+Bilder neu erzeugen: `tools/gui_screenshot.sh build/shared/libiec104.so.0`.
 
 ## Funktionen
 
@@ -68,9 +74,10 @@ Reiter „Prüfstand“ mit Teststation als Gegenstelle: Befehle mit Laufzeiten 
 | `docs/04_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
 | `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E10), auf die der Code verweist |
 | `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Redundanz, TLS, Regeln |
-| `docs/07_Julia.md` | Library aus Julia verwenden: Schnellstart, Typen, Callbacks, Beispiele |
+| `docs/07_Julia.md` | Library aus Julia verwenden: Schnellstart, Typen, Callbacks, Beispiele; Test-GUI, Prüfstand, Mithören (Abschnitt 7) |
 | `docs/08_Interop.md` | Tests gegen eine fremde Implementierung, Befunde, Vorbereitung des Integrationstests mit einer Gegenstelle |
 | `docs/09_Interoperabilitaetsliste.md` | Interoperabilitätsliste nach Abschnitt 9 der Norm (Standardwerte), erzeugt mit `iec104_interop_list` |
+| `docs/10_Glossar.md` | Glossar: Station, Leitstelle, Prüfstand, Adressen, Datenpunkt, Befehle, Abfragen, Verbindung, Begriffe der GUI |
 | API-Doku | `cmake --build --preset debug --target doc`, dann `build/debug/doc/html/index.html` (Doxygen) |
 
 ## Verzeichnisse

@@ -21,7 +21,7 @@ using namespace iec104::codec;
 
 // Rule: every IEC 104 type of the scope of version 1 and every CP24 type is in the table.
 // Source: scope in type_table.hpp.
-TEST(TypeTable, ScopeOfTask001) {
+TEST(TypeTable, ScopeOfVersion1) {
     std::set<int> required{1, 3, 5, 7, 9, 11, 13, 15, 20, 21, 45, 46, 47, 48, 49, 50, 51, 70};
     for (int id = 30; id <= 40; ++id) {
         required.insert(id);
