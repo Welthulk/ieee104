@@ -166,7 +166,7 @@ if [ "$LIB60870" = 1 ]; then
     else
         # Nur Gegenstelle: Die Beispielprogramme laufen als eigene Prozesse, nichts wird gelinkt.
         [ -d "$(dirname "$L60870")/.git" ] ||
-            git clone -q --depth 1 --branch v2.4.1 "${LIB60870_GIT:-https://github.com/mz-automation/lib60870.git}" \
+            git -c advice.detachedHead=false clone -q --depth 1 --branch v2.4.1 "${LIB60870_GIT:-https://github.com/mz-automation/lib60870.git}" \
                 "$(dirname "$L60870")" || { FEHLER=1; echo "  git clone fehlgeschlagen (Netz/Proxy?)"; }
         if [ -d "$L60870" ] && cmake -S "$L60870" -B "$L60870/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
                 > lib60870-build.log 2>&1 && cmake --build "$L60870/build" >> lib60870-build.log 2>&1; then

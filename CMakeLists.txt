@@ -6,7 +6,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(iec104
-    VERSION 0.7.0
+    VERSION 0.8.0
     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
     LANGUAGES C CXX)
 
@@ -310,10 +310,18 @@ endif()
 # ---------------------------------------------------------------------------
 # Test GUI in Julia (examples/julia/gui) over HTTP, only on 127.0.0.1. Needs
 # the shared library, Julia and curl; with IEC104_LIB60870_DIR also with
-# lib60870 as controlling station against the station of the GUI.
+# lib60870 as controlling station against the station of the GUI. The frame
+# description of the commented protocol (frames.jl) only needs Julia.
 # ---------------------------------------------------------------------------
-if(IEC104_BUILD_TESTS AND BUILD_SHARED_LIBS)
+if(IEC104_BUILD_TESTS)
     find_program(IEC104_JULIA julia)
+    if(IEC104_JULIA)
+        add_test(NAME Julia.Frames
+            COMMAND ${IEC104_JULIA} --startup-file=no ${PROJECT_SOURCE_DIR}/tests/gui/test_frames.jl)
+        set_tests_properties(Julia.Frames PROPERTIES TIMEOUT 300)
+    endif()
+endif()
+if(IEC104_BUILD_TESTS AND BUILD_SHARED_LIBS)
     find_program(IEC104_CURL curl)
     if(IEC104_JULIA AND IEC104_CURL)
         set(_gui_env "JULIA=${IEC104_JULIA}" "CURL=${IEC104_CURL}")

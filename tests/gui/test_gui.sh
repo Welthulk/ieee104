@@ -11,6 +11,7 @@
 #   LIB60870_C  optional, sonst Umgebungsvariable IEC104_LIB60870: Ordner lib60870-C
 #               mit gebauten Beispielen; dann zusätzlich die Gegenstelle lib60870
 #   JULIA, CURL Programme, Default aus dem Suchpfad
+#   GUI_REPORT  Datei für das vollständige Protokoll des Selbsttests (optional)
 #
 # Alles läuft auf 127.0.0.1 mit Port 0: GUI und Station wählen freie Ports.
 # Geprüft: Host- und Kopfzeilenschutz, nur GET; Station mit Datenpunkt (nur auf
@@ -130,7 +131,7 @@ ok "ohne X-IEC104-GUI: 403"
 ok "fremder Host, falscher Port: 403"
 R="$("$CURL" -sS --max-time 5 -H 'X-IEC104-GUI: 1' -H "Host: localhost:$PORT" -w '\n%{http_code}' \
     "$(url /api/state)")"
-case "$R" in '{"client":'*$'\n'200) ok "Host localhost:$PORT: 200 JSON" ;; *) fail "Host localhost: $R" ;; esac
+case "$R" in '{"boot":'*$'\n'200) ok "Host localhost:$PORT: 200 JSON" ;; *) fail "Host localhost: $R" ;; esac
 [ "$(status -X POST -H 'X-IEC104-GUI: 1' "$(url /api/state)")" = 405 ] || fail "POST nicht 405"
 H="$("$CURL" -s -i --max-time 5 -X OPTIONS -H 'Origin: http://evil.example' \
     -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: x-iec104-gui' \
@@ -155,6 +156,8 @@ else
 fi
 
 # --- Station und Leitstelle der GUI ------------------------------------------------
+# Werte werden auch ohne laufende Station geprüft (sonst scheitert später der Start).
+act_rejected 'server/point?type=1&ioa=200&value=2' 'passt nicht zu Typ 1'
 act 'server/listen?port=0&station=1'
 SPORT="$(api state | grep -o '"server":{"running":true,"port":[0-9]*' | grep -o '[0-9]*$')"
 [ -n "$SPORT" ] && [ "$SPORT" -gt 0 ] || fail "Station meldet keinen Port"
@@ -199,5 +202,33 @@ if [ -n "$LIB60870" ]; then
     [ -z "$(ps -o pid= --ppid "$GPID" 2> /dev/null)" ] || fail "Gegenstelle läuft noch als Prozess"
     act_rejected 'peer/stop' 'keine Gegenstelle aktiv'
 fi
+
+# --- Selbsttest der GUI -------------------------------------------------------------------
+act 'selftest/start'
+act_rejected 'selftest/start' 'Selbsttest läuft bereits'
+T=""
+for _ in $(seq 1 600); do   # höchstens 120 s
+    T="$(api 'state?since=999999999' | grep -o '"selftest":{"running":[a-z]*,"total":[0-9]*,"passed":[0-9]*,"failed":[0-9]*')"
+    echo "$T" | grep -q -E '"running":false,"total":[0-9]+,"passed":[0-9]+,"failed":[0-9]+' &&
+        ! echo "$T" | grep -q '"passed":0,"failed":0' && break
+    sleep 0.2
+done
+echo "$T" | grep -q '"running":false' || fail "Selbsttest nach 120 s nicht beendet: $T"
+if ! echo "$T" | grep -q '"failed":0'; then
+    api 'selftest/report?full=0' >&2
+    fail "Selbsttest mit Fehlern: $T"
+fi
+REPORT="$(api 'selftest/report?full=1')"
+[ -n "${GUI_REPORT:-}" ] && printf '%s\n' "$REPORT" > "$GUI_REPORT"   # zum Ansehen
+echo "$REPORT" | grep -q '^Ergebnis: [0-9]* von [0-9]* bestanden (' || fail "Protokoll ohne Ergebnis"
+echo "$REPORT" | grep -q 'Leitstelle → U STARTDT act' || fail "Protokoll ohne Rahmen"
+echo "$REPORT" | grep -q '↳ Leitstelle fordert alle Werte an' || fail "Protokoll ohne Erklärungen"
+if [ -n "$LIB60870" ]; then
+    echo "$REPORT" | grep -q 'lib60870 als fremde Leitstelle – OK' || fail "Schritt lib60870 fehlt oder Fehler"
+else
+    echo "$REPORT" | grep -q 'lib60870 als fremde Leitstelle – ÜBERSPRUNGEN' ||
+        echo "$REPORT" | grep -q '^23  ÜBERSPRUNGEN' || fail "Schritt lib60870 nicht übersprungen"
+fi
+ok "Selbsttest: $(echo "$REPORT" | grep '^Ergebnis')"
 
 echo "test_gui: bestanden"

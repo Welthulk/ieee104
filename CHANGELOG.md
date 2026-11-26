@@ -1,5 +1,17 @@
 # Änderungen
 
+## 0.8.0 (26.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| Test-GUI | Selbsttest: 22 Schritte (mit lib60870-Ordner 23) mit eigener Station und Leitstelle auf 127.0.0.1, je Schritt Zweck, Erwartung, Beobachtung; „Protokoll kopieren“ (Kurzfassung) und „Protokoll speichern“ (alle Rahmen); Ersatz per markiertem Textfeld, wo der Browser die Zwischenablage sperrt |
+| Test-GUI | Jeder gesendete und empfangene Rahmen unter Ereignisse dekodiert (I/S/U, Typ, Ursache, Station, erstes Objekt mit Wert, Qualität, Zeitmarke) und in einem Satz erklärt; ein- und ausblendbar, „Ereignisse kopieren“; Warnungen braun, Fehler rot |
+| Test-GUI | Wert an der Station ohne Leitstelle mit STARTDT: Hinweis „gespeichert, nichts gesendet“ |
+| Test-GUI | Korrekturen aus der Prüfung: Datenpunkt wird auch ohne laufende Station geprüft (blockierte sonst den Start, Meldung nennt jetzt die IOA); Klicks in der Punkttabelle gehen nicht mehr verloren; nach Neustart der GUI zeigt die offene Seite wieder Ereignisse; Zustand nach erneutem Verbinden stimmt; Tabelle der Leitstelle zeigt höchstens 1000 Punkte; Download des Protokolls bricht in Firefox nicht mehr ab |
+| Test-GUI | Rahmen im Klartext: Quittung nach Überlauf der Folgenummer richtig, unvollständiges Element behält den Kopf |
+| Werkzeug | `wsl_ausprobieren.sh`: kein „detached HEAD“-Hinweis mehr beim Holen von lib60870 |
+| Test | `tests/gui/test_frames.jl` (ctest `Julia.Frames`, nur Julia) mit Rahmen aus dem lib60870-Mitschnitt; `test_gui.sh` startet den Selbsttest und prüft Ergebnis und Protokoll |
+
 ## 0.7.0 (26.11.2026)
 
 | Bereich | Änderung |

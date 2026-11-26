@@ -33,7 +33,10 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .scroll { max-height: 340px; overflow: auto; }
   .neg { color: #b02a2a; } .fresh { background: #fff6cc; }
-  #log { font: 12px ui-monospace, monospace; max-height: 220px; overflow: auto; white-space: pre-wrap; }
+  #log { font: 12px ui-monospace, monospace; max-height: 360px; overflow: auto; white-space: pre-wrap; }
+  #log .frame { color: #2c4f7c; } #log .error { color: #b02a2a; } #log .warning { color: #9a5b00; } #log .explain { color: #777; }
+  td.ok { color: #1d7a35; font-weight: bold; } td.fail { color: #b02a2a; font-weight: bold; } td.skip { color: #888; }
+  #copybox { width: 100%; height: 160px; font: 12px ui-monospace, monospace; }
   #err { color: #b02a2a; }
   details { margin: 4px 0; }
   .hint { font-size: 12px; color: #555; margin: 4px 0; }
@@ -140,7 +143,32 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
 </section>
 
 <section class="wide">
-  <h2>Ereignisse</h2>
+  <h2>Selbsttest <span id="tstate" class="state">nicht gelaufen</span></h2>
+  <div class="row">
+    <button class="main" onclick="act('selftest/start')">Selbsttest starten</button>
+    <button onclick="copyReport()">Protokoll kopieren</button>
+    <button onclick="saveReport()">Protokoll speichern</button>
+    <span class="hint">Eigene Station und Leitstelle der Library auf 127.0.0.1 prüfen etwa 20 Abläufe
+      (Verbindung, Abfragen, spontane Werte, Befehle, Fehlerfälle, STOPDT, Testrahmen); Station und Leitstelle
+      oben bleiben unberührt. „Kopieren“: Kurzfassung zum Weitergeben, „Speichern“: alles mit allen Rahmen.</span>
+  </div>
+  <div class="scroll"><table>
+    <thead><tr><th>Nr.</th><th>Schritt</th><th>Ergebnis</th><th>Erwartet</th><th>Beobachtet</th><th>Dauer</th></tr></thead>
+    <tbody id="steps"></tbody>
+  </table></div>
+  <div id="copyarea" hidden><p class="hint">Die Zwischenablage ist über diese Adresse gesperrt:
+    Text ist markiert, mit Strg+C kopieren.</p><textarea id="copybox" readonly></textarea></div>
+</section>
+
+<section class="wide">
+  <h2>Ereignisse
+    <span class="row" style="margin: 0">
+      <label style="flex-direction: row; gap: 4px">Rahmen<input id="showframes" type="checkbox" checked onchange="renderLog()"></label>
+      <label style="flex-direction: row; gap: 4px">Erklärungen<input id="showexplain" type="checkbox" checked onchange="renderLog()"></label>
+      <button onclick="copyText(logText())">Ereignisse kopieren</button>
+      <button onclick="entries = []; renderLog()">Leeren</button>
+    </span>
+  </h2>
   <div id="log"></div>
 </section>
 </main>
@@ -231,8 +259,84 @@ function showPeer(peer) {
   ps.className = 'state ' + (peer.running ? 'started' : '');
 }
 
+// Copy into the clipboard; where the browser forbids it (http on an address other than
+// localhost) the text is shown selected for Ctrl+C.
+async function copyText(text) {
+  const area = document.getElementById('copyarea');
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      area.hidden = true;
+      document.getElementById('err').textContent = '';
+      alert('In die Zwischenablage kopiert (' + text.split('\n').length + ' Zeilen).');
+      return;
+    } catch (e) { /* fall through to the text box */ }
+  }
+  const box = document.getElementById('copybox');
+  box.value = text;
+  area.hidden = false;
+  box.focus();
+  box.select();
+}
+async function report(full) {
+  const r = await fetch('/api/selftest/report?full=' + (full ? 1 : 0), GUI_HEADER);
+  return r.text();
+}
+async function copyReport() { copyText(await report(false)); }
+async function saveReport() {
+  const text = await report(true);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain;charset=utf-8'}));
+  const d = new Date(), z = n => String(n).padStart(2, '0');
+  a.download = `iec104_selbsttest_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_` +
+               `${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.txt`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);   // the download needs the URL a moment longer
+}
+function showSelftest(t) {
+  const ts = document.getElementById('tstate');
+  if (t.steps.length === 0) { ts.textContent = 'nicht gelaufen'; ts.className = 'state'; }
+  else if (t.running) { ts.textContent = 'läuft: Schritt ' + t.steps.length + ' von ' + t.total; ts.className = 'state'; }
+  else {
+    ts.textContent = t.passed + ' von ' + (t.passed + t.failed) + ' bestanden';
+    ts.className = 'state ' + (t.failed ? 'closed' : 'started');
+  }
+  const cls = {OK: 'ok', FEHLER: 'fail', 'ÜBERSPRUNGEN': 'skip'};
+  document.getElementById('steps').innerHTML = t.steps.map(x =>
+    `<tr><td class="num">${x.nr}</td><td>${esc(x.title)}</td><td class="${cls[x.status] || ''}">${esc(x.status)}</td>` +
+    `<td style="white-space: normal">${esc(x.expected)}</td><td style="white-space: normal">${esc(x.observed)}</td>` +
+    `<td class="num">${esc(x.duration)}</td></tr>`).join('');
+}
+
+// Event list: kept here, shown with or without frames and explanations.
+let entries = [];
+const ENTRIES_MAX = 3000;
+const PAD = ' '.repeat(10);
+function entryText(e, explain) {
+  return e.time + '  ' + e.text + (explain && e.explain ? '\n' + PAD + '↳ ' + e.explain : '');
+}
+function visible() {
+  const frames = document.getElementById('showframes').checked;
+  return entries.filter(e => frames || e.kind !== 'frame');
+}
+function logText() {
+  const explain = document.getElementById('showexplain').checked;
+  return visible().map(e => entryText(e, explain)).join('\n') + '\n';
+}
+function renderLog() {
+  const log = document.getElementById('log');
+  const explain = document.getElementById('showexplain').checked;
+  const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+  log.innerHTML = visible().map(e =>
+    `<div class="${e.kind}">${esc(e.time + '  ' + e.text)}` +
+    (explain && e.explain ? `<div class="explain">${esc(PAD + '↳ ' + e.explain)}</div>` : '') + '</div>').join('');
+  if (atEnd) log.scrollTop = log.scrollHeight;
+}
+
 let since = 0;
+let boot = '';
 let refreshing = false;
+let pointsShown = '';
 async function refresh() {
   if (refreshing) return;   // the next interval catches up; avoids duplicate log lines
   refreshing = true;
@@ -245,6 +349,13 @@ async function update() {
     if (!r.ok) { document.getElementById('err').textContent = await r.text(); return; }
     s = await r.json();
   } catch (e) { document.getElementById('err').textContent = 'GUI-Programm nicht erreichbar'; return; }
+  const err = document.getElementById('err');
+  if (err.textContent === 'GUI-Programm nicht erreichbar' || err.textContent.startsWith('Zugriff')) err.textContent = '';
+  if (s.boot !== boot) {   // GUI program (re)started: its event numbers start again
+    const restarted = boot !== '';
+    boot = s.boot;
+    if (restarted) { since = 0; entries = []; pointsShown = ''; renderLog(); return; }   // next round: all events
+  }
   const cs = document.getElementById('cstate');
   cs.textContent = s.client.text || s.client.state;
   cs.className = 'state ' + (s.client.state === 'started' ? 'started' : s.client.state === 'closed' ? 'closed' : '');
@@ -253,26 +364,35 @@ async function update() {
     `<td title="${esc(TYPES[r.type] || '')}">${r.type} ${esc(typeName(r.type))}</td>` +
     `<td class="num">${r.type === 7 ? '0x' + r.bits.toString(16) : r.value}</td><td>${esc(r.quality)}</td>` +
     `<td class="${r.negative ? 'neg' : ''}">${r.cause} ${esc(CAUSES[r.cause] || '')}${r.negative ? ' negativ' : ''}</td>` +
-    `<td>${esc(r.time)}</td><td class="num">${r.count}</td><td class="num">${r.age}</td></tr>`).join('');
+    `<td>${esc(r.time)}</td><td class="num">${r.count}</td><td class="num">${r.age}</td></tr>`).join('') +
+    (s.client.rows_total > s.client.rows.length
+      ? `<tr><td colspan="9" class="hint">… ${s.client.rows_total - s.client.rows.length} weitere Punkte nicht angezeigt</td></tr>` : '');
   const ss = document.getElementById('sstate');
   ss.textContent = s.server.running ? 'Port ' + s.server.port + ', Station ' + s.server.station : 'aus';
   ss.className = 'state ' + (s.server.running ? 'started' : '');
-  if (document.activeElement === null || !document.activeElement.id.startsWith('pv'))
-    document.getElementById('points').innerHTML = s.server.points.map(p =>
+  const pts = document.getElementById('points');
+  const ptsKey = JSON.stringify(s.server.points);
+  if (ptsKey !== pointsShown && !pts.contains(document.activeElement)) {
+    pointsShown = ptsKey;
+    pts.innerHTML = s.server.points.map(p =>
       `<tr><td class="num">${p.ioa}</td><td>${p.type} ${esc(typeName(p.type))}</td>` +
       `<td><input id="pv${p.ioa}" class="s" value="${p.value}"></td>` +
       `<td><button onclick="sendPoint(${p.ioa}, ${p.type})">Senden</button> ` +
       `<button onclick="sendPoint(${p.ioa}, ${p.type}, 1)">+1</button></td></tr>`).join('');
+  }
   document.getElementById('conns').textContent =
     s.server.connections.map(c => c.id + ': ' + c.state).join(', ') || 'keine';
   showPeer(s.peer);
-  const log = document.getElementById('log');
+  showSelftest(s.selftest);
+  let added = false;
   for (const e of s.log) {
     if (e.seq <= since) continue;
-    log.textContent += e.time + '  ' + e.text + '\n';
+    entries.push(e);
     since = e.seq;
+    added = true;
   }
-  if (s.log.length) log.scrollTop = log.scrollHeight;
+  if (entries.length > ENTRIES_MAX) entries = entries.slice(-ENTRIES_MAX);
+  if (added) renderLog();
 }
 ranges();
 setInterval(refresh, 500);

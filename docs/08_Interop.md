@@ -1,6 +1,6 @@
 # Interop-Tests und Integrationstest
 
-Stand: 25.11.2026 · Gegenstelle: lib60870-C v2.4.1, für TLS mit mbedTLS 3.6.8 · Skript: `tools/interop/run_lib60870.sh`
+Stand: 26.11.2026 · Gegenstelle: lib60870-C v2.4.1, für TLS mit mbedTLS 3.6.8 · Skript: `tools/interop/run_lib60870.sh`
 
 ## 1. Zweck
 

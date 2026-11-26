@@ -30,6 +30,8 @@ include(joinpath(@__DIR__, "..", "IEC104.jl"))
 using .IEC104
 using Sockets
 using Printf
+include(joinpath(@__DIR__, "frames.jl"))   # description of frames for the commented protocol
+using .Frames
 
 # --- State ---------------------------------------------------------------------
 
@@ -61,13 +63,15 @@ mutable struct Gui
     accept_commands::Bool
     points::Dict{UInt32,Object}
     connections::Dict{UInt32,Cint}
-    # Event list shown on the page
-    log::Vector{Tuple{Int,Float64,String}}
+    # Event list shown on the page: number, time, kind ("event", "frame", "error"), text, meaning
+    log::Vector{Tuple{Int,Float64,String,String,String}}
     log_seq::Int
 end
 
 const GUI = Gui(C_NULL, IEC104.LINK_CLOSED, 0, 1, Dict(), C_NULL, 1, true, Dict(), Dict(), [], 0)
-const LOG_MAX = 500
+const LOG_MAX = 3000   # frames included
+const ROWS_MAX = 1000  # rows of the client table sent to the page
+const BOOT = string(round(Int, time() * 1000))   # identifies this run of the GUI for the page
 
 # Address and port of the GUI, set by main(). The station listens on the same address.
 const GUI_ADDRESS = Ref("127.0.0.1")
@@ -99,9 +103,9 @@ const PEER_PROGRAMS = [
 ]
 const PEER_LINE_MAX = 300   # longer output lines are cut
 
-note(text::AbstractString) = begin
+note(text::AbstractString; kind = "event", explain = "") = begin
     GUI.log_seq += 1
-    push!(GUI.log, (GUI.log_seq, time(), String(text)))
+    push!(GUI.log, (GUI.log_seq, time(), String(kind), String(text), String(explain)))
     length(GUI.log) > LOG_MAX && popfirst!(GUI.log)
     nothing
 end
@@ -133,6 +137,20 @@ const RANGES = Dict(1 => "0 oder 1", 3 => "0…3 (1 = aus, 2 = ein)", 5 => "−6
 const BASE_TYPE = Dict(30 => 1, 31 => 3, 32 => 5, 34 => 9, 35 => 11, 36 => 13, 37 => 15,
                        58 => 45, 59 => 46, 60 => 47, 61 => 48, 62 => 49, 63 => 50)
 range_text(type::Integer) = get(RANGES, get(BASE_TYPE, Int(type), Int(type)), "")
+
+"Value fits the monitor type (same limits as the library, src/api/values.cpp)."
+function value_ok(type::Integer, v::Real)
+    isfinite(v) || return false
+    t = get(BASE_TYPE, Int(type), Int(type))
+    whole(lo, hi) = isinteger(v) && lo <= v <= hi
+    t == 1 && return whole(0, 1)
+    t == 3 && return whole(0, 3)
+    t == 5 && return whole(-64, 63)
+    t == 9 && return -32768 <= round(v * 32768) <= 32767
+    t == 11 && return whole(-32768, 32767)
+    t == 15 && return whole(typemin(Int32), typemax(Int32))
+    return true
+end
 
 # --- Callbacks (run inside the poll, called from C: store only, no I/O) -------
 
@@ -214,10 +232,27 @@ function cb_security(::Ptr{Cvoid}, conn::UInt32, event::Cint, detail::Cstring)::
     return nothing
 end
 
-function cb_log(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid
-    level <= 1 && note("Library $conn: " * unsafe_string(message))   # errors and warnings
+"Library log: errors and warnings as events, every frame (level trace) with its meaning."
+function log_entry(side::String, level::Cint, conn::UInt32, message::Cstring)
+    try
+        m = unsafe_string(message)
+        if level <= 1
+            note("Library $conn: " * m; kind = level == 0 ? "error" : "warning")
+        elseif level == 4
+            sent = startswith(m, "sent ")
+            (sent || startswith(m, "received ")) || return nothing
+            summary, meaning = Frames.describe(Frames.parse_hex(m[(sent ? 6 : 10):end]))
+            who = side == "L" ? "Leitstelle" : "Station($conn)"
+            note(who * (sent ? " → " : " ← ") * summary; kind = "frame", explain = meaning)
+        end
+    catch
+    end
     return nothing
 end
+cb_log_client(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid =
+    log_entry("L", level, conn, message)
+cb_log_server(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid =
+    log_entry("S", level, conn, message)
 
 # --- Actions ---------------------------------------------------------------------
 
@@ -226,7 +261,14 @@ p_num(p, k, d) = haskey(p, k) && !isempty(p[k]) ? parse(Float64, replace(p[k], '
 p_str(p, k) = get(p, k, "")
 
 function gui_client_connect(p)
-    GUI.client != C_NULL && (client_destroy(GUI.client); GUI.client = C_NULL)
+    if GUI.client != C_NULL
+        # destroy reports nothing any more: note the end of the old connection here
+        old = GUI.client
+        GUI.client = C_NULL
+        client_destroy(old)
+        GUI.client_state != IEC104.LINK_CLOSED && note("Leitstelle: alte Verbindung getrennt")
+        GUI.client_state = IEC104.LINK_CLOSED
+    end
     cfg = LinkConfig()
     for (k, f) in (("t0", :t0_ms), ("t1", :t1_ms), ("t2", :t2_ms), ("t3", :t3_ms))
         haskey(p, k) && !isempty(p[k]) && setfield!(cfg, f, UInt32(round(p_num(p, k, 0) * 1000)))
@@ -240,7 +282,7 @@ function gui_client_connect(p)
         on_command_result = @cfunction(cb_command_result, Cvoid, (Ptr{Cvoid}, UInt16, Ptr{Object}, Cint)),
         on_security = @cfunction(cb_security, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cstring)))
     GUI.client = client_create(cfg, cb)
-    client_set_log(GUI.client, 1, @cfunction(cb_log, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
+    client_set_log(GUI.client, 4, @cfunction(cb_log_client, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
     if get(p, "tls", "") == "1"
         t = TlsConfig()
         for (k, f) in (("ca", :ca_file), ("cert", :certificate_file), ("key", :private_key_file),
@@ -284,11 +326,17 @@ function gui_server_listen(p)
         on_command = @cfunction(cb_server_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})),
         on_security = @cfunction(cb_security, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cstring)))
     GUI.server = server_create(LinkConfig(), cb)
-    server_set_log(GUI.server, 1, @cfunction(cb_log, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
+    server_set_log(GUI.server, 4, @cfunction(cb_log_server, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
     GUI.server_station = UInt16(p_int(p, "station", 1))
     try
         for o in values(GUI.points)
-            server_add_point(GUI.server, GUI.server_station, o)
+            try
+                server_add_point(GUI.server, GUI.server_station, o)
+            catch e
+                e isa Iec104Error || rethrow()
+                throw(ArgumentError("Datenpunkt IOA $(o.ioa) Typ $(o.type) Wert $(o.value): $(e.msg)" *
+                                    " – erlaubt: $(range_text(o.type))"))
+            end
         end
         # Same address as the GUI: 127.0.0.1 unless the GUI was started on another one.
         IEC104.server_listen(GUI.server, p_int(p, "port", 2404); address = GUI_ADDRESS[])
@@ -307,9 +355,14 @@ function gui_server_point(p)
     old !== nothing && old.type != o.type &&
         throw(ArgumentError("IOA $(o.ioa) ist schon als Typ $(old.type) angelegt; " *
                             "für Typ $(o.type) eine andere IOA wählen"))
+    value_ok(o.type, o.value) ||
+        throw(ArgumentError("Wert $(o.value) passt nicht zu Typ $(o.type) – erlaubt: $(range_text(o.type))"))
     if GUI.server != C_NULL
         if old !== nothing
             check(server_update(GUI.server, GUI.server_station, o))   # spontaneous
+            any(==(IEC104.LINK_STARTED), values(GUI.connections)) ||
+                note("Station: IOA $(o.ioa) = $(o.value) gespeichert; keine Leitstelle mit STARTDT, " *
+                     "nichts gesendet (kommt mit der nächsten Generalabfrage)")
         else
             server_add_point(GUI.server, GUI.server_station, o)
             note("Station: Datenpunkt IOA $(o.ioa) Typ $(o.type) angelegt")
@@ -371,6 +424,12 @@ function gui_peer_start(p)
     a = GUI_ADDRESS[]
     a == "0.0.0.0" || a == "::" || startswith(a, "127.") ||
         throw(ArgumentError("Gegenstelle verbindet sich mit 127.0.0.1, die Station lauscht auf $a"))
+    peer_launch(x, port)
+    return nothing
+end
+
+"Starts program x of PEER_PROGRAMS against 127.0.0.1:port; output and end become events."
+function peer_launch(x, port::Integer)
     cmd = `$(peer_path(x)) 127.0.0.1 $port`
     stdbuf = Sys.which("stdbuf")   # C stdio buffers blocks on a pipe; line by line instead
     stdbuf === nothing || (cmd = `$stdbuf -oL -eL $cmd`)
@@ -383,7 +442,7 @@ function gui_peer_start(p)
     note("lib60870: $(x.key) verbindet sich mit 127.0.0.1:$port (Prozess $(getpid(proc)))")
     reader = @async peer_read(out)
     @async peer_wait(proc, x.key, reader)
-    return nothing
+    return proc
 end
 
 "SIGINT; still running after 3 s: SIGKILL."
@@ -402,6 +461,8 @@ end
 "At exit of the GUI: a running counterpart ends too."
 peer_kill() = (p = PEER.process; p !== nothing && process_running(p) && kill(p, Base.SIGKILL); nothing)
 
+include(joinpath(@__DIR__, "selftest.jl"))   # self-test with its own station and controlling station
+
 const ACTIONS = Dict{String,Function}(
     "/api/client/connect" => gui_client_connect,
     "/api/client/start" => p -> (need_client(); client_start(GUI.client)),
@@ -419,6 +480,7 @@ const ACTIONS = Dict{String,Function}(
     "/api/server/accept" => p -> (GUI.accept_commands = get(p, "on", "1") == "1"),
     "/api/peer/start" => gui_peer_start,
     "/api/peer/stop" => gui_peer_stop,
+    "/api/selftest/start" => selftest_start,
 )
 
 # --- JSON (hand-made, the page needs little) -------------------------------------
@@ -443,12 +505,14 @@ time_text(t::IecTime) = t.year == 0 ? "" :
 
 function state_json(since::Int)
     io = IOBuffer()
-    print(io, "{\"client\":{\"state\":")
+    print(io, "{\"boot\":\"", BOOT, "\",\"client\":{\"state\":")
     jstr(io, GUI.client == C_NULL ? "–" : IEC104.state_string(GUI.client_state))
     print(io, ",\"text\":")
     jstr(io, GUI.client == C_NULL ? "nicht verbunden" : state_text(GUI.client_state))
     print(io, ",\"station\":", GUI.station, ",\"rows\":[")
     rows = sort!(collect(values(GUI.rows)); by = r -> (r.station, r.ioa, r.type))
+    total = length(rows)
+    length(rows) > ROWS_MAX && (rows = rows[1:ROWS_MAX])   # the page stays fast
     for (n, r) in enumerate(rows)
         n > 1 && print(io, ',')
         print(io, "{\"station\":", r.station, ",\"ioa\":", r.ioa, ",\"type\":", r.type,
@@ -462,7 +526,7 @@ function state_json(since::Int)
         jnum(io, round(time() - r.updated; digits = 1))
         print(io, '}')
     end
-    print(io, "]},\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
+    print(io, "],\"rows_total\":", total, "},\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
           GUI.server == C_NULL ? 0 : server_port(GUI.server), ",\"station\":", GUI.server_station,
           ",\"accept\":", GUI.accept_commands, ",\"connections\":[")
     for (n, (id, st)) in enumerate(sort!(collect(GUI.connections)))
@@ -491,16 +555,22 @@ function state_json(since::Int)
         jstr(io, x.label)
         print(io, ",\"available\":", peer_found(x), '}')
     end
-    print(io, "]},\"log\":[")
+    print(io, "]},")
+    selftest_json(io)
+    print(io, ",\"log\":[")
     first = true
-    for (seq, t, text) in GUI.log
+    for (seq, t, kind, text, explain) in GUI.log
         seq <= since && continue
         first || print(io, ',')
         first = false
         print(io, "{\"seq\":", seq, ",\"time\":")
         jstr(io, Libc.strftime("%H:%M:%S", t))
+        print(io, ",\"kind\":")
+        jstr(io, kind)
         print(io, ",\"text\":")
         jstr(io, text)
+        print(io, ",\"explain\":")
+        jstr(io, explain)
         print(io, '}')
     end
     print(io, "]}")
@@ -544,7 +614,8 @@ const ACTION_NAMES = Dict(
     "/api/client/gi" => "Generalabfrage", "/api/client/ci" => "Zählerabfrage",
     "/api/client/clock" => "Uhrzeit setzen", "/api/client/command" => "Befehl",
     "/api/server/listen" => "Station starten", "/api/server/point" => "Datenpunkt",
-    "/api/peer/start" => "Gegenstelle starten", "/api/peer/stop" => "Gegenstelle beenden")
+    "/api/peer/start" => "Gegenstelle starten", "/api/peer/stop" => "Gegenstelle beenden",
+    "/api/selftest/start" => "Selbsttest")
 
 "Error message with a hint what to do."
 function error_text(e, path, p)
@@ -567,6 +638,8 @@ end
 function route(path, p)
     path == "/" && return ("200 OK", "text/html; charset=utf-8", PAGE)
     path == "/api/state" && return ("200 OK", "application/json", state_json(p_int(p, "since", 0)))
+    path == "/api/selftest/report" &&
+        return ("200 OK", "text/plain; charset=utf-8", selftest_report(p_str(p, "full") == "1"))
     action = get(ACTIONS, path, nothing)
     action === nothing && return ("404 Not Found", "text/plain", "not found")
     try
@@ -660,6 +733,7 @@ function main(port = 8080, address = "127.0.0.1", lib60870 = "")
     @async while true   # poll task: the library runs here, callbacks included
         GUI.client != C_NULL && client_poll(GUI.client, 0)
         GUI.server != C_NULL && server_poll(GUI.server, 0)
+        selftest_poll()
         sleep(0.02)
     end
     while true

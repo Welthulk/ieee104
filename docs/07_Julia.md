@@ -1,6 +1,6 @@
 # Anleitung: Library aus Julia verwenden
 
-Stand: 25.11.2026 · geprüft mit Julia 1.13 · Dateien: `examples/julia/` (im Binärpaket `julia/`)
+Stand: 26.11.2026 · geprüft mit Julia 1.13 · Dateien: `examples/julia/` (im Binärpaket `julia/`)
 
 Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu installieren und nichts zu übersetzen: Die fertig gebaute Library und die Datei `IEC104.jl` genügen.
 
@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
 Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
 
 ```bash
-cd iec104-0.7.0-linux-x86_64
+cd iec104-0.8.0-linux-x86_64
 julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
 julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
 ```
@@ -158,7 +158,7 @@ end
 
 ## 7. Test-GUI im Browser
 
-`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server), darunter lib60870 als fremde Leitstelle. Es braucht nur Julia, keine Pakete.
+`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server), darunter lib60870 als fremde Leitstelle, ein Selbsttest und das Ereignisprotokoll mit erklärten Rahmen. Es braucht nur Julia, keine Pakete.
 
 ```bash
 julia julia/gui/iec104_gui.jl [port] [adresse] [lib60870]   # im Binärpaket; im Quellbaum examples/julia/gui/
@@ -178,7 +178,8 @@ Dann im Browser `http://localhost:8080` öffnen. Kommt unter WSL der Windows-Bro
 | Tabelle | jeder empfangene Punkt mit Typ, Wert, Qualität, Ursache (negativ rot), Zeitmarke, Anzahl, Alter; frische Werte hervorgehoben |
 | Station | Starten auf Port/Station, Datenpunkte anlegen (Typen 1, 3, 5, 9, 11, 13, 15), Wert ändern und spontan senden (+1 für schnelle Tests), Befehle annehmen oder ablehnen, Verbindungen |
 | Gegenstelle lib60870 | ein Leitstellen-Beispiel von lib60870 gegen die eigene Station starten und beenden (Abschnitt 7.1) |
-| Ereignisse | Zustände, Abfragen und Befehle an die Station, Befehlsergebnisse, TLS-Ereignisse, Fehler und Warnungen der Library, Ausgabe von lib60870 |
+| Selbsttest | prüft die Library mit eigener Station und Leitstelle (Abschnitt 7.2) |
+| Ereignisse | Zustände, Abfragen und Befehle an die Station, Befehlsergebnisse, TLS-Ereignisse, Fehler (rot) und Warnungen (braun) der Library, Ausgabe von lib60870; jeder gesendete und empfangene Rahmen dekodiert und erklärt (Abschnitt 7.3); „Ereignisse kopieren“ |
 
 Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Punkt anlegen, Leitstelle auf `127.0.0.1:2404` verbinden, STARTDT, Generalabfrage.
 
@@ -187,8 +188,8 @@ Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Pu
 | GUI und Station lauschen nur auf `127.0.0.1` | die GUI hat keine Anmeldung, kann Befehle senden und Programme starten; eine andere Adresse nur bewusst als zweiter Parameter |
 | Anfragen nur mit Host `localhost` oder IP-Adresse samt Port der GUI, `/api/` nur mit Kopfzeile `X-IEC104-GUI: 1`, nur GET, kein CORS, nicht einbettbar | eine fremde Webseite im selben Browser kann die GUI nicht steuern, auch nicht über DNS-Rebinding |
 | Die GUI ist ein Testwerkzeug | eine Verbindung je Seite, kein Speichern der Einstellungen |
-| Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`) und `index.html` (Seite) |
-| Test | `tests/gui/test_gui.sh`; in `ctest` (Preset `shared`) als `Julia.Gui`, mit `IEC104_LIB60870_DIR` auch `Julia.GuiLib60870` |
+| Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`), `selftest.jl` (Selbsttest), `frames.jl` (Rahmen in Worten), `index.html` (Seite) |
+| Test | `tests/gui/test_gui.sh` mit Selbsttest; in `ctest` (Preset `shared`) als `Julia.Gui`, mit `IEC104_LIB60870_DIR` auch `Julia.GuiLib60870`; `tests/gui/test_frames.jl` als `Julia.Frames` (nur Julia) |
 
 ### 7.1 Gegenstelle lib60870
 
@@ -216,3 +217,53 @@ Ablauf: Station mit Station (CA) 1 starten, Datenpunkt anlegen, unter „Gegenst
 | Eine Gegenstelle zur Zeit; Beenden schickt SIGINT, nach 3 s SIGKILL; endet die GUI, endet die Gegenstelle mit | kein Prozess bleibt zurück |
 | Ausgabe zeilenweise, Zeilen über 300 Zeichen gekürzt | mit `stdbuf` (coreutils) sofort, sonst erst beim Ende des Programms |
 | Prozess und Ausgabe laufen in normalen Julia-Tasks, nie in einem Callback | Regel aus Abschnitt 4 |
+
+### 7.2 Selbsttest
+
+**Selbsttest starten** prüft die Library in etwa 20 Sekunden mit eigener Station und Leitstelle auf `127.0.0.1` (freier Port). Station und Leitstelle oben auf der Seite bleiben unberührt. Jeder Schritt nennt Zweck, Erwartung und Beobachtung.
+
+| Nr. | Schritt | Erwartet |
+| --- | --- | --- |
+| 1–3 | Station starten (IOA 101–108, Typen 1, 3, 5, 9, 11, 13, 15), verbinden, STARTDT | Ende der Initialisierung (Typ 70, Ursache 4) |
+| 4–5 | Generalabfrage Station, Gruppe 2 | Bestätigung, alle Punkte außer dem Zählwert mit Ursache 20 bzw. nur IOA 108 mit Ursache 22, Beendigung |
+| 6–7 | Zählerabfrage, Lesebefehl | Zählwert mit Ursache 37; IOA 106 mit Ursache 5 |
+| 8 | Werte je Meldetyp ändern | 6 Werte spontan (Ursache 3) mit dem neuen Wert |
+| 9 | Uhrzeit setzen | Station nimmt an, positive Bestätigung |
+| 10–12 | Befehle 45–50 direkt, 45 mit Select/Execute, 58–63 mit Zeitmarke | „ausgeführt“ (Bestätigung und Beendigung); bei Select erst „ausgewählt“ |
+| 13–15 | Befehl abgelehnt, unbekannte IOA, unbekannte Station | negative Antwort; Ursache 47 bzw. 46 |
+| 16 | Einzelbefehl mit Wert 2 | vor dem Senden abgewiesen, kein Rahmen |
+| 17–18 | STOPDT, Wert ändern, STARTDT | im gestoppten Zustand kein Wert, danach kommt der gepufferte Wert nach (docs/05, E10) |
+| 19 | Ruhe, Leitstelle mit t3 = 3 s | TESTFR act und TESTFR con |
+| 20–22 | Trennen, Rahmenstatistik, Fehler der Library | beide Seiten getrennt; alle Rahmen lesbar; keine Fehler, Warnungen nur für die provozierten negativen Antworten |
+| 23 | lib60870 `simple_client` gegen die Station (nur mit lib60870-Ordner, sonst übersprungen) | Verbindung, STARTDT, Generalabfrage, Testbefehl, Rückgabe 0 |
+
+| Knopf | Inhalt |
+| --- | --- |
+| Protokoll kopieren | Kurzfassung: Version, Umgebung, Ergebnis, Tabelle aller Schritte, Einzelheiten und Rahmen nur der fehlgeschlagenen Schritte; zum Weitergeben, z. B. in einer Fehlermeldung |
+| Protokoll speichern | Textdatei `iec104_selbsttest_<datum>_<zeit>.txt` mit allen Schritten und allen Rahmen |
+
+Über `http://localhost:…` kopiert der Knopf direkt in die Zwischenablage. Über eine andere Adresse (z. B. die WSL-Adresse) sperrt der Browser die Zwischenablage; dann erscheint der Text markiert in einem Feld, mit Strg+C kopieren.
+
+### 7.3 Rahmen im Klartext
+
+Unter Ereignisse steht jeder Rahmen von Leitstelle und Station der GUI mit Richtung und Inhalt, darunter in einem Satz, was er bedeutet. „Rahmen“ und „Erklärungen“ blenden beides ein und aus.
+
+```
+09:12:03  Leitstelle → I N(S)=0 N(R)=1 · 100 C_IC_NA_1 Generalabfrage · Ursache 6 Aktivierung · Station 1 · IOA 0 QOI 20 (Station)
+          ↳ Leitstelle fordert alle Werte an
+09:12:03  Leitstelle ← I N(S)=2 N(R)=1 · 13 M_ME_NC_1 Messwert Gleitkomma · Ursache 20 Generalabfrage · Station 1 · IOA 100 Wert 5.0
+          ↳ Antwort auf die Generalabfrage
+09:12:03  Leitstelle → S N(R)=4
+          ↳ Quittung: alle I-Rahmen bis Nr. 3 sind angekommen
+```
+
+| Teil | Bedeutung |
+| --- | --- |
+| `→` / `←` | gesendet / empfangen, aus Sicht von Leitstelle bzw. Station (Station mit Verbindungsnummer) |
+| `I N(S)= N(R)=` | Datenrahmen mit Sende- und Empfangsfolgenummer |
+| `S N(R)=` | reine Quittung |
+| `U STARTDT/STOPDT/TESTFR act/con` | Steuerrahmen |
+| Typ, Ursache, Station | Typkennung mit Namen, Übertragungsursache (negativ, Test), gemeinsame Adresse |
+| `IOA … Wert …` | erstes Informationsobjekt mit Wert, Qualität (`[IV NT …]`) und Zeitmarke; „(+n weitere)“ bei mehreren Objekten |
+
+Die Beschreibung macht `frames.jl` ohne Aufruf der Library, für das Standardprofil (Ursache 2, Station 2, IOA 3 Oktette). Grundlage ist der Trace der Library (Log-Stufe 4, jeder Rahmen als Hexdump).
