@@ -28,6 +28,8 @@
 set -u
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
+# Steht das Terminal in einem gelöschten Ordner (z. B. im alten ZIEL), scheitert sonst git clone.
+cd "$HOME" 2> /dev/null || cd /
 ZIEL="$HOME/src/iec104"
 BAUEN=1
 LIB60870=0
