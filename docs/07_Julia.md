@@ -319,7 +319,7 @@ Reiter „Mithören“: Verkehr zwischen einer fremden Leitstelle und einer Stat
 
 | Schritt | Was |
 | --- | --- |
-| 1. Mitschneiden | auf einem Rechner, der den Verkehr sieht (z. B. Spiegelport), mit den nötigen Rechten: `sudo tcpdump -i any -U -w /tmp/iec104.pcap 'tcp port 2404'` (die GUI zeigt den Befehl mit Datei und Port zum Kopieren); oder Wireshark, gespeichert als pcap oder pcapng (`docs/04_Selbsttest.md`, Abschnitt 4.8) |
+| 1. Mitschneiden | auf einem Rechner, der den Verkehr sieht (z. B. Spiegelport), mit den nötigen Rechten: `sudo tcpdump -i any -U -Z root -w '/tmp/iec104.pcap' 'tcp port 2404'` (die GUI zeigt den Befehl mit Datei und Port zum Kopieren); oder Wireshark, gespeichert als pcap oder pcapng (`docs/04_Selbsttest.md`, Abschnitt 4.8) |
 | 2. Live | „Live mitlesen“: die GUI verfolgt die Datei, während tcpdump schreibt; beginnt tcpdump neu in dieselbe Datei, liest sie von vorn |
 | 3. Nachher | „Datei auswerten“: eine fertige Datei einmal ganz lesen |
 
@@ -328,7 +328,7 @@ Reiter „Mithören“: Verkehr zwischen einer fremden Leitstelle und einer Stat
 | Rechte | die GUI liest nur die Datei; Mitschnittrechte braucht allein tcpdump bzw. Wireshark |
 | Dateien | pcap (tcpdump, µs und ns) und pcapng (Wireshark), beide Byte-Reihenfolgen |
 | Netz | Ethernet (auch VLAN), `-i any` (Linux cooked v1/v2), Loopback, rohes IP; IPv4 und IPv6 |
-| TCP | je Richtung zusammengesetzt: Wiederholungen, vertauschte Segmente, Rahmen über mehrere Segmente; beginnt der Mitschnitt mitten in der Verbindung, ab dem ersten vollständigen Rahmen; Lücken werden gemeldet |
+| TCP | je Richtung zusammengesetzt: Wiederholungen, vertauschte Segmente, Rahmen über mehrere Segmente; beginnt der Mitschnitt mitten in der Verbindung, ab dem ersten vollständigen Rahmen; Lücken werden gemeldet und übersprungen (am Dateiende, live nach 2 s ohne neue Daten); durch snaplen gekürzte Pakete werden gemeldet (tcpdump mit `-s 0`) |
 | Anzeige | jeder Rahmen unter Telegramme mit „Mithören“, Richtung, Adressen und Zeit des Mitschnitts; Filter „Text: Mithören“ |
 | Prozessabbild | auf Wunsch Werte der Station (dekodiert von der Library, `iec104_decode_asdu`) mit Zählern je Ursache |
 | Port | Port der Station, Standard 2404; Verbindungen auf 19998 (TLS) sind verschlüsselt und werden nur gemeldet |

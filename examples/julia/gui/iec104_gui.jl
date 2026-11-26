@@ -360,7 +360,7 @@ end
 function cb_server_command(::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd::Ptr{Object})::Cint
     i = unsafe_load(info)
     c = unsafe_load(cmd)
-    what = i.type == 103 ? "Uhrzeit" : "Befehl Typ $(i.type) IOA $(c.ioa) Wert $(c.value)" *
+    what = i.type == 103 ? "Uhrzeit" : "Befehl Typ $(i.type) IOA $(c.ioa) $(value_text(c))" *
                                        (c.select != 0 ? " (Auswahl)" : "")
     note("Station: $what von Verbindung $conn: " * (GUI.accept_commands ? "angenommen" : "abgelehnt"))
     return Cint(GUI.accept_commands ? 1 : 0)
@@ -434,6 +434,18 @@ q_int(p, k, d) = (x = tryparse(Int, get(p, k, "")); x === nothing ? d : x)
 p_str(p, k) = get(p, k, "")
 
 function gui_client_connect(p)
+    # Check everything first: a wrong entry must not cut the running connection.
+    tls = get(p, "tls", "") == "1"
+    port = p_int(p, "port", tls ? 19998 : 2404)
+    station = p_int(p, "station", 1)
+    1 <= port <= 65535 || throw(ArgumentError("Port 1…65535"))
+    1 <= station <= 65534 || throw(ArgumentError("Station (CA) 1…65534"))
+    for k in ("k", "w")
+        1 <= p_int(p, k, 8) <= 32767 || throw(ArgumentError("$k 1…32767"))
+    end
+    for k in ("t0", "t1", "t2", "t3", "conf_to", "term_to")
+        0 < p_num(p, k, 1) <= 172800 || throw(ArgumentError("$k: Sekunden größer 0"))
+    end
     if GUI.client != C_NULL
         # destroy reports nothing any more: note the end of the old connection here
         old = GUI.client
@@ -468,9 +480,8 @@ function gui_client_connect(p)
         end
         client_set_tls(GUI.client, t)
     end
-    GUI.station = UInt16(p_int(p, "station", 1))
+    GUI.station = UInt16(station)
     host = isempty(p_str(p, "host")) ? "127.0.0.1" : p_str(p, "host")
-    port = p_int(p, "port", get(p, "tls", "") == "1" ? 19998 : 2404)
     IEC104.client_connect(GUI.client, host, port)
     GUI.client_state = IEC104.LINK_CONNECTING
     GUI.auto_step = get(p, "auto", "0") == "1" ? 1 : 0
@@ -543,7 +554,10 @@ function gui_client_command(p)
     GUI.cmd_id += 1
     push!(GUI.cmds, SentCommand(GUI.cmd_id, time(), station, o, MODE_TEXT[mode],
                         entry === nothing ? "" : entry.text, "", false, -1, -1, -1, -1, fb, -1, ""))
-    length(GUI.cmds) > CMDS_MAX && popfirst!(GUI.cmds)
+    if length(GUI.cmds) > CMDS_MAX                 # drop the oldest finished command
+        k = findfirst(c -> c.final, GUI.cmds)
+        k === nothing || deleteat!(GUI.cmds, k)
+    end
     GUI.cmds_version += 1
     note("Leitstelle: Befehl $(GUI.cmd_id) Typ $type an $station/$ioa: $(value_text(o)) ($(MODE_TEXT[mode]))" *
          (fb >= 0 ? ", Rückmeldung erwartet auf IOA $fb" : ""); kind = "command")
@@ -713,13 +727,23 @@ function gui_listen_start(p)
     path = expanduser(strip(p_str(p, "path")))
     isempty(path) && throw(ArgumentError("Datei angeben, z. B. /tmp/iec104.pcap"))
     live = get(p, "live", "0") == "1"
+    isdir(path) && throw(ArgumentError("$path ist ein Ordner, bitte eine Datei angeben"))
     isfile(path) || live || throw(ArgumentError("Datei $path gibt es nicht"))
     ports = [p_int(p, "port", 2404)]
     1 <= ports[1] <= 65535 || throw(ArgumentError("Port 1…65535"))
+    io = nothing
+    if isfile(path)
+        io = try
+            open(path, "r")
+        catch e
+            throw(ArgumentError("Datei $path nicht lesbar (Rechte?): " * sprint(showerror, e)))
+        end
+    end
     listen_stop()
     LISTEN.mode = live ? :live : :file
     LISTEN.path = path
-    LISTEN.io = isfile(path) ? open(path, "r") : nothing
+    LISTEN.io = io
+    LISTEN_QUIET[] = time()
     LISTEN.reader = Capture.Reader(; ports)
     LISTEN.to_image = get(p, "image", "1") == "1"
     LISTEN.pos = 0
@@ -732,30 +756,54 @@ function listen_stop()
     LISTEN.io = nothing
     LISTEN.mode == :off && return
     r = LISTEN.reader
+    Capture.flush!(r)                       # frames behind a gap still open
+    for e in Capture.events!(r)
+        listen_event(e)
+    end
     note("Mithören beendet: $(r.packets) Pakete, $(r.frames) Rahmen" *
          (r.gaps > 0 ? ", $(r.gaps) Lücken" : "") * (r.skipped > 0 ? ", $(r.skipped) andere Pakete übergangen" : ""))
     LISTEN.mode = :off
     LISTEN.state = "aus"
 end
 
+const LISTEN_QUIET = Ref(0.0)          # time of the last new bytes (live)
+
+function listen_restart(why::AbstractString)
+    LISTEN.io === nothing || close(LISTEN.io)
+    LISTEN.io = isfile(LISTEN.path) ? open(LISTEN.path, "r") : nothing
+    LISTEN.pos = 0
+    LISTEN.reader = Capture.Reader(; ports = LISTEN.reader.ports)
+    LISTEN.state = LISTEN.io === nothing ? "warte auf die Datei" : "liest mit"
+    note("Mithören: " * why)
+end
+
 "Called by the poll task: reads the next part of the file and handles what was found."
 function listen_poll()
     LISTEN.mode == :off && return
-    if LISTEN.io === nothing                      # live: tcpdump has not created the file yet
-        isfile(LISTEN.path) || return
-        LISTEN.io = open(LISTEN.path, "r")
-        LISTEN.state = "liest mit"
-    end
-    if filesize(LISTEN.path) < LISTEN.pos         # new capture into the same file
-        close(LISTEN.io)
-        LISTEN.io = open(LISTEN.path, "r")
-        LISTEN.pos = 0
-        LISTEN.reader = Capture.Reader(; ports = LISTEN.reader.ports)
-        note("Mithören: Datei neu begonnen, lese von vorn")
+    if LISTEN.mode == :live
+        if !isfile(LISTEN.path)                   # not yet created, or deleted
+            LISTEN.io === nothing || listen_restart("Datei verschwunden, warte auf eine neue")
+            return
+        end
+        if LISTEN.io === nothing
+            listen_restart("Datei ist da, lese mit")
+        elseif stat(LISTEN.path).inode != stat(LISTEN.io).inode || filesize(LISTEN.path) < LISTEN.pos
+            listen_restart("Datei neu begonnen, lese von vorn")   # replaced or truncated
+        end
     end
     bytes = read(LISTEN.io, LISTEN_CHUNK)
     LISTEN.pos += length(bytes)
-    isempty(bytes) || Capture.feed!(LISTEN.reader, bytes)
+    if isempty(bytes)
+        # Nothing new: an open gap in the capture is resolved (end of file; live after 2 s).
+        if LISTEN.mode == :file
+            Capture.flush!(LISTEN.reader)
+        elseif time() - LISTEN_QUIET[] > 2.0
+            Capture.flush!(LISTEN.reader; older_than = 2.0)
+        end
+    else
+        LISTEN_QUIET[] = time()
+        Capture.feed!(LISTEN.reader, bytes)
+    end
     for e in Capture.events!(LISTEN.reader)
         listen_event(e)
     end
@@ -891,7 +939,8 @@ const ACTIONS = Dict{String,Function}(
     "/api/client/command" => gui_client_command,
     "/api/client/clear" => gui_image_clear,
     "/api/image/reset" => gui_image_reset,
-    "/api/client/cmds_clear" => p -> (empty!(GUI.cmds); GUI.cmds_version += 1),
+    # Open commands stay (hidden answers must still find them); only finished ones go.
+    "/api/client/cmds_clear" => p -> (filter!(c -> !c.final, GUI.cmds); GUI.cmds_version += 1),
     "/api/list/add" => gui_list_add,
     "/api/list/remove" => gui_list_remove,
     "/api/list/take" => gui_list_take,
@@ -987,6 +1036,7 @@ function state_json(p)
             jfield(io, "tx", c.text)
             jfield(io, "res", c.result)
             jfield(io, "fbv", c.feedback_value)
+            print(io, ",\"ok\":", c.final && c.result in ("bestätigt", "ausgeführt", "ausgewählt"))
             print(io, '}')
         end
         print(io, ']')

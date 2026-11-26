@@ -363,9 +363,17 @@ function connect() {
 function listenStart(live) {
   act('listen/start', {path: v('lpath'), port: v('lport'), live, image: checked('limage')});
 }
+// Path quoted for the shell (a leading ~/ stays outside the quotes, so the shell expands it).
+function shellPath(p) {
+  const home = p.startsWith('~/') ? '~/' : '';
+  const rest = home ? p.slice(2) : p;
+  return home + "'" + rest.replace(/'/g, "'\\''") + "'";
+}
 function tcpdumpCommand() {
+  const port = /^\d{1,5}$/.test(v('lport')) ? v('lport') : '2404';
+  // -Z root: tcpdump writes as root, also into folders the user tcpdump cannot write.
   document.getElementById('tcpdumpcmd').textContent =
-    `sudo tcpdump -i any -U -w ${v('lpath')} 'tcp port ${v('lport')}'`;
+    `sudo tcpdump -i any -U -Z root -w ${shellPath(v('lpath'))} 'tcp port ${port}'`;
 }
 function showListen(l) {
   if (!l) return;
@@ -468,7 +476,7 @@ const ms = x => x >= 0 ? x : '';
 function renderCmds() {
   document.getElementById('cmds').innerHTML = cmds.map(c => `<tr><td class="num">${c.id}</td><td>${c.t}</td>` +
     `<td>${c.st}</td><td class="num">${c.ioa}</td><td>${esc(c.tx)}</td><td>${c.ty}</td><td>${esc(c.v)}</td><td>${esc(c.mode)}</td>` +
-    `<td class="${/abgelehnt|keine|verloren/.test(c.res) ? 'neg' : ''}">${esc(c.res || 'läuft …')}</td>` +
+    `<td class="${c.res && !c.ok ? 'neg' : ''}">${esc(c.res || 'läuft …')}</td>` +
     `<td class="num">${ms(c.tsel)}</td><td class="num">${ms(c.tcon)}</td><td class="num">${ms(c.tterm)}</td>` +
     `<td>${c.fb >= 0 ? (c.tfb >= 0 ? c.tfb + ' ms, IOA ' + c.fb + ': ' + esc(c.fbv) : 'IOA ' + c.fb + ' …') : ''}</td>` +
     `<td class="num">${ms(c.tfin)}</td></tr>`).join('');

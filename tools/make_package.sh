@@ -47,9 +47,10 @@ if ! git diff --quiet HEAD -- . ':!dist'; then
 fi
 
 # Paketdateien: alles außer den internen Unterlagen und Skripten.
-EXCLUDE='^(intern/|tasks/|CLAUDE\.md|\.vscode/|dist/|tools/check_neutral\.sh|tools/make_package\.sh|tools/sync_lieferung\.sh)'
+EXCLUDE='^(intern/|tasks/|CLAUDE\.md|\.vscode/|dist/|tools/check_neutral\.sh|tools/make_package\.sh|tools/sync_lieferung\.sh|tools/bereinige_historie\.sh)'
 EXCLUDE_SPEC=(':!intern' ':!tasks' ':!CLAUDE.md' ':!.vscode' ':!dist'
-              ':!tools/check_neutral.sh' ':!tools/make_package.sh' ':!tools/sync_lieferung.sh')
+              ':!tools/check_neutral.sh' ':!tools/make_package.sh' ':!tools/sync_lieferung.sh'
+              ':!tools/bereinige_historie.sh')
 mapfile -t FILES < <(git ls-files | grep -v -E "$EXCLUDE")
 
 mkdir -p dist

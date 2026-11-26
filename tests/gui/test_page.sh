@@ -7,6 +7,8 @@
 # (tests/gui/test_page.js): Laufzeitfehler der Seite, falsche Element-IDs und
 # Abweichungen zwischen JSON der GUI und Seite fallen so ohne Browser auf.
 #
+# Mit Display zusätzlich: Namen der Inline-Handler in WebKitGTK (tests/gui/test_handlers_webkit.js).
+#
 # Aufruf: tests/gui/test_page.sh LIBRARY [LIB60870_C]
 #   JULIA, GJS, CURL  Programme, Default aus dem Suchpfad
 # Alles auf 127.0.0.1 mit freien Ports. Rückgabe: 0 bestanden, 1 Fehler, 2 Voraussetzung fehlt.
@@ -42,6 +44,13 @@ done
 [ -n "$PORT" ] || { echo "GUI meldet keinen Port" >&2; exit 1; }
 "$GJS" "$ROOT/tests/gui/test_page.js" "$ROOT/examples/julia/gui/index.html" "$PORT"
 RC=$?
+# Inline-Handler zusätzlich in echtem WebKit, wenn es ein Display gibt (sonst übersprungen).
+"$GJS" "$ROOT/tests/gui/test_handlers_webkit.js" "$ROOT/examples/julia/gui/index.html" 2>&1 | grep -v '^libEGL'
+case "${PIPESTATUS[0]}" in
+    0) ;;
+    2) echo "WebKit-Prüfung der Handler übersprungen (kein Display oder kein WebKitGTK)" ;;
+    *) RC=1 ;;
+esac
 # Das GUI-Programm darf im Terminal nichts melden (z. B. gescheiterte Anfragen).
 if grep -q -v '^IEC 104 Test-GUI ' "$WORK/gui.log"; then
     echo "FEHLER: Ausgabe der GUI im Terminal:" >&2

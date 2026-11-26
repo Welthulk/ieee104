@@ -19,16 +19,28 @@
 
 module Capture
 
-export Reader, feed!, events!
+export Reader, feed!, events!, flush!
 
 "One direction of a TCP connection."
 mutable struct Stream
     next::Union{Nothing,UInt32}            # next expected sequence number
     buf::Vector{UInt8}                     # bytes not yet cut into APDUs
-    pending::Dict{UInt32,Vector{UInt8}}    # segments that came before a gap closed
+    pending::Dict{UInt32,Vector{UInt8}}    # segments behind a gap, by sequence number
     synced::Bool                           # buf starts at an APDU boundary
+    src::String                            # "address:port" of the sender
+    dst::String
+    from_station::Bool
+    gap_since::Float64                     # capture time the open gap was first seen, 0 = none
 end
-Stream() = Stream(nothing, UInt8[], Dict(), false)
+Stream(src, dst, from_station) = Stream(nothing, UInt8[], Dict(), false, src, dst, from_station, 0.0)
+
+function reset!(s::Stream)
+    s.next = nothing
+    empty!(s.buf)
+    empty!(s.pending)
+    s.synced = false
+    s.gap_since = 0.0
+end
 
 "Something found in the capture: a frame (APDU) or a note (gap, TLS, unknown link layer)."
 struct Event
@@ -58,10 +70,12 @@ mutable struct Reader
     frames::Int
     gaps::Int
     skipped::Int                            # packets that are not IEC 104 (other ports, not TCP)
+    truncated_noted::Bool                   # packets cut by the snap length (noted once)
+    last_time::Float64                      # capture time of the newest packet
 end
 Reader(; ports = [2404], tls_ports = [19998]) =
     Reader(collect(ports), collect(tls_ports), UInt8[], :unknown, true, false, 0, Int[], Float64[],
-           Dict(), Set{String}(), Event[], 0, 0, 0, 0)
+           Dict(), Set{String}(), Event[], 0, 0, 0, 0, false, 0.0)
 
 # --- Integers -------------------------------------------------------------------------
 
@@ -203,17 +217,20 @@ ipv6_text(p, i) = "[" * join((string(u16(p, i + 2k); base = 16) for k in 0:7), '
 
 function tcp!(r::Reader, t::Float64, p)
     isempty(p) && return
+    r.last_time = max(r.last_time, t)
     v = p[1] >> 4
     if v == 4
         length(p) >= 20 || return
         ihl = Int(p[1] & 0x0f) * 4
-        total = min(Int(u16(p, 3)), length(p))
+        iplen = Int(u16(p, 3))                 # length on the wire; the capture may be shorter
+        total = min(iplen, length(p))
         (p[10] == 6 && u16(p, 7) & 0x3fff == 0 && total >= ihl + 20) || (r.skipped += 1; return)  # TCP, no fragment
-        src, dst, seg = ipv4_text(p, 13), ipv4_text(p, 17), view(p, ihl+1:total)
+        src, dst, seg, wire = ipv4_text(p, 13), ipv4_text(p, 17), view(p, ihl+1:total), iplen - ihl
     elseif v == 6
         length(p) >= 40 && p[7] == 6 || (r.skipped += 1; return)
-        total = min(40 + Int(u16(p, 5)), length(p))
-        src, dst, seg = ipv6_text(p, 9), ipv6_text(p, 25), view(p, 41:total)
+        iplen = 40 + Int(u16(p, 5))
+        total = min(iplen, length(p))
+        src, dst, seg, wire = ipv6_text(p, 9), ipv6_text(p, 25), view(p, 41:total), iplen - 40
     else
         r.skipped += 1
         return
@@ -223,7 +240,8 @@ function tcp!(r::Reader, t::Float64, p)
     seq = u32(seg, 5)
     flags = seg[14]
     off = Int(seg[13] >> 4) * 4
-    data = view(seg, off+1:length(seg))
+    data = view(seg, min(off, length(seg))+1:length(seg))
+    missing_bytes = max(0, wire - off - length(data))    # cut by the snap length
     a, b = "$src:$sp", "$dst:$dp"
     if sp in r.tls_ports || dp in r.tls_ports
         key = sp in r.tls_ports ? "$a-$b" : "$b-$a"
@@ -234,55 +252,116 @@ function tcp!(r::Reader, t::Float64, p)
         return
     end
     (sp in r.ports || dp in r.ports) || (r.skipped += 1; return)
-    s = get!(Stream, r.streams, (src, string(sp), dst, string(dp)))
-    if flags & 0x02 != 0                                   # SYN: stream starts with seq + 1
+    s = get!(() -> Stream(a, b, sp in r.ports), r.streams, (src, string(sp), dst, string(dp)))
+    if flags & 0x02 != 0                                   # SYN: a new connection on these ports
+        reset!(s)
         s.next, s.synced = seq + one(UInt32), true
-        empty!(s.buf); empty!(s.pending)
     end
-    if flags & 0x05 != 0 && isempty(data)                  # FIN or RST without data
-        return
+    if !isempty(data) || missing_bytes > 0
+        segment!(r, t, s, seq, data, missing_bytes)
     end
-    isempty(data) && return
-    segment!(r, t, s, a, b, sp in r.ports, seq, data)
+    if flags & 0x04 != 0                                   # RST: both directions end
+        reset!(s)
+        back = get(r.streams, (dst, string(dp), src, string(sp)), nothing)
+        back === nothing || reset!(back)
+    elseif flags & 0x01 != 0                               # FIN: this direction ends
+        flush_stream!(r, s, t)
+        reset!(s)
+    end
 end
 
-# Stream position arithmetic modulo 2^32.
-before(x::UInt32, y::UInt32) = reinterpret(Int32, x - y) < 0
+# Distance of sequence number k ahead of n, modulo 2^32 (negative: k is before n).
+dist(k::UInt32, n::UInt32) = Int64(reinterpret(Int32, k - n))
 
-function segment!(r::Reader, t, s::Stream, a, b, from_station, seq::UInt32, data)
-    if s.next === nothing          # capture started inside the connection
-        s.next = seq
-    end
-    if before(seq, s.next)         # retransmission, maybe with new bytes at the end
-        skip = Int(s.next - seq)
-        skip >= length(data) && return
-        data, seq = view(data, skip+1:length(data)), s.next
-    end
-    if seq != s.next               # gap: keep until it closes
-        s.pending[seq] = Vector{UInt8}(data)
-        if length(s.pending) > 64  # gap stays open: missing bytes are lost, go on after it
-            r.gaps += 1
-            note!(r, t, "Lücke im Mitschnitt $a → $b: Daten fehlen, weiter beim nächsten Rahmen")
-            first = minimum(keys(s.pending); by = k -> Int64(reinterpret(Int32, k - s.next::UInt32)))
-            s.next, s.synced = first, false
-            empty!(s.buf)
-        else
-            return
+"Appends data at the stream position, also partly overlapping (retransmission with new bytes)."
+function append_at!(s::Stream, seq::UInt32, data)
+    d = dist(seq, s.next::UInt32)
+    d > 0 && return false                                  # behind a gap
+    skip = -d
+    skip >= length(data) && return true                    # all known already
+    append!(s.buf, view(data, skip+1:length(data)))
+    s.next = s.next::UInt32 + UInt32(length(data) - skip)
+    return true
+end
+
+"Moves waiting segments into the stream as far as they fit, drops the ones that are already known."
+function drain!(s::Stream)
+    moved = true
+    while moved && !isempty(s.pending)
+        moved = false
+        for (k, d) in collect(s.pending)
+            if append_at!(s, k, d)
+                delete!(s.pending, k)
+                moved = true
+            end
         end
-    else
-        append!(s.buf, data)
-        s.next = s.next::UInt32 + UInt32(length(data))
     end
-    while (d = get(s.pending, s.next, nothing)) !== nothing   # segments that now fit
-        delete!(s.pending, s.next)
-        append!(s.buf, d)
-        s.next = s.next::UInt32 + UInt32(length(d))
+    isempty(s.pending) && (s.gap_since = 0.0)
+end
+
+"Skips a gap: continues at the earliest waiting segment; the missing bytes are lost."
+function skip_gap!(r::Reader, s::Stream, t)
+    ahead = [k for k in keys(s.pending) if dist(k, s.next::UInt32) > 0]
+    isempty(ahead) && (empty!(s.pending); s.gap_since = 0.0; return false)
+    first = ahead[argmin([dist(k, s.next::UInt32) for k in ahead])]
+    r.gaps += 1
+    note!(r, t, "Lücke im Mitschnitt $(s.src) → $(s.dst): $(dist(first, s.next::UInt32)) Byte fehlen, " *
+                "weiter beim nächsten Rahmen")
+    s.next, s.synced = first, false
+    empty!(s.buf)
+    drain!(s)
+    return true
+end
+
+function segment!(r::Reader, t, s::Stream, seq::UInt32, data, missing_bytes::Int)
+    s.next === nothing && (s.next = seq)                   # capture started inside the connection
+    if missing_bytes > 0                                   # packet cut by the snap length
+        if !r.truncated_noted
+            r.truncated_noted = true
+            note!(r, t, "Pakete im Mitschnitt gekürzt (snaplen): Rahmen gehen verloren; tcpdump mit -s 0 verwenden")
+        end
+        if dist(seq, s.next::UInt32) <= 0
+            append_at!(s, seq, data)
+            s.next = seq + UInt32(length(data) + missing_bytes)
+            empty!(s.buf)
+            s.synced = false
+        end
+        return
     end
-    cut!(r, t, s, a, b, from_station)
+    if !append_at!(s, seq, data)                                # behind a gap: keep until it closes
+        s.pending[seq] = Vector{UInt8}(data)
+        s.gap_since == 0.0 && (s.gap_since = t)
+        length(s.pending) > 64 && skip_gap!(r, s, t)       # gap stays open
+    end
+    drain!(s)
+    cut!(r, t, s)
+end
+
+"Resolves an open gap of one stream (end of file, connection end, timeout) and cuts what follows."
+function flush_stream!(r::Reader, s::Stream, t)
+    while !isempty(s.pending) && skip_gap!(r, s, t)
+        cut!(r, t, s)
+    end
+end
+
+"""
+    flush!(r; older_than = 0.0)
+
+Resolves open gaps: all of them (end of a file), or only those open for more than
+`older_than` seconds of capture time (live). Frames behind the gap are then returned.
+"""
+function flush!(r::Reader; older_than::Real = 0.0)
+    for s in values(r.streams)
+        isempty(s.pending) && continue
+        (older_than == 0.0 || r.last_time - s.gap_since > older_than) || continue
+        flush_stream!(r, s, r.last_time)
+    end
+    return r
 end
 
 "Cuts the stream into APDUs; without a known boundary it looks for a plausible start."
-function cut!(r::Reader, t, s::Stream, a, b, from_station)
+function cut!(r::Reader, t, s::Stream)
+    a, b, from_station = s.src, s.dst, s.from_station
     while length(s.buf) >= 2
         if !s.synced || s.buf[1] != 0x68
             i = findnext(k -> plausible(s.buf, k), 1:length(s.buf), 1)

@@ -152,6 +152,60 @@ end
     r = Reader(ports = [2405]); feed!(r, pcap(session()))
     @test isempty(frames(r))
 
+    # gaps: one segment lost, then more than 64 segments (each one frame); the gap is
+    # reported once and every frame after it arrives
+    p = [ether(ipv4_tcp(S, L, 2404, 51000, 5000, UInt8[]; flags = 0x02))]
+    push!(p, ether(ipv4_tcp(S, L, 2404, 51000, 5001, S_FRAME)))
+    # lost: 5007..5012 (one S-frame)
+    for k in 0:69
+        push!(p, ether(ipv4_tcp(S, L, 2404, 51000, UInt32(5013 + 6k), S_FRAME)))
+    end
+    r = Reader(); feed!(r, pcap(p))
+    ev = events!(r)
+    @test count(e -> e.kind == :frame, ev) == 71 && r.gaps == 1
+    @test count(e -> e.kind == :note && occursin("Lücke", e.text), ev) == 1
+
+    # gap near the end of the file: frames behind it come with flush! (end of file)
+    p = [ether(ipv4_tcp(S, L, 2404, 51000, 5000, UInt8[]; flags = 0x02)),
+         ether(ipv4_tcp(S, L, 2404, 51000, 5001, S_FRAME)),
+         ether(ipv4_tcp(S, L, 2404, 51000, 5013, GI_CON)), ether(ipv4_tcp(S, L, 2404, 51000, 5029, VALUES))]
+    r = Reader(); feed!(r, pcap(p))
+    @test length(frames(r)) == 1
+    flush!(r)
+    @test frames(r) == [(true, GI_CON), (true, VALUES)] && r.gaps == 1
+
+    # retransmission that overlaps partly with new bytes; later segment already waiting
+    both = vcat(GI_CON, VALUES)
+    p = [ether(ipv4_tcp(S, L, 2404, 51000, 5000, UInt8[]; flags = 0x02)),
+         ether(ipv4_tcp(S, L, 2404, 51000, 5001, both[1:10])),
+         ether(ipv4_tcp(S, L, 2404, 51000, 5021, both[21:end])),        # ahead of a gap
+         ether(ipv4_tcp(S, L, 2404, 51000, 5006, both[6:25]))]          # overlaps both sides
+    r = Reader(); feed!(r, pcap(p))
+    @test frames(r) == [(true, GI_CON), (true, VALUES)] && isempty(r.streams[("10.0.0.5", "2404", "10.0.0.9", "51000")].pending)
+
+    # sequence numbers wrap around 2^32
+    p = [ether(ipv4_tcp(S, L, 2404, 51000, 0xfffffff0, UInt8[]; flags = 0x02)),
+         ether(ipv4_tcp(S, L, 2404, 51000, 0xfffffff1, both[1:20])),
+         ether(ipv4_tcp(S, L, 2404, 51000, 0x00000005, both[21:end]))]
+    r = Reader(); feed!(r, pcap(p))
+    @test frames(r) == [(true, GI_CON), (true, VALUES)]
+
+    # FIN ends the direction: a new connection on the same ports without visible SYN is read
+    p = [ether(ipv4_tcp(S, L, 2404, 51000, 100, S_FRAME)),
+         ether(ipv4_tcp(S, L, 2404, 51000, 106, UInt8[]; flags = 0x11)),
+         ether(ipv4_tcp(S, L, 2404, 51000, 900000, GI_CON))]
+    r = Reader(); feed!(r, pcap(p))
+    @test frames(r) == [(true, S_FRAME), (true, GI_CON)]
+
+    # packets cut by the snap length: noted once, the next whole frame is found again
+    cut = ether(ipv4_tcp(S, L, 2404, 51000, 5001, VALUES))[1:60]
+    p = [ether(ipv4_tcp(S, L, 2404, 51000, 5000, UInt8[]; flags = 0x02)), cut,
+         ether(ipv4_tcp(S, L, 2404, 51000, 5001 + length(VALUES), S_FRAME))]
+    r = Reader(); feed!(r, pcap(p))
+    ev = events!(r)
+    @test [e.apdu for e in ev if e.kind == :frame] == [S_FRAME]
+    @test count(e -> e.kind == :note && occursin("snaplen", e.text), ev) == 1
+
     # not a capture
     r = Reader(); feed!(r, Vector{UInt8}(codeunits("Hallo, keine Datei")))
     ev = events!(r)
