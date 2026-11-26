@@ -298,9 +298,14 @@ function cb_client_object(::Ptr{Cvoid}, ::UInt32, info::Ptr{AsduInfo}, obj::Ptr{
     (1 <= t <= 44 || is_command(t)) || return nothing   # answers to interrogations: in the log only
     image_update(i.common_address, o, i.cause, i.negative != 0)
     if t <= 44
-        # Feedback of sent commands: first value of the feedback IOA after sending.
+        # Feedback of sent commands: first value of the feedback IOA after sending that the
+        # station reports by itself (spontaneous 3, return information 11/12) – not an answer
+        # to an interrogation or read, and not after the command was rejected.
+        i.cause in (3, 11, 12) || return nothing
         for c in GUI.cmds
-            if c.feedback == o.ioa && c.t_feedback < 0 && c.station == i.common_address
+            if c.feedback == o.ioa && c.t_feedback < 0 && c.station == i.common_address &&
+               !(c.final && c.result in ("abgelehnt", "keine Bestätigung", "Verbindung verloren",
+                                         "Verbindung neu aufgebaut"))
                 c.t_feedback = cmd_ms(c)
                 c.feedback_value = value_text(o)
                 GUI.cmds_version += 1
@@ -360,8 +365,7 @@ end
 function cb_server_command(::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd::Ptr{Object})::Cint
     i = unsafe_load(info)
     c = unsafe_load(cmd)
-    what = i.type == 103 ? "Uhrzeit" : "Befehl Typ $(i.type) IOA $(c.ioa) $(value_text(c))" *
-                                       (c.select != 0 ? " (Auswahl)" : "")
+    what = i.type == 103 ? "Uhrzeit" : "Befehl Typ $(i.type) IOA $(c.ioa) $(value_text(c))"   # "Select" is part of the value text
     note("Station: $what von Verbindung $conn: " * (GUI.accept_commands ? "angenommen" : "abgelehnt"))
     return Cint(GUI.accept_commands ? 1 : 0)
 end
@@ -632,7 +636,7 @@ function gui_list_take(p)
         n += 1
     end
     list_save()
-    note("Werteliste: $n empfangene Punkte übernommen")
+    note("Werteliste: " * (n == 1 ? "1 empfangener Punkt übernommen" : "$n empfangene Punkte übernommen"))
 end
 
 function gui_image_clear(p)
@@ -744,6 +748,7 @@ function gui_listen_start(p)
     LISTEN.path = path
     LISTEN.io = io
     LISTEN_QUIET[] = time()
+    LISTEN_HINTED[] = false
     LISTEN.reader = Capture.Reader(; ports)
     LISTEN.to_image = get(p, "image", "1") == "1"
     LISTEN.pos = 0
@@ -767,6 +772,7 @@ function listen_stop()
 end
 
 const LISTEN_QUIET = Ref(0.0)          # time of the last new bytes (live)
+const LISTEN_HINTED = Ref(false)       # hint "file missing / not growing" given once per start
 
 function listen_restart(why::AbstractString)
     LISTEN.io === nothing || close(LISTEN.io)
@@ -783,6 +789,11 @@ function listen_poll()
     if LISTEN.mode == :live
         if !isfile(LISTEN.path)                   # not yet created, or deleted
             LISTEN.io === nothing || listen_restart("Datei verschwunden, warte auf eine neue")
+            if !LISTEN_HINTED[] && time() - LISTEN_QUIET[] > 5
+                LISTEN_HINTED[] = true
+                note("Mithören: Datei $(home_short(LISTEN.path)) gibt es noch nicht – läuft tcpdump? " *
+                     "Befehl im Reiter Mithören"; kind = "warning")
+            end
             return
         end
         if LISTEN.io === nothing
@@ -799,6 +810,11 @@ function listen_poll()
             Capture.flush!(LISTEN.reader)
         elseif time() - LISTEN_QUIET[] > 2.0
             Capture.flush!(LISTEN.reader; older_than = 2.0)
+            if !LISTEN_HINTED[] && LISTEN.reader.frames == 0 && time() - LISTEN_QUIET[] > 10
+                LISTEN_HINTED[] = true
+                note("Mithören: seit 10 s keine IEC-104-Rahmen in der Datei – läuft tcpdump, " *
+                     "richtige Schnittstelle (-i any oder -i lo) und Port?"; kind = "warning")
+            end
         end
     else
         LISTEN_QUIET[] = time()

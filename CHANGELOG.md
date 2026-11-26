@@ -1,5 +1,14 @@
 # Änderungen
 
+## 0.9.3 (26.11.2026)
+
+- Anleitung `docs/11_Test_gegen_Station.md`: eine Station mit dem Prüfstand testen.
+- Anleitung `docs/12_Manueller_Test_GUI.md`: alle Teile der GUI Schritt für Schritt ausprobieren.
+- Rückmeldung eines Befehls zählt nur, was die Station von sich aus meldet.
+- Mithören meldet, wenn die Mitschnittdatei fehlt oder nicht wächst.
+- `tools/wsl_ausprobieren.sh` läuft auch, wenn das Terminal noch im alten Ordner steht.
+- Selbsttest-Protokoll zeigt während des Laufs einen Zwischenstand.
+
 ## 0.9.2 (26.11.2026)
 
 - Test-GUI: neuer Reiter „Mithören“ – IEC-104-Verkehr aus einem Mitschnitt (tcpdump, Wireshark) lesen, auch live.

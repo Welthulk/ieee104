@@ -192,6 +192,10 @@ wait_state 5 "Zähler auf 0" 0 '"ioa":100,[^}]*"n":\[0,0,0,0,0,0,0,0,0\]'
 act 'client/command?type=45&ioa=6001&value=1&mode=direct'
 wait_state 10 "Befehl bestätigt und beendet" 0 \
     '"cmds":\[\{"id":1,"st":1,"ioa":6001,"ty":45,"tsel":-1,"tcon":[0-9]+,"tterm":[0-9]+,"tfin":[0-9]+,"fb":1001,"tfb":-1,[^}]*"res":"ausgeführt"'
+# Eine Generalabfrage nach dem Befehl ist keine Rückmeldung (nur Ursache 3, 11, 12 zählt).
+act 'client/gi?qoi=20'
+wait_state 10 "Generalabfrage nach dem Befehl zählt nicht als Rückmeldung" 0 \
+    '"ioa":1001,"ty":1,"c":20,' '"cmds":\[\{"id":1,[^}]*"fb":1001,"tfb":-1,'
 act 'server/point?type=1&ioa=1001&value=1'
 wait_state 10 "Rückmeldung mit Zeit" 0 '"cmds":\[\{"id":1,[^}]*"fb":1001,"tfb":[0-9]+,[^}]*"fbv":"ein"'
 act 'client/command?type=45&ioa=6001&value=0&mode=sbo'
@@ -276,6 +280,11 @@ fi
 # --- Selbsttest der GUI -------------------------------------------------------------------
 act 'selftest/start'
 act_rejected 'selftest/start' 'Selbsttest läuft bereits'
+# Während des Laufs kopiert: Zwischenstand, nie „Alle Schritte bestanden“.
+RUNNING="$(api 'selftest/report?full=0')"
+echo "$RUNNING" | grep -q '^Zwischenstand: .*(noch nicht fertig)' || fail "Protokoll im Lauf ohne Zwischenstand"
+echo "$RUNNING" | grep -q 'Alle Schritte bestanden' && fail "Protokoll im Lauf meldet „Alle Schritte bestanden“"
+ok "Protokoll während des Laufs als Zwischenstand"
 T=""
 for _ in $(seq 1 600); do   # höchstens 120 s
     T="$(api 'state?since=999999999' | grep -o '"selftest":{"running":[a-z]*,"total":[0-9]*,"passed":[0-9]*,"failed":[0-9]*')"

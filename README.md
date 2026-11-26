@@ -2,7 +2,7 @@
 
 Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
 
-Stand: 26.11.2026, Version 0.9.2, Linux x86-64.
+Stand: 26.11.2026, Version 0.9.3, Linux x86-64.
 
 ## Sofort nutzen, ohne zu bauen
 
@@ -18,7 +18,7 @@ Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab
 Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iec104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
 
 ```bash
-cd dist/iec104-0.9.2-linux-x86_64
+cd dist/iec104-0.9.3-linux-x86_64
 gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
 julia julia/server.jl 2404 &                                                       # Julia: Station
 julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
@@ -29,7 +29,7 @@ julia julia/gui/iec104_gui.jl                                                   
 
 ![Test-GUI im Browser: Verbindung, Befehl, Befehle mit Laufzeiten, Werteliste mit Prozessabbild, Telegramme im Klartext](docs/bilder/test_gui.png)
 
-Reiter „Prüfstand“ mit Teststation als Gegenstelle: Befehle mit Laufzeiten bis Bestätigung, Beendigung und Rückmeldung; Werteliste und Prozessabbild mit Zählern je Ursache (grau: in der Liste, noch nicht empfangen); darunter die Telegramme mit Erklärung. Begriffe: `docs/10_Glossar.md`.
+Reiter „Prüfstand“ mit Teststation als Gegenstelle: Befehle mit Laufzeiten bis Bestätigung, Beendigung und Rückmeldung; Werteliste und Prozessabbild mit Zählern je Ursache (grau: in der Liste, noch nicht empfangen); darunter die Telegramme mit Erklärung. Begriffe: `docs/10_Glossar.md`; Anleitung für den Test gegen eine Station: `docs/11_Test_gegen_Station.md`.
 
 | Reiter „Mithören“ (Mitschnitt mit tcpdump oder Wireshark) | Reiter „Station und lib60870“ (Teststation) |
 | --- | --- |
@@ -78,6 +78,8 @@ Bilder neu erzeugen: `tools/gui_screenshot.sh build/shared/libiec104.so.0`.
 | `docs/08_Interop.md` | Tests gegen eine fremde Implementierung, Befunde, Vorbereitung des Integrationstests mit einer Gegenstelle |
 | `docs/09_Interoperabilitaetsliste.md` | Interoperabilitätsliste nach Abschnitt 9 der Norm (Standardwerte), erzeugt mit `iec104_interop_list` |
 | `docs/10_Glossar.md` | Glossar: Station, Leitstelle, Prüfstand, Adressen, Datenpunkt, Befehle, Abfragen, Verbindung, Begriffe der GUI |
+| `docs/11_Test_gegen_Station.md` | Anleitung: eine Station mit dem Prüfstand der Test-GUI testen (was man braucht, was man erfragt, Ablauf, Fehlerbilder) |
+| `docs/12_Manueller_Test_GUI.md` | Manueller Test aller Teile der Test-GUI gegen ihre Teststation, mit Erklärungen und Abhakliste |
 | API-Doku | `cmake --build --preset debug --target doc`, dann `build/debug/doc/html/index.html` (Doxygen) |
 
 ## Verzeichnisse

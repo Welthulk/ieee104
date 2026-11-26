@@ -1,5 +1,16 @@
 # Änderungen – ausführlich (nur intern, nicht im öffentlichen Repo)
 
+## 0.9.3 (26.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| Doku | docs/11_Test_gegen_Station.md: Anleitung für Kollegen (Voraussetzungen, Fragen an den Betreiber, Installation, Ablauf in der GUI, Ergebnisse sichern, Mithören, Fehlerbilder); geprüft durch wörtliches Befolgen und Faktencheck |
+| Test-GUI | Selbsttest-Protokoll während des Laufs: „Zwischenstand … (noch nicht fertig)“ statt „Ergebnis“, kein „Alle Schritte bestanden“ (Nutzer hatte während Schritt 23 kopiert); Test in test_gui.sh |
+| Doku | docs/12_Manueller_Test_GUI.md (Blöcke A–J mit Erklärung und Abhakliste); docs/11 nach Befolgen und Faktencheck überarbeitet (✎ + „In die Liste“, Wert selbst setzen, Ursachen unter Telegramme, Fehlerbilder Zulassung, t1, TLS-Einstellungen, Ursache 46 bei Befehlen, Sicherheitshinweis 0.0.0.0) |
+| Test-GUI | Rückmeldung nur aus Ursache 3/11/12 und nicht nach abgelehntem Befehl (vorher zählte auch eine GA-Antwort); Hinweise beim Mithören, wenn die Datei fehlt (5 s) oder ohne Rahmen bleibt (10 s); Texte „1 empfangener Punkt“, Stationsereignis ohne doppeltes „(Auswahl)“ |
+| Paket | pruefen.sh: ohne Julia „Library bereit; für Test-GUI und Prüfstand fehlt Julia“ statt „alles bereit“ |
+| Werkzeug | wsl_ausprobieren.sh wechselt nach dem Ermitteln des eigenen Pfads nach $HOME (vorher scheiterte git clone, wenn das Terminal im gelöschten Zielordner stand) |
+
 ## 0.9.2 (26.11.2026)
 
 | Bereich | Änderung |

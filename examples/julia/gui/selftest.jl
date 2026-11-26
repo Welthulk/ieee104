@@ -586,12 +586,13 @@ function selftest_report(full::Bool)
             " · ", ST.started > 0 ? Libc.strftime("%Y-%m-%d %H:%M:%S", ST.started) : "nicht gelaufen")
     println(io, "Station und Leitstelle der Library auf 127.0.0.1:", ST.port,
             "; Normwerte (t0 30 s, t1 15 s, t2 10 s, k 12, w 8), Leitstelle t3 = ", ST_T3_S, " s")
-    ST.running && println(io, "ACHTUNG: Selbsttest läuft noch")
+    ST.running && println(io, "ACHTUNG: Selbsttest läuft noch – Protokoll nach dem Ende erneut kopieren")
     passed = count(s -> s.ok === true, ST.steps)
     run = count(s -> s.ok !== nothing && !s.running, ST.steps)
     total = ST.finished > 0 ? seconds(ST.finished - ST.started) : "–"
-    println(io, "Ergebnis: ", passed, " von ", run, " bestanden",
-            run == passed ? "" : " – $(run - passed) FEHLER", " (Dauer ", total, ")")
+    println(io, ST.running ? "Zwischenstand: " : "Ergebnis: ", passed, " von ", run, " bestanden",
+            run == passed ? "" : " – $(run - passed) FEHLER",
+            ST.running ? " (noch nicht fertig)" : " (Dauer $(total))")
     println(io)
     println(io, "Rahmen: → gesendet, ← empfangen; eigene Verbindung aus Sicht der Leitstelle")
     println(io)
@@ -603,7 +604,8 @@ function selftest_report(full::Bool)
     shown = full ? ST.steps : filter(s -> s.ok === false && !s.running, ST.steps)
     if isempty(shown)
         println(io)
-        println(io, "Alle Schritte bestanden. Vollständiges Protokoll mit allen Rahmen: „Protokoll speichern“.")
+        println(io, ST.running ? "Bisher kein Fehler; der Selbsttest läuft noch." :
+                    "Alle Schritte bestanden. Vollständiges Protokoll mit allen Rahmen: „Protokoll speichern“.")
     end
     for s in shown
         println(io)

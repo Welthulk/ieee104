@@ -43,8 +43,15 @@ if command -v julia > /dev/null 2>&1; then
         nein "Julia ab 1.10 (für julia/)" "$V"
     fi
 else
-    printf '  %-34s --   %s\n' "Julia (nur für julia/)" "nicht installiert: curl -fsSL https://install.julialang.org | sh"
+    JULIA_FEHLT=1
+    printf '  %-34s --   %s\n' "Julia (für julia/ und die GUI)" "nicht installiert: curl -fsSL https://install.julialang.org | sh"
 fi
 
-[ "$OK" = 1 ] && echo "Ergebnis: alles bereit" || echo "Ergebnis: siehe FEHLT"
+if [ "$OK" != 1 ]; then
+    echo "Ergebnis: siehe FEHLT"
+elif [ "${JULIA_FEHLT:-0}" = 1 ]; then
+    echo "Ergebnis: Library bereit; für Test-GUI und Prüfstand fehlt Julia"
+else
+    echo "Ergebnis: alles bereit"
+fi
 [ "$OK" = 1 ]
