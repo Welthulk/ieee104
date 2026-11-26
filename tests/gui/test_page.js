@@ -80,9 +80,25 @@ globalThis.fetch = async (url) => {
 };
 function runTimers() { const t = timers; timers = []; for (const f of t) { try { f(); } catch (e) { err('Timer', e); } } }
 
+// Inline handlers (onclick="f()") look names up on the element and the document first: a
+// function named like one of their properties is never called. "command" is such a
+// property of buttons in current browsers (invoker commands); the list holds the
+// names of HTMLElement, button, select, input and document that a handler could use.
+const SHADOWING = new Set(('command commandForElement popover popoverTargetElement popoverTargetAction form ' +
+  'formAction name value type labels click focus blur select remove before after append prepend replaceWith ' +
+  'toggle show close open write writeln submit reset checkValidity reportValidity setCustomValidity add item ' +
+  'namedItem stepUp stepDown showPicker title hidden lang dir style dataset children closest matches animate ' +
+  'scroll scrollTo scrollBy scrollIntoView contains normalize evaluate find fetch').split(' '));
+const handlerNames = new Set([...html.matchAll(/\bon(?:click|change|input)="([A-Za-z_$][\w$]*)\(/g)].map(x => x[1]));
+for (const n of handlerNames) {
+  if (SHADOWING.has(n)) errors.push(`Handler ${n}() kollidiert mit einer Eigenschaft von Element oder Dokument`);
+  if (!new RegExp('(?:^|\\n)(?:async )?function ' + n + '\\(').test(script) && !/^(confirm|alert)$/.test(n))
+    errors.push(`Handler ${n}() ist keine Funktion des Seitenskripts`);
+}
+
 let api;
 try {
-  api = new Function(script + '\n;return {refresh, act, connect, command, listAdd, listEdit, pickCommand, tab, drawLog, drawImage, renderCmds, logText, saveImage, copyText, copyReport, saveReport, sendPoint};')();
+  api = new Function(script + '\n;return {refresh, act, connect, sendCommand, listAdd, listEdit, pickCommand, tab, drawLog, drawImage, renderCmds, logText, saveImage, copyText, copyReport, saveReport, sendPoint};')();
 } catch (e) { err('Laden', e); }
 const sleep = ms => new Promise(r => GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => { r(); return false; }));
 async function tick(where) {
@@ -108,7 +124,7 @@ async function main() {
   api.connect(); await sleep(2500); await tick('Verbinden'); await sleep(300); await tick('Verbinden2');
   print('Leitstelle: ' + els['cstate'].textContent);
   v('cpick').value = String(1 * 16777216 + 6001); api.pickCommand();
-  api.command(); await sleep(1500); await tick('Befehl');
+  api.sendCommand(); await sleep(1500); await tick('Befehl');
   await api.act('server/point', {type: 1, ioa: 1001, value: 1}); await sleep(800); await tick('Rückmeldung');
   api.listEdit(1, 100); api.saveImage();
   await api.act('list/take'); await tick('Übernehmen');

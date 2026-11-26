@@ -241,7 +241,8 @@ end
 is_command(t::Integer) = 45 <= t <= 51 || 58 <= t <= 64
 cmd_ms(c::SentCommand) = round(Int, (time() - c.sent) * 1000)
 
-const DOUBLE_TEXT = ("unbestimmt", "aus", "ein", "gestört")
+const DOUBLE_TEXT = ("unbestimmt", "aus", "ein", "gestört")          # double point (DIQ)
+const DCO_TEXT = ("nicht erlaubt", "aus", "ein", "nicht erlaubt")     # double command (DCS)
 const STEP_TEXT = ("nicht erlaubt", "tiefer", "höher", "nicht erlaubt")
 pick(names, v) = 0 <= v <= 3 && isinteger(v) ? names[Int(v)+1] : "Wert $v"
 num_text(v::Float64) = isinteger(v) && abs(v) < 1e15 ? string(Int(v)) : string(round(v; sigdigits = 7))
@@ -257,9 +258,10 @@ function value_text(o::Object)
     t == 5 && return "Stufe $(num_text(o.value))" * (o.flags & 0x01 != 0 ? " (läuft)" : "") * q
     t in (7, 33) && return "Bits 0x" * string(o.bits; base = 16, pad = 8) * q
     t in (9, 11, 13, 21) && return "Wert " * num_text(o.value) * q
-    t == 15 && return "Zähler $(num_text(o.value)) Folge $(o.qualifier)" * q
+    t == 15 && return "Zähler $(num_text(o.value)) Folge $(o.qualifier)" *
+                      (o.flags & 0x01 != 0 ? " CY" : "") * (o.flags & 0x02 != 0 ? " CA" : "") * q
     t == 45 && return (o.value != 0 ? "ein" : "aus") * cmd(false)
-    t == 46 && return pick(DOUBLE_TEXT, o.value) * cmd(false)
+    t == 46 && return pick(DCO_TEXT, o.value) * cmd(false)
     t == 47 && return pick(STEP_TEXT, o.value) * cmd(false)
     t in (48, 49, 50) && return "Sollwert " * num_text(o.value) * cmd(true)
     t in (51, 64) && return "Bits 0x" * string(o.bits; base = 16, pad = 8)
@@ -304,14 +306,16 @@ function cb_client_object(::Ptr{Cvoid}, ::UInt32, info::Ptr{AsduInfo}, obj::Ptr{
         end
         return nothing
     end
-    # Confirmation (7) and termination (10) of the newest open command with this address.
-    for c in Iterators.reverse(GUI.cmds)
+    # Confirmation (7) and termination (10): the oldest open command that still waits for
+    # this answer, as the library matches them (answers come in the order of the requests).
+    waits(c) = i.cause == 7 ? (o.select != 0 ? c.t_select < 0 : c.t_con < 0) :
+               i.cause == 10 ? c.t_term < 0 : false
+    for c in GUI.cmds
         (c.station == i.common_address && c.object.ioa == o.ioa && c.object.type == o.type &&
-         !c.final) || continue
+         !c.final && waits(c)) || continue
         if i.cause == 7
-            o.select != 0 ? (c.t_select < 0 && (c.t_select = cmd_ms(c))) :
-                            (c.t_con < 0 && (c.t_con = cmd_ms(c)))
-        elseif i.cause == 10 && c.t_term < 0
+            o.select != 0 ? (c.t_select = cmd_ms(c)) : (c.t_con = cmd_ms(c))
+        else
             c.t_term = cmd_ms(c)
         end
         GUI.cmds_version += 1
@@ -326,7 +330,7 @@ const RESULT_TEXT = Dict(0 => "bestätigt", 1 => "ausgeführt", 2 => "ausgewähl
 function cb_command_result(::Ptr{Cvoid}, station::UInt16, cmd::Ptr{Object}, result::Cint)::Cvoid
     o = unsafe_load(cmd)
     res = get(RESULT_TEXT, Int(result), "Ergebnis $result")
-    for c in Iterators.reverse(GUI.cmds)
+    for c in GUI.cmds   # oldest open command first, like the library
         (c.station == station && c.object.ioa == o.ioa && c.object.type == o.type && !c.final) || continue
         c.final = true
         c.result = res
@@ -383,6 +387,8 @@ function log_entry(side::String, level::Cint, conn::UInt32, message::Cstring)
     try
         m = unsafe_string(message)
         if level <= 1
+            # A close is reported in German by the state callback, with a hint.
+            startswith(m, "closed: ") && return nothing
             note("Library $conn: " * m; kind = level == 0 ? "error" : "warning")
         elseif level == 4
             sent = startswith(m, "sent ")
@@ -431,6 +437,7 @@ function gui_client_connect(p)
         old = GUI.client
         GUI.client = C_NULL
         client_destroy(old)
+        close_open_commands("Verbindung neu aufgebaut")
         GUI.client_state != IEC104.LINK_CLOSED && note("Leitstelle: alte Verbindung getrennt")
         GUI.client_state = IEC104.LINK_CLOSED
     end
@@ -468,6 +475,17 @@ function gui_client_connect(p)
     note("Leitstelle: verbinde mit $host:$port, Station $(GUI.station)" *
          (get(p, "tls", "") == "1" ? " (TLS)" : "") *
          (GUI.auto_step == 1 ? ", danach STARTDT und Generalabfrage" : ""))
+end
+
+"Commands without result get one when their connection is gone (destroy reports nothing)."
+function close_open_commands(why::AbstractString)
+    for c in GUI.cmds
+        c.final && continue
+        c.final = true
+        c.result = why
+        c.t_final = cmd_ms(c)
+        GUI.cmds_version += 1
+    end
 end
 
 "Runs STARTDT and the general interrogation after connecting (called by the poll task)."
@@ -532,6 +550,7 @@ end
 # --- Value list (entered in the GUI, saved as tab-separated file) ---------------
 
 function list_save()
+    GUI.list_version += 1   # the page shows the list in memory, even if saving fails below
     f = list_file()
     mkpath(dirname(f))
     tmp = f * ".neu"
@@ -543,14 +562,19 @@ function list_save()
         end
     end
     mv(tmp, f; force = true)
-    GUI.list_version += 1
 end
 
 function list_load()
     f = list_file()
     isfile(f) || return
+    lines = try
+        readlines(f)
+    catch e
+        note("Werteliste $f nicht lesbar: " * sprint(showerror, e); kind = "warning")
+        return
+    end
     n = 0
-    for line in eachline(f)
+    for line in lines
         (isempty(strip(line)) || startswith(line, '#')) && continue
         x = split(line, '\t'; limit = 5)
         try
@@ -610,6 +634,11 @@ function gui_image_reset(p)
 end
 
 function gui_server_listen(p)
+    # Check everything first: an error must not leave the old station destroyed and a new one half started.
+    station = p_int(p, "station", 1)
+    port = p_int(p, "port", 2404)
+    1 <= station <= 65534 || throw(ArgumentError("Station (CA) 1…65534"))
+    0 <= port <= 65535 || throw(ArgumentError("Port 0…65535 (0 = frei wählen)"))
     GUI.server != C_NULL && (server_destroy(GUI.server); GUI.server = C_NULL)
     empty!(GUI.connections)
     cb = Callbacks(GUI;
@@ -619,7 +648,7 @@ function gui_server_listen(p)
         on_security = @cfunction(cb_security, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cstring)))
     GUI.server = server_create(LinkConfig(), cb)
     server_set_log(GUI.server, 4, @cfunction(cb_log_server, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
-    GUI.server_station = UInt16(p_int(p, "station", 1))
+    GUI.server_station = UInt16(station)
     try
         for o in values(GUI.points)
             try
@@ -631,7 +660,7 @@ function gui_server_listen(p)
             end
         end
         # Same address as the GUI: 127.0.0.1 unless the GUI was started on another one.
-        IEC104.server_listen(GUI.server, p_int(p, "port", 2404); address = GUI_ADDRESS[])
+        IEC104.server_listen(GUI.server, port; address = GUI_ADDRESS[])
     catch
         server_destroy(GUI.server)   # not listening: no half-started station
         GUI.server = C_NULL
@@ -768,6 +797,7 @@ const ACTIONS = Dict{String,Function}(
     "/api/client/command" => gui_client_command,
     "/api/client/clear" => gui_image_clear,
     "/api/image/reset" => gui_image_reset,
+    "/api/client/cmds_clear" => p -> (empty!(GUI.cmds); GUI.cmds_version += 1),
     "/api/list/add" => gui_list_add,
     "/api/list/remove" => gui_list_remove,
     "/api/list/take" => gui_list_take,
@@ -901,7 +931,8 @@ function state_json(p)
         first || print(io, ',')
         first = false
         print(io, "{\"seq\":", e.seq)
-        jfield(io, "time", Libc.strftime("%H:%M:%S", e.time) * @sprintf(".%03d", round(Int, (e.time % 1) * 1000) % 1000))
+        ms = floor(Int, e.time * 1000)
+        jfield(io, "time", Libc.strftime("%H:%M:%S", ms ÷ 1000) * @sprintf(".%03d", ms % 1000))
         jfield(io, "kind", e.kind)
         jfield(io, "text", e.text)
         jfield(io, "explain", e.explain)
@@ -1078,12 +1109,12 @@ function main(port = 8080, address = "127.0.0.1", lib60870 = "")
     GUI_ADDRESS[] = address
     PEER.folder = peer_folder(lib60870)
     atexit(peer_kill)
+    list_load()   # before the start line: scripts wait for it
     server = listen(parse(IPAddr, address), port)
     GUI_PORT[] = Int(getsockname(server)[2])   # port 0: the one chosen by the system
     println("IEC 104 Test-GUI (Library ", IEC104.version(), "): http://localhost:$(GUI_PORT[])")
     flush(stdout)   # scripts wait for this line
     note("GUI gestartet, Library " * IEC104.version())
-    list_load()
     if !isempty(PEER.folder)
         found = [x.key for x in PEER_PROGRAMS if peer_found(x)]
         note("Gegenstelle lib60870: $(PEER.folder), " *

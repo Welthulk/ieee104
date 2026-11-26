@@ -205,6 +205,16 @@ act 'client/command?type=45&ioa=6001&value=1'
 wait_state 10 "abgelehnter Befehl" 0 '"cmds":\[\{"id":3,[^}]*"res":"abgelehnt"'
 act 'server/accept?on=1'
 act 'list/take'
+# Zwei Befehle an dieselbe IOA kurz nacheinander: jede Antwort gehört zum älteren offenen
+# Befehl (wie in der Library); beide enden mit eigenen Laufzeiten als „ausgeführt“.
+act 'client/command?type=45&ioa=6001&value=1'
+act 'client/command?type=45&ioa=6001&value=0'
+wait_state 10 "zwei Befehle an dieselbe IOA" 0 \
+    '"cmds":\[\{"id":5,"st":1,"ioa":6001,"ty":45,"tsel":-1,"tcon":[0-9]+,"tterm":[0-9]+,"tfin":[0-9]+,[^}]*"res":"ausgeführt"[^}]*\},\{"id":4,"st":1,"ioa":6001,"ty":45,"tsel":-1,"tcon":[0-9]+,"tterm":[0-9]+,"tfin":[0-9]+,[^}]*"res":"ausgeführt"'
+act 'client/cmds_clear'
+wait_state 5 "Befehle geleert" 0 '"cmds":\[\]'
+act_rejected 'server/listen?port=0&station=70000' 'Station (CA) 1…65534'
+wait_state 5 "Station läuft nach falscher Eingabe weiter" 0 "\"server\":\\{\"running\":true,\"port\":$SPORT"
 wait_state 5 "empfangene Punkte übernommen" 0 '\{"st":1,"ioa":1001,"ty":1,"fb":-1,"tx":""\}'
 act 'client/close'
 

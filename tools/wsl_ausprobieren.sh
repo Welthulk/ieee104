@@ -92,10 +92,12 @@ have julia || echo "  Julia: curl -fsSL https://install.julialang.org | sh"
 
 # --- 3. Fertig gebaute Library ----------------------------------------------------------
 step "3. Fertig gebaute Library"
+# Immer das neueste Paket: ein Zip, das neuer ist als alle entpackten Ordner, wird entpackt.
 PAKET="$(ls -d dist/iec104-*-linux-x86_64 2>/dev/null | sort -V | tail -1)"
-if [ -z "$PAKET" ]; then
-    ZIP="$(ls dist/iec104-*-linux-x86_64.zip 2>/dev/null | sort -V | tail -1)"
-    if [ -n "$ZIP" ] && have unzip; then
+ZIP="$(ls dist/iec104-*-linux-x86_64.zip 2>/dev/null | sort -V | tail -1)"
+if [ -n "$ZIP" ] && [ "$(printf '%s\n%s\n' "$PAKET" "${ZIP%.zip}" | sort -V | tail -1)" = "${ZIP%.zip}" ] &&
+   [ "$PAKET" != "${ZIP%.zip}" ]; then
+    if have unzip; then
         unzip -q -o "$ZIP" -d dist
         PAKET="${ZIP%.zip}"
     fi

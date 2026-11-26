@@ -99,6 +99,17 @@ d(hex) = describe(parse_hex(hex))
     @test x.negative && x.cause == 46 && x.station == 99
     @test details(parse_hex("01 02 03")).format == '?'
 
+    # built: read command (102) has no element after the IOA
+    s, m = d("68 0d 00 00 00 00 66 01 05 00 01 00 6a 00 00")
+    @test endswith(s, "IOA 106") && m == "Leitstelle fragt einen einzelnen Wert ab"
+    # built: double command with DCS 0 and 3 is "not permitted" (not "indeterminate"/"faulty")
+    @test occursin("IOA 6046 nicht erlaubt", d("68 0e 00 00 00 00 2e 01 06 00 01 00 9e 17 00 00")[1])
+    @test occursin("IOA 6046 nicht erlaubt", d("68 0e 00 00 00 00 2e 01 06 00 01 00 9e 17 00 03")[1])
+    # built: integrated totals with CY and CA (BCR octet 5: 0x60 | sequence 2)
+    @test occursin("Zähler 100 Folge 2 CY CA", d("68 12 00 00 00 00 0f 01 25 00 01 00 6b 00 00 64 00 00 00 62")[1])
+    # built: end of initialization after parameter change (COI 0x80)
+    @test occursin("Grund 0 (Parameter geändert)", d("68 0e 00 00 00 00 46 01 04 00 01 00 00 00 00 80")[1])
+
     # unreadable input never throws
     @test startswith(d("68 0e 00 00")[1], "?")
     @test startswith(d("01 02 03 04 05 06")[1], "?")

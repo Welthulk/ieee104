@@ -127,7 +127,7 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
   <div class="row">
     <label>Ablauf<select id="cmode"><option value="direct">direkt</option><option value="sbo">Select, dann Execute</option><option value="select">nur Select</option><option value="execute">nur Execute</option></select></label>
     <label>Rückmelde-IOA<input id="cfb" class="m" placeholder="aus der Liste"></label>
-    <label>&nbsp;<button class="main" onclick="command()">Senden</button></label>
+    <label>&nbsp;<button class="main" onclick="sendCommand()">Senden</button></label>
   </div>
   <p class="hint">Die Rückmelde-IOA ist die Meldung, an der man sieht, dass der Befehl gewirkt hat
     (z. B. Befehl „Schalter EIN“ auf IOA 6001, Stellung des Schalters auf IOA 1001). Ihr erster neuer Wert nach dem
@@ -135,7 +135,7 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
 </section>
 
 <section class="tab wide" data-tab="pruef">
-  <h2>Befehle und Laufzeiten <button onclick="cmds = []; renderCmds()">Leeren</button></h2>
+  <h2>Befehle und Laufzeiten <button onclick="act('client/cmds_clear')">Leeren</button></h2>
   <div class="scroll" style="max-height: 220px"><table>
     <thead><tr><th>Nr.</th><th>Zeit</th><th>Stat.</th><th>IOA</th><th>Text</th><th>Typ</th><th>Befehl</th><th>Ablauf</th>
       <th>Ergebnis</th><th title="Select bestätigt">Select ms</th><th title="Bestätigung (ACTCON)">Bestät. ms</th>
@@ -253,7 +253,7 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
     <label><input id="showexplain" type="checkbox" checked onchange="renderLog()">Erklärungen</label>
     <label><input id="showobj" type="checkbox" onchange="renderLog()">alle Objekte</label>
     <label><input id="showhex" type="checkbox" onchange="renderLog()">Hex</label>
-    <label><input id="pause" type="checkbox">anhalten</label>
+    <label><input id="pause" type="checkbox" onchange="renderLog()">anhalten</label>
     <button onclick="copyText(logText())">Angezeigte kopieren</button>
     <button onclick="saveText(logText(), 'iec104_telegramme')">Angezeigte speichern</button>
     <button onclick="entries = []; renderLog()">Leeren</button>
@@ -277,12 +277,14 @@ const TYPES = {1:'M_SP_NA_1 Einzelmeldung', 3:'M_DP_NA_1 Doppelmeldung', 5:'M_ST
   101:'C_CI_NA_1 Zählerabfrage', 103:'C_CS_NA_1 Uhrzeit', 107:'C_TS_TA_1 Test',
   21:'M_ME_ND_1 normiert ohne Qualität', 32:'M_ST_TB_1 Stufenstellung+Zeit', 33:'M_BO_TB_1 Bitmuster+Zeit',
   51:'C_BO_NA_1 Bitmuster-Befehl', 60:'C_RC_TA_1 Stufenbefehl+Zeit', 64:'C_BO_TA_1 Bitmuster-Befehl+Zeit',
-  102:'C_RD_NA_1 Lesebefehl', 104:'C_TS_NA_1 Testbefehl', 105:'C_RP_NA_1 Rücksetzen'};
+  102:'C_RD_NA_1 Lesebefehl', 104:'C_TS_NA_1 Testbefehl', 105:'C_RP_NA_1 Rücksetzen',
+  38:'M_EP_TD_1 Schutzereignis+Zeit', 39:'M_EP_TE_1 Schutz-Anregungen+Zeit', 40:'M_EP_TF_1 Schutz-Auslösungen+Zeit'};
 const CAUSES = {1:'zyklisch', 2:'Hintergrund', 3:'spontan', 4:'initialisiert', 5:'Abfrage', 6:'Aktivierung',
   7:'Bestätigung', 8:'Abbruch', 9:'Abbruch bestätigt', 10:'Beendigung', 11:'Rückmeldung fern',
   12:'Rückmeldung lokal', 20:'Generalabfrage', 37:'Zählerabfrage', 44:'Typ unbekannt',
   45:'Ursache unbekannt', 46:'Station unbekannt', 47:'IOA unbekannt'};
 for (let g = 1; g <= 16; g++) CAUSES[20 + g] = 'Gruppe ' + g;
+for (let g = 1; g <= 4; g++) CAUSES[37 + g] = 'Zählergruppe ' + g;
 const opt = (sel, keys) => keys.forEach(k => sel.add(new Option(k + ' ' + TYPES[k], k)));
 const COMMAND_TYPES = [45, 46, 47, 48, 49, 50, 51, 58, 59, 60, 61, 62, 63, 64];
 opt(document.getElementById('ctype'), COMMAND_TYPES);
@@ -330,7 +332,7 @@ function connect() {
   for (const k of ['t0', 't1', 't2', 't3', 'k', 'w', 'ca', 'cert', 'key', 'peer', 'conf_to', 'term_to']) p[k] = v(k);
   act('client/connect', p);
 }
-function command() {
+function sendCommand() {   // not command(): buttons have their own property "command"
   act('client/command', {station: v('station'), type: v('ctype'), ioa: v('cioa'), value: v('cvalue'),
                          qu: v('cqu'), mode: v('cmode'), fb: v('cfb')});
 }
@@ -413,7 +415,8 @@ function saveImage() {
   const head = 'Station;IOA;Text;Typ;Wert;Ursache;Zeitmarke;zuletzt;zyklisch;Hintergrund;spontan;GA;Zählerabfrage;Lesen;Rückmeldung;Befehl;sonst';
   const lines = rows().map(r => [r.st, r.ioa, (r.li ? r.li.tx : '').replace(/;/g, ','), r.p ? r.p.ty : (r.li ? r.li.ty || '' : ''),
     r.p ? r.p.v : '', r.p ? r.p.c : '', r.p ? r.p.tt : '', r.p ? r.p.u : '', ...(r.p ? r.p.n : Array(9).fill(''))].join(';'));
-  saveText([head, ...lines].join('\n') + '\n', 'iec104_prozessabbild', 'csv');
+  // Byte order mark: Excel reads the file as UTF-8 (umlauts) only with it.
+  saveText('\ufeff' + [head, ...lines].join('\n') + '\n', 'iec104_prozessabbild', 'csv');
 }
 const ms = x => x >= 0 ? x : '';
 function renderCmds() {
@@ -430,7 +433,10 @@ function showList(s) {
   lv = s.lv || 0;
   document.getElementById('listfile').textContent = 'gespeichert in ' + s.list_file;
   const sel = document.getElementById('cpick'), old = sel.value;
-  sel.innerHTML = '<option value="">–</option>' + list.filter(e => isCommand(e.ty) || e.fb >= 0).map(e =>
+  const commands = list.filter(e => isCommand(e.ty) || e.fb >= 0);
+  sel.innerHTML = (commands.length ? '<option value="">– bitte wählen –</option>'
+                   : '<option value="">(leer: unten in der Werteliste Befehle mit Typ 45–64 eintragen)</option>') +
+    commands.map(e =>
     `<option value="${key(e.st, e.ioa)}">${e.st}/${e.ioa} ${esc(e.tx)}${e.ty ? ' (Typ ' + e.ty + ')' : ''}</option>`).join('');
   sel.value = old;
   renderImage();
@@ -447,6 +453,7 @@ function saveText(text, name, ext = 'txt') {
 function sendPoint(ioa, type, delta) {
   const input = document.getElementById('pv' + ioa);
   const value = delta === undefined ? input.value : String(Number(input.value) + delta);
+  input.value = value;   // the table is not redrawn while a button in it has the focus
   act('server/point', {ioa, type, value});
 }
 
@@ -562,6 +569,7 @@ function drawLog() {
 let since = 0;
 let boot = '';
 let refreshing = false;
+let pollError = '';   // text this polling wrote into the error line
 let pointsShown = '';
 async function refresh() {
   if (refreshing) return;   // the next interval catches up; avoids duplicate log lines
@@ -572,11 +580,13 @@ async function update() {
   let s;
   try {
     const r = await fetch('/api/state?' + new URLSearchParams({since, pe, pv, lv, cv}), GUI_HEADER);
-    if (!r.ok) { document.getElementById('err').textContent = await r.text(); return; }
+    if (!r.ok) { pollError = document.getElementById('err').textContent = await r.text(); return; }
     s = await r.json();
-  } catch (e) { document.getElementById('err').textContent = 'GUI-Programm nicht erreichbar'; return; }
+  } catch (e) { pollError = document.getElementById('err').textContent = 'GUI-Programm nicht erreichbar'; return; }
   const err = document.getElementById('err');
-  if (err.textContent === 'GUI-Programm nicht erreichbar' || err.textContent.startsWith('Zugriff')) err.textContent = '';
+  // A message of the polling itself goes away as soon as polling works again.
+  if (pollError && err.textContent === pollError) err.textContent = '';
+  pollError = '';
   if (s.boot !== boot) {   // GUI program (re)started: its event numbers start again
     const restarted = boot !== '';
     boot = s.boot;
@@ -605,6 +615,8 @@ async function update() {
       `<td><button onclick="sendPoint(${p.ioa}, ${p.type})">Senden</button> ` +
       `<button onclick="sendPoint(${p.ioa}, ${p.type}, 1)">+1</button></td></tr>`).join('');
   }
+  const acc = document.getElementById('accept');
+  if (document.activeElement !== acc) acc.checked = s.server.accept;
   document.getElementById('conns').textContent =
     s.server.connections.map(c => c.id + ': ' + c.state).join(', ') || 'keine';
   showPeer(s.peer);

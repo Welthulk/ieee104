@@ -1,5 +1,14 @@
 # Änderungen
 
+## 0.9.2 (26.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| Test-GUI | Korrektur: „Senden“ beim Befehl tat in aktuellen Browsern nichts. Die Funktion hieß `command()`, und Buttons haben dort eine eigene Eigenschaft `command`, die im `onclick` vorgeht; jetzt `sendCommand()` |
+| Test-GUI | „aus der Werteliste“ zeigt bei leerer Liste, wie sie sich füllt; gescheiterter Verbindungsaufbau nur noch als deutsche Meldung (ohne englische Zeile der Library); Lesebefehl ohne „(Element fehlt)“ |
+| Test | `test_page.js` prüft jeden Namen in `onclick`/`onchange`/`oninput`: Funktion des Seitenskripts und keine Eigenschaft von Element oder Dokument |
+| Werkzeug | `wsl_ausprobieren.sh` nimmt immer das neueste Paket und entpackt ein Zip, das neuer ist als die entpackten Ordner (vorher blieb ein älterer Ordner stehen) |
+
 ## 0.9.1 (26.11.2026)
 
 | Bereich | Änderung |

@@ -91,7 +91,8 @@ function cp56(b, i)
     return t
 end
 
-const DOUBLE = ("unbestimmt", "aus", "ein", "gestört")
+const DOUBLE = ("unbestimmt", "aus", "ein", "gestört")        # double point (DIQ)
+const DCO = ("nicht erlaubt", "aus", "ein", "nicht erlaubt")   # double command (DCS)
 const STEP = ("nicht erlaubt", "tiefer", "höher", "nicht erlaubt")
 
 command_mode(q::UInt8) = q & 0x80 != 0 ? " Select" : ""
@@ -121,11 +122,12 @@ function element(t::Int, b, i)
         "Wert " * string(reinterpret(Float32, u32(b, i))) * quality(b[i+4])
     elseif base == 15
         "Zähler $(reinterpret(Int32, u32(b, i))) Folge $(b[i+4] & 0x1f)" *
+            (b[i+4] & 0x20 != 0 ? " CY" : "") * (b[i+4] & 0x40 != 0 ? " CA" : "") *
             (b[i+4] & 0x80 != 0 ? " [IV]" : "")
     elseif base == 45
         (b[i] & 0x01 != 0 ? "ein" : "aus") * command_mode(b[i])
     elseif base == 46
-        DOUBLE[(b[i] & 0x03) + 1] * command_mode(b[i])
+        DCO[(b[i] & 0x03) + 1] * command_mode(b[i])
     elseif base == 47
         STEP[(b[i] & 0x03) + 1] * command_mode(b[i])
     elseif base == 48
@@ -137,7 +139,7 @@ function element(t::Int, b, i)
     elseif base == 51
         "Bits 0x" * string(u32(b, i); base = 16, pad = 8)
     elseif t == 70
-        "Grund $(b[i] & 0x7f)"
+        "Grund $(b[i] & 0x7f)" * (b[i] & 0x80 != 0 ? " (Parameter geändert)" : "")
     elseif t == 100
         q = Int(b[i])
         q == 20 ? "QOI 20 (Station)" : 21 <= q <= 36 ? "QOI $q (Gruppe $(q - 20))" : "QOI $q"
@@ -258,7 +260,7 @@ function describe_asdu(head::String, b, i::Int)
     if length(b) >= j + 2
         ioa = Int(b[j]) | Int(b[j+1]) << 8 | Int(b[j+2]) << 16
         e = try
-            length(b) >= j + 3 ? element(t, b, j + 3) : "(Element fehlt)"
+            t == 102 ? "" : length(b) >= j + 3 ? element(t, b, j + 3) : "(Element fehlt)"
         catch
             "(Element unvollständig: " * hexdump(b[j+3:end]) * ")"
         end
