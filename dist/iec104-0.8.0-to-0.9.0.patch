@@ -1,0 +1,1921 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index bfc21be..38d579d 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,16 @@
+ # Änderungen
+ 
++## 0.9.0 (26.11.2026)
++
++| Bereich | Änderung |
++| --- | --- |
++| Test-GUI | Prüfstand: Reiter „Prüfstand (Leitstelle)“ gegen eine Station. Werteliste direkt in der GUI (Station, IOA, Typ, Text, Rückmelde-IOA), automatisch gespeichert (`~/.config/iec104/werteliste.tsv`), „Empfangene übernehmen“; Prozessabbild aus Liste und Empfangenem mit Zählern je Ursache (zyklisch, Hintergrund, spontan, GA, Zählerabfrage, Lesen, Rückmeldung, Befehl, sonst), Markierung fehlender, fremder und abweichender Punkte, als Tabelle speichern |
++| Test-GUI | Befehle mit QU/QL, Ablauf direkt, Select+Execute, nur Select, nur Execute; Tabelle mit Ergebnis und Laufzeiten bis Select-Bestätigung, ACTCON, ACTTERM, Rückmeldung und Endergebnis; Zeitlimits und „ohne ACTTERM“ einstellbar; nach dem Verbinden auf Wunsch STARTDT und Generalabfrage; Lesebefehl, Zählerabfrage mit Gruppe und Einfrieren |
++| Test-GUI | Telegramme: Filter nach Richtung, I/S/U, Typ, Ursache, IOA, Text; alle Objekte, Hex; anhalten; Angezeigtes kopieren und speichern; 20000 Einträge. Reiter für Prüfstand, Station und lib60870, Selbsttest. Trenngründe auf Deutsch |
++| API | `iec104_decode_asdu()`: ASDU in Kopf und Objekte zerlegen (z. B. für Mitschnitte), `iec104_type_name()`; in Julia `decode_asdu`, `type_name`, `client_set_options` |
++| Transport | Reihenfolge der Ereignisse: Eine angenommene Verbindung meldet „verbunden“ jetzt vor ihren ersten Rahmen. Bisher kam die Meldung erst danach, wenn die Gegenstelle STARTDT gleich nach dem Verbindungsaufbau schickte |
++| Test | `Operation.ConnectedReportedBeforeFirstFrame` prüft diese Reihenfolge; `run_lib60870.sh` las den Port gelegentlich aus dem Log des vorigen Laufs (Fall „Server <- Client“ schlug selten fehl) |
++
+ ## 0.8.0 (26.11.2026)
+ 
+ | Bereich | Änderung |
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8e654ea..debc223 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,7 @@
+ cmake_minimum_required(VERSION 3.21)
+ 
+ project(iec104
+-    VERSION 0.8.0
++    VERSION 0.9.0
+     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
+     LANGUAGES C CXX)
+ 
+diff --git a/README.md b/README.md
+index 8af1d6c..78f05c3 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
+ 
+-Stand: 26.11.2026, Version 0.8.0, Linux x86-64.
++Stand: 26.11.2026, Version 0.9.0, Linux x86-64.
+ 
+ ## Sofort nutzen, ohne zu bauen
+ 
+@@ -10,7 +10,7 @@ Stand: 26.11.2026, Version 0.8.0, Linux x86-64.
+ | --- | --- |
+ | Fertig gebaute Library für Linux x86-64 (Release, mit TLS) | `dist/iec104-<version>-linux-x86_64/` (in der Lieferung als gleichnamiges Zip): `lib/libiec104.so.0`, `include/iec104/iec104.h`, Kurzanleitung `README.md` |
+ | Beispielprogramme für Julia | `julia/` im selben Ordner bzw. `examples/julia/`: `IEC104.jl` (Anbindung), `client.jl`, `server.jl`; Anleitung `docs/07_Julia.md` |
+-| Test-GUI im Browser | `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080`: Leitstelle und Station mit Abfragen, Befehlen, Werten, TLS; Selbsttest mit Protokoll zum Weitergeben; jeder Rahmen im Klartext erklärt (`docs/07_Julia.md`, Abschnitt 7) |
++| Test-GUI und Prüfstand im Browser | `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080`: Leitstelle gegen eine Station mit Werteliste, Prozessabbild mit Zählern je Ursache, Befehlen mit Laufzeiten, TLS; Teststation, lib60870 als Gegenstelle; Selbsttest mit Protokoll zum Weitergeben; Telegramme im Klartext mit Filtern (`docs/07_Julia.md`, Abschnitt 7) |
+ | Beispielprogramme in C | `examples/hello_server.c`, `examples/hello_client.c`; Anleitung `docs/06_Anleitung.md` |
+ 
+ Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab 2.34, OpenSSL 3).
+@@ -18,7 +18,7 @@ Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab
+ Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iee104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
+ 
+ ```bash
+-cd dist/iec104-0.8.0-linux-x86_64
++cd dist/iec104-0.9.0-linux-x86_64
+ gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
+ julia julia/server.jl 2404 &                                                       # Julia: Station
+ julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
+diff --git a/docs/07_Julia.md b/docs/07_Julia.md
+index 63f7e65..135b93b 100644
+--- a/docs/07_Julia.md
++++ b/docs/07_Julia.md
+@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
+ Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
+ 
+ ```bash
+-cd iec104-0.8.0-linux-x86_64
++cd iec104-0.9.0-linux-x86_64
+ julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
+ julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
+ ```
+@@ -158,7 +158,14 @@ end
+ 
+ ## 7. Test-GUI im Browser
+ 
+-`gui/iec104_gui.jl` ist ein kleines Testprogramm mit Oberfläche im Browser: links eine Leitstelle (Client), rechts eine Station (Server), darunter lib60870 als fremde Leitstelle, ein Selbsttest und das Ereignisprotokoll mit erklärten Rahmen. Es braucht nur Julia, keine Pakete.
++`gui/iec104_gui.jl` ist Test-GUI und Prüfstand mit Oberfläche im Browser. Es braucht nur Julia, keine Pakete.
++
++| Reiter | Inhalt |
++| --- | --- |
++| Prüfstand (Leitstelle) | Leitstelle gegen eine Station, z. B. ein Gerät im Netz: Werteliste, Prozessabbild mit Zählern je Ursache, Befehle mit Laufzeiten (Abschnitt 7.4) |
++| Station und lib60870 | eigene Teststation und lib60870 als fremde Leitstelle (Abschnitt 7.1) |
++| Selbsttest | prüft die Library mit eigener Station und Leitstelle (Abschnitt 7.2) |
++| immer darunter | Telegramme und Ereignisse mit Filtern (Abschnitt 7.3) |
+ 
+ ```bash
+ julia julia/gui/iec104_gui.jl [port] [adresse] [lib60870]   # im Binärpaket; im Quellbaum examples/julia/gui/
+@@ -174,12 +181,12 @@ Dann im Browser `http://localhost:8080` öffnen. Kommt unter WSL der Windows-Bro
+ 
+ | Bereich | Funktionen |
+ | --- | --- |
+-| Leitstelle | Verbinden (Adresse, Port, Station, Timer, k, w, tolerant, TLS mit CA, Zertifikat, Schlüssel, Name), STARTDT, STOPDT, Trennen; Generalabfrage (Station, Gruppe 1–16), Zählerabfrage, Uhrzeit; Befehle 45–50 und 58–63 direkt oder mit Select/Execute |
+-| Tabelle | jeder empfangene Punkt mit Typ, Wert, Qualität, Ursache (negativ rot), Zeitmarke, Anzahl, Alter; frische Werte hervorgehoben |
++| Leitstelle | Verbinden (Adresse, Port, Station, Timer, k, w, tolerant, TLS mit CA, Zertifikat, Schlüssel, Name; Zeitlimits der Befehle, mit oder ohne ACTTERM), auf Wunsch gleich STARTDT und Generalabfrage; STARTDT, STOPDT, Trennen; Generalabfrage (Station, Gruppe 1–16), Zählerabfrage (Gruppe, Einfrieren, Rücksetzen), Lesebefehl, Uhrzeit |
++| Befehle | Typen 45–50 und 58–63 mit QU/QL: direkt, Select dann Execute, nur Select, nur Execute; Tabelle mit Ergebnis und Laufzeiten |
+ | Station | Starten auf Port/Station, Datenpunkte anlegen (Typen 1, 3, 5, 9, 11, 13, 15), Wert ändern und spontan senden (+1 für schnelle Tests), Befehle annehmen oder ablehnen, Verbindungen |
+ | Gegenstelle lib60870 | ein Leitstellen-Beispiel von lib60870 gegen die eigene Station starten und beenden (Abschnitt 7.1) |
+ | Selbsttest | prüft die Library mit eigener Station und Leitstelle (Abschnitt 7.2) |
+-| Ereignisse | Zustände, Abfragen und Befehle an die Station, Befehlsergebnisse, TLS-Ereignisse, Fehler (rot) und Warnungen (braun) der Library, Ausgabe von lib60870; jeder gesendete und empfangene Rahmen dekodiert und erklärt (Abschnitt 7.3); „Ereignisse kopieren“ |
++| Telegramme und Ereignisse | Zustände, Abfragen und Befehle an die Station, Befehlsergebnisse, TLS-Ereignisse, Fehler (rot) und Warnungen (braun) der Library, Ausgabe von lib60870; jeder gesendete und empfangene Rahmen dekodiert und erklärt (Abschnitt 7.3) |
+ 
+ Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Punkt anlegen, Leitstelle auf `127.0.0.1:2404` verbinden, STARTDT, Generalabfrage.
+ 
+@@ -187,7 +194,7 @@ Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Pu
+ | --- | --- |
+ | GUI und Station lauschen nur auf `127.0.0.1` | die GUI hat keine Anmeldung, kann Befehle senden und Programme starten; eine andere Adresse nur bewusst als zweiter Parameter |
+ | Anfragen nur mit Host `localhost` oder IP-Adresse samt Port der GUI, `/api/` nur mit Kopfzeile `X-IEC104-GUI: 1`, nur GET, kein CORS, nicht einbettbar | eine fremde Webseite im selben Browser kann die GUI nicht steuern, auch nicht über DNS-Rebinding |
+-| Die GUI ist ein Testwerkzeug | eine Verbindung je Seite, kein Speichern der Einstellungen |
++| Die GUI ist ein Testwerkzeug | eine Verbindung je Seite; gespeichert wird nur die Werteliste |
+ | Eigene Erweiterungen | `iec104_gui.jl` (Julia, Aktionen in `ACTIONS`), `selftest.jl` (Selbsttest), `frames.jl` (Rahmen in Worten), `index.html` (Seite) |
+ | Test | `tests/gui/test_gui.sh` mit Selbsttest; in `ctest` (Preset `shared`) als `Julia.Gui`, mit `IEC104_LIB60870_DIR` auch `Julia.GuiLib60870`; `tests/gui/test_frames.jl` als `Julia.Frames` (nur Julia) |
+ 
+@@ -246,7 +253,17 @@ Ablauf: Station mit Station (CA) 1 starten, Datenpunkt anlegen, unter „Gegenst
+ 
+ ### 7.3 Rahmen im Klartext
+ 
+-Unter Ereignisse steht jeder Rahmen von Leitstelle und Station der GUI mit Richtung und Inhalt, darunter in einem Satz, was er bedeutet. „Rahmen“ und „Erklärungen“ blenden beides ein und aus.
++Unter „Telegramme und Ereignisse“ steht jeder Rahmen von Leitstelle und Station der GUI mit Richtung und Inhalt, darunter in einem Satz, was er bedeutet.
++
++| Schalter | Wirkung |
++| --- | --- |
++| Richtung, I, S, U, Rahmen, Ereignisse | nur diese Rahmen bzw. Meldungen zeigen |
++| Typ, Ursache, IOA, Text | nur Rahmen mit dieser Typkennung, Ursache oder IOA (auch das 5. von 8 Objekten); Text sucht in Zeile und Erklärung |
++| Erklärungen, alle Objekte, Hex | Satz zur Bedeutung, jedes Objekt in einer eigenen Zeile, Rahmen als Hexdump |
++| anhalten | Anzeige steht still, es wird weiter mitgeschrieben |
++| Angezeigte kopieren, speichern | genau das Gefilterte als Text, z. B. für einen Bericht |
++
++Die Seite behält die letzten 20000 Einträge und zeigt die letzten 1500 des Filters.
+ 
+ ```
+ 09:12:03  Leitstelle → I N(S)=0 N(R)=1 · 100 C_IC_NA_1 Generalabfrage · Ursache 6 Aktivierung · Station 1 · IOA 0 QOI 20 (Station)
+@@ -267,3 +284,26 @@ Unter Ereignisse steht jeder Rahmen von Leitstelle und Station der GUI mit Richt
+ | `IOA … Wert …` | erstes Informationsobjekt mit Wert, Qualität (`[IV NT …]`) und Zeitmarke; „(+n weitere)“ bei mehreren Objekten |
+ 
+ Die Beschreibung macht `frames.jl` ohne Aufruf der Library, für das Standardprofil (Ursache 2, Station 2, IOA 3 Oktette). Grundlage ist der Trace der Library (Log-Stufe 4, jeder Rahmen als Hexdump).
++
++### 7.4 Prüfstand: Station testen
++
++Ablauf gegen eine Station (z. B. ein Gerät, das im Netz erreichbar ist):
++
++1. Reiter „Prüfstand“: Adresse, Port (2404, mit TLS 19998) und Station (gemeinsame Adresse) eintragen, „Verbinden“. Mit dem Haken „nach dem Verbinden STARTDT und Generalabfrage“ füllt sich das Prozessabbild gleich.
++2. Werteliste anlegen: Station, IOA, Typ, Text und bei Befehlen die Rückmelde-IOA eintragen, „In die Liste“. „Empfangene übernehmen“ setzt alle Punkte der Generalabfrage auf einmal in die Liste; Texte dann mit ✎ ergänzen.
++3. Befehl senden: unter „aus der Werteliste“ wählen oder Typ, IOA, Wert selbst eintragen.
++4. Ergebnis in den Tabellen ablesen, bei Bedarf „Als Tabelle speichern“ und unten „Angezeigte speichern“.
++
++| Begriff | Bedeutung |
++| --- | --- |
++| Werteliste | die Punkte, die man erwartet: Station, IOA, erwarteter Typ (leer = beliebig), Text, Rückmelde-IOA. Wird bei jeder Änderung gespeichert und beim Start geladen: `~/.config/iec104/werteliste.tsv` (anders: Umgebungsvariable `IEC104_GUI_LISTE`) |
++| Rückmelde-IOA | Meldung, an der man sieht, dass ein Befehl gewirkt hat, z. B. Befehl „Schalter EIN“ auf IOA 6001, Schalterstellung auf IOA 1001 |
++| Prozessabbild | Liste und Empfangenes zusammen: grau = in der Liste, noch nichts empfangen; kursiv = empfangen, nicht in der Liste; gelb = Typ anders als in der Liste (mit und ohne Zeitmarke gilt als gleich) |
++| Zähler je Ursache | wie oft der Punkt kam: zyk (1), hgd (2), spo (3), GA (20–36), ZA (37–41), les (5), RM (11, 12), bef (6–10), sonst. So sieht man, ob jeder Punkt in der Generalabfrage und spontan kommt |
++| Befehle und Laufzeiten | je Befehl Ergebnis (ausgeführt, bestätigt, ausgewählt, abgelehnt, keine Bestätigung, keine Beendigung, Verbindung verloren) und Millisekunden ab Senden bis Select-Bestätigung, Bestätigung (ACTCON), Beendigung (ACTTERM), erster Wert der Rückmelde-IOA und Endergebnis |
++
++| Hinweis | Grund |
++| --- | --- |
++| Sendet die Station kein ACTTERM, unter „Timer, Fenster, Befehle, TLS“ den Haken „Befehle enden mit ACTTERM“ entfernen | sonst endet jeder Befehl mit „keine Beendigung“ |
++| Befehle mit Zeitmarke (58–63) tragen die Zeit in UTC, „Uhrzeit setzen“ ebenso | die Norm legt die Zeitzone nicht fest, sie wird mit der Gegenstelle vereinbart |
++| Ein Netz zur Station muss erreichbar sein | die GUI ändert keine Netz- oder Firewall-Einstellungen |
+diff --git a/docs/09_Interoperabilitaetsliste.md b/docs/09_Interoperabilitaetsliste.md
+index 3284e42..a0ce26c 100644
+--- a/docs/09_Interoperabilitaetsliste.md
++++ b/docs/09_Interoperabilitaetsliste.md
+@@ -1,6 +1,6 @@
+ # Interoperabilitätsliste (IEC 60870-5-104, Abschnitt 9)
+ 
+-IEC 60870-5-104 Library 0.8.0 · Rolle: Station und Leitstelle · Parameter: Standardwerte
++IEC 60870-5-104 Library 0.9.0 · Rolle: Station und Leitstelle · Parameter: Standardwerte
+ 
+ Erzeugt mit `iec104_interop_list`. Gliederung und Bezeichnungen nach öffentlichen Wiedergaben der Checkliste (docs/02_Technik_und_Quellen.md, [ORA]); die Angaben stammen aus dem Code der Library. Eigene Parameter: `iec104_interop_list --config datei.conf`, zum Abgleich mit der Liste einer Gegenstelle `--format csv`.
+ 
+diff --git a/examples/julia/IEC104.jl b/examples/julia/IEC104.jl
+index d0c6c7f..cb1b32b 100644
+--- a/examples/julia/IEC104.jl
++++ b/examples/julia/IEC104.jl
+@@ -14,7 +14,7 @@
+ module IEC104
+ 
+ export LinkConfig, IecTime, Object, AsduInfo, Callbacks, Iec104Error, TlsConfig
+-export version, tls_available, check
++export version, tls_available, check, type_name, decode_asdu, client_set_options
+ export server_create, server_listen, server_port, server_add_point, server_update,
+        server_poll, server_destroy
+ export client_create, client_connect, client_start, client_stop, client_poll,
+@@ -254,9 +254,39 @@ client_select_execute(c, station::Integer, o::Object) =
+ client_set_tls(c, tls::Union{TlsConfig,Nothing}) =
+     check(ccall((:iec104_client_set_tls, LIB), Cint, (Ptr{Cvoid}, Ptr{Cvoid}), c,
+                 tls === nothing ? C_NULL : pointer_from_objref(tls)))
++"Time limits for commands (iec104_client_options); @p expect_termination false for peers without ACTTERM."
++function client_set_options(c; confirmation_ms::Integer = 10000, termination_ms::Integer = 10000,
++                            expect_termination::Bool = true)
++    o = (UInt32(confirmation_ms), UInt32(termination_ms), Cint(expect_termination))
++    check(ccall((:iec104_client_set_options, LIB), Cint, (Ptr{Cvoid}, Ref{NTuple{3,UInt32}}), c,
++                (o[1], o[2], reinterpret(UInt32, o[3]))))
++end
+ "Log callback, see server_set_log."
+ client_set_log(c, level::Integer, fn::Ptr{Cvoid}, user::Ptr{Cvoid}) =
+     ccall((:iec104_client_set_log, LIB), Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}, Ptr{Cvoid}),
+           c, level, fn, user)
+ 
++# --- Decoding (e.g. frames of a capture) -------------------------------------------
++
++"Name of a type as in the standard, e.g. \"M_SP_NA_1\"; \"unknown type\" if not in the table."
++type_name(t::Integer) = unsafe_string(ccall((:iec104_type_name, LIB), Cstring, (UInt8,), t))
++
++"""
++    decode_asdu(asdu) -> (status, info, objects)
++
++Decodes an ASDU (the octets behind the 6 octets of the APCI) with the profile of
++the standard. status 0 = ok; -6 (unsupported) still gives info. objects is
++empty unless status is 0.
++"""
++function decode_asdu(asdu::AbstractVector{UInt8})
++    info = Ref{AsduInfo}()
++    objects = Vector{Object}(undef, 127)
++    count = Ref{Csize_t}(0)
++    data = Vector{UInt8}(asdu)
++    st = ccall((:iec104_decode_asdu, LIB), Cint,
++               (Ptr{Cvoid}, Ptr{UInt8}, Csize_t, Ref{AsduInfo}, Ptr{Object}, Csize_t, Ref{Csize_t}),
++               C_NULL, data, length(data), info, objects, length(objects), count)
++    return st, (st == 0 || st == -6) ? info[] : nothing, st == 0 ? objects[1:count[]] : Object[]
++end
++
+ end # module
+diff --git a/examples/julia/gui/frames.jl b/examples/julia/gui/frames.jl
+index c8a6726..82fdbad 100644
+--- a/examples/julia/gui/frames.jl
++++ b/examples/julia/gui/frames.jl
+@@ -14,7 +14,7 @@
+ 
+ module Frames
+ 
+-export describe, parse_hex
++export describe, parse_hex, details
+ 
+ # Type identification -> (name, German short text).
+ const TYPES = Dict{Int,Tuple{String,String}}(
+@@ -115,6 +115,8 @@ function element(t::Int, b, i)
+         "Wert " * string(round(i16(b, i) / 32768; digits = 5)) * quality(b[i+2])
+     elseif base == 11
+         "Wert $(i16(b, i))" * quality(b[i+2])
++    elseif base == 21
++        "Wert " * string(round(i16(b, i) / 32768; digits = 5))
+     elseif base == 13
+         "Wert " * string(reinterpret(Float32, u32(b, i))) * quality(b[i+4])
+     elseif base == 15
+@@ -273,4 +275,55 @@ function command_select(t::Int, b, i::Int)
+     return q != 0 && q <= length(b) && b[q] & 0x80 != 0
+ end
+ 
++# Octets of one element (time tag included) per type; types not listed: unknown length.
++const ELEMENT_LENGTH = Dict(1 => 1, 3 => 1, 5 => 2, 7 => 5, 9 => 3, 11 => 3, 13 => 5, 15 => 5,
++    21 => 2, 30 => 8, 31 => 8, 32 => 9, 33 => 12, 34 => 10, 35 => 10, 36 => 12, 37 => 12,
++    45 => 1, 46 => 1, 47 => 1, 48 => 3, 49 => 3, 50 => 5, 51 => 4, 58 => 8, 59 => 8, 60 => 8,
++    61 => 10, 62 => 10, 63 => 12, 64 => 11, 70 => 1, 100 => 1, 101 => 1, 102 => 0, 103 => 7,
++    104 => 2, 105 => 1, 107 => 9)
++
++"""
++    details(apdu) -> NamedTuple
++
++Fields for filters and the object list: format ('I', 'S', 'U', '?'), type, cause,
++station (-1 without ASDU), negative, ioas (all objects) and objects (one line
++per object, "IOA 100 Wert 5.0"). Never throws.
++"""
++function details(b::AbstractVector{UInt8})
++    none = (format = '?', type = -1, cause = -1, station = -1, negative = false,
++            ioas = UInt32[], objects = String[])
++    try
++        length(b) >= 6 && b[1] == 0x68 || return none
++        b[3] & 0x01 == 0x01 && return (none..., format = b[3] & 0x03 == 0x01 ? 'S' : 'U')
++        length(b) >= 12 || return (none..., format = 'I')
++        t = Int(b[7])
++        n = Int(b[8] & 0x7f)
++        sq = b[8] & 0x80 != 0
++        ioas = UInt32[]
++        objects = String[]
++        len = get(ELEMENT_LENGTH, t, -1)
++        j = 13                       # first octet of the first object (1-based)
++        ioa = UInt32(0)
++        for k in 1:n
++            if k == 1 || !sq
++                j + 2 <= length(b) || break
++                ioa = UInt32(b[j]) | UInt32(b[j+1]) << 8 | UInt32(b[j+2]) << 16
++                j += 3
++            else
++                ioa += 1
++            end
++            push!(ioas, ioa)
++            e = len < 0 ? "" : j + len - 1 <= length(b) ? (try element(t, b, j) catch; "" end) :
++                "(Element unvollständig)"
++            push!(objects, "IOA $ioa" * (isempty(e) ? "" : " " * e))
++            len < 0 && break
++            j += len
++        end
++        return (format = 'I', type = t, cause = Int(b[9] & 0x3f), station = Int(u16(b, 11)),
++                negative = b[9] & 0x40 != 0, ioas = ioas, objects = objects)
++    catch
++        return none
++    end
++end
++
+ end # module Frames
+diff --git a/examples/julia/gui/iec104_gui.jl b/examples/julia/gui/iec104_gui.jl
+index 368eb84..edda06e 100644
+--- a/examples/julia/gui/iec104_gui.jl
++++ b/examples/julia/gui/iec104_gui.jl
+@@ -35,44 +35,114 @@ using .Frames
+ 
+ # --- State ---------------------------------------------------------------------
+ 
+-"One received data point of the client."
+-mutable struct Row
++# Counters per cause of a point, in this order (page: zyk, hgd, spo, GA, ZA, les, RM, bef, sonst).
++const CAUSE_SLOTS = 9
++function cause_slot(c::Integer)
++    c == 1 && return 1                  # periodic
++    c == 2 && return 2                  # background scan
++    c == 3 && return 3                  # spontaneous
++    20 <= c <= 36 && return 4           # interrogation (station, groups)
++    37 <= c <= 41 && return 5           # counter interrogation
++    c == 5 && return 6                  # request (read)
++    c in (11, 12) && return 7           # return information (feedback)
++    6 <= c <= 10 && return 8            # answers to commands
++    return 9
++end
++
++"One point of the process image of the controlling station: last value and counters per cause."
++mutable struct Point
+     station::UInt16
+     ioa::UInt32
+     type::UInt8
+     cause::UInt8
+     negative::Bool
+-    value::Float64
+-    bits::UInt32
+-    quality::UInt8
+-    time::IecTime
+-    count::Int
++    value::String       # in words, e.g. "ein [IV]", "Wert 5.5"
++    timetag::String     # time tag of the last value, "" if none
++    counts::Vector{Int}
+     updated::Float64
++    version::Int
++end
++
++"One entry of the value list: entered in the GUI, saved in LIST_FILE."
++mutable struct ListEntry
++    station::UInt16
++    ioa::UInt32
++    type::Int           # expected type, 0 = any
++    text::String
++    feedback::Int       # IOA that reports the result of a command, -1 = none
++end
++
++"A command sent by the controlling station and its run times (ms after sending, -1 = not yet)."
++mutable struct SentCommand
++    id::Int
++    sent::Float64
++    station::UInt16
++    object::Object
++    mode::String
++    text::String
++    result::String
++    final::Bool
++    t_select::Int
++    t_con::Int
++    t_term::Int
++    t_final::Int
++    feedback::Int
++    t_feedback::Int
++    feedback_value::String
++end
++
++"One line of the event list; frames carry their fields for the filters of the page."
++struct LogEntry
++    seq::Int
++    time::Float64
++    kind::String        # "event", "frame", "command", "warning", "error"
++    text::String
++    explain::String
++    dir::String         # frames: "out" (sent by this side) or "in"; else ""
++    format::Char        # 'I', 'S', 'U', '?' or ' '
++    type::Int
++    cause::Int
++    ioas::Vector{UInt32}
++    hex::String
++    objects::Vector{String}
+ end
+ 
+ mutable struct Gui
+-    # Controlling station (client)
++    # Controlling station (client) = test bench against a controlled station
+     client::Ptr{Cvoid}
+     client_state::Cint
+     client_reason::Cint
+     station::UInt16
+-    rows::Dict{Tuple{UInt16,UInt32,UInt8},Row}
++    auto_step::Int      # 1: STARTDT when connected, 2: interrogation when started, 0: done
++    image::Dict{Tuple{UInt16,UInt32},Point}
++    image_version::Int
++    image_epoch::Int    # changes when the image is cleared: the page loads it anew
++    list::Dict{Tuple{UInt16,UInt32},ListEntry}
++    list_version::Int
++    cmds::Vector{SentCommand}
++    cmd_id::Int
++    cmds_version::Int
+     # Controlled station (server)
+     server::Ptr{Cvoid}
+     server_station::UInt16
+     accept_commands::Bool
+     points::Dict{UInt32,Object}
+     connections::Dict{UInt32,Cint}
+-    # Event list shown on the page: number, time, kind ("event", "frame", "error"), text, meaning
+-    log::Vector{Tuple{Int,Float64,String,String,String}}
++    # Event list shown on the page
++    log::Vector{LogEntry}
+     log_seq::Int
++    Gui() = new(C_NULL, IEC104.LINK_CLOSED, 0, 1, 0, Dict(), 0, 1, Dict(), 1, SentCommand[], 0, 1,
++                C_NULL, 1, true, Dict(), Dict(), LogEntry[], 0)
+ end
+ 
+-const GUI = Gui(C_NULL, IEC104.LINK_CLOSED, 0, 1, Dict(), C_NULL, 1, true, Dict(), Dict(), [], 0)
+-const LOG_MAX = 3000   # frames included
+-const ROWS_MAX = 1000  # rows of the client table sent to the page
++const GUI = Gui()
++const LOG_MAX = 20000  # frames included
++const CMDS_MAX = 200
+ const BOOT = string(round(Int, time() * 1000))   # identifies this run of the GUI for the page
+ 
++"File of the value list: IEC104_GUI_LISTE, else ~/.config/iec104/werteliste.tsv."
++list_file() = get(ENV, "IEC104_GUI_LISTE", joinpath(homedir(), ".config", "iec104", "werteliste.tsv"))
++
+ # Address and port of the GUI, set by main(). The station listens on the same address.
+ const GUI_ADDRESS = Ref("127.0.0.1")
+ const GUI_PORT = Ref(0)
+@@ -103,12 +173,15 @@ const PEER_PROGRAMS = [
+ ]
+ const PEER_LINE_MAX = 300   # longer output lines are cut
+ 
+-note(text::AbstractString; kind = "event", explain = "") = begin
++function add_log(kind, text, explain = ""; dir = "", format = ' ', type = -1, cause = -1,
++                 ioas = UInt32[], hex = "", objects = String[], t = time())
+     GUI.log_seq += 1
+-    push!(GUI.log, (GUI.log_seq, time(), String(kind), String(text), String(explain)))
++    push!(GUI.log, LogEntry(GUI.log_seq, t, String(kind), String(text), String(explain), dir,
++                            format, type, cause, ioas, String(hex), objects))
+     length(GUI.log) > LOG_MAX && popfirst!(GUI.log)
+     nothing
+ end
++note(text::AbstractString; kind = "event", explain = "") = add_log(kind, text, explain)
+ 
+ # --- Plain German texts for the page --------------------------------------------
+ 
+@@ -118,7 +191,7 @@ state_text(state::Integer) = get(Dict(0 => "verbinde …",
+     2 => "STARTDT gesendet, warte auf Bestätigung", 3 => "Datenübertragung läuft",
+     4 => "STOPDT gesendet, warte auf Bestätigung", 5 => "getrennt"), Int(state), "Zustand $state")
+ 
+-"Hint for a close reason (iec104_close_reason), \"\" if none."
++"Close reason (iec104_close_reason) in words with a hint what to check."
+ close_hint(reason::Integer) = get(Dict(
+     1 => "von dieser Seite getrennt",
+     2 => "Gegenstelle hat die Verbindung beendet",
+@@ -126,7 +199,8 @@ close_hint(reason::Integer) = get(Dict(
+     4 => "keine Antwort innerhalb t0 – Adresse im Netz erreichbar?",
+     5 => "Gegenstelle hat nicht rechtzeitig quittiert (t1) – Timer der Gegenstelle prüfen",
+     9 => "Rahmen im falschen Zustand oder in falscher Rolle",
+-    11 => "TLS-Fehler, siehe TLS-Ereignis"), Int(reason), "")
++    11 => "TLS-Fehler, siehe TLS-Ereignis"), Int(reason),
++    "Grund $(reason): " * IEC104.close_reason_string(reason))
+ 
+ # Allowed values per type (time-tagged types like their base type).
+ const RANGES = Dict(1 => "0 oder 1", 3 => "0…3 (1 = aus, 2 = ein)", 5 => "−64…63",
+@@ -157,47 +231,119 @@ end
+ function cb_client_state(::Ptr{Cvoid}, ::UInt32, state::Cint, reason::Cint)::Cvoid
+     GUI.client_state = state
+     GUI.client_reason = reason
+-    hint = state == IEC104.LINK_CLOSED ? close_hint(reason) : ""
+     note("Leitstelle: " * state_text(state) *
+-         (state == IEC104.LINK_CLOSED ? " (" * IEC104.close_reason_string(reason) * ")" : "") *
+-         (isempty(hint) ? "" : " – " * hint))
++         (state == IEC104.LINK_CLOSED ? " – " * close_hint(reason) : "");
++         kind = state == IEC104.LINK_CLOSED && reason != 1 ? "warning" : "event")
++    state == IEC104.LINK_CLOSED && (GUI.auto_step = 0)
+     return nothing
+ end
+ 
++is_command(t::Integer) = 45 <= t <= 51 || 58 <= t <= 64
++cmd_ms(c::SentCommand) = round(Int, (time() - c.sent) * 1000)
++
++const DOUBLE_TEXT = ("unbestimmt", "aus", "ein", "gestört")
++const STEP_TEXT = ("nicht erlaubt", "tiefer", "höher", "nicht erlaubt")
++pick(names, v) = 0 <= v <= 3 && isinteger(v) ? names[Int(v)+1] : "Wert $v"
++num_text(v::Float64) = isinteger(v) && abs(v) < 1e15 ? string(Int(v)) : string(round(v; sigdigits = 7))
++
++"Value of an object in words, e.g. \"ein [IV]\", \"Wert 5.5\", \"Sollwert 3 QL 1 Select\" (time tag apart)."
++function value_text(o::Object)
++    t = get(BASE_TYPE, Int(o.type), Int(o.type))
++    q = isempty(quality_text(o.quality)) ? "" : " [" * quality_text(o.quality) * "]"
++    cmd(setpoint) = (o.qualifier != 0 ? (setpoint ? " QL " : " QU ") * string(o.qualifier) : "") *
++                    (o.select != 0 ? " Select" : "")
++    t == 1 && return (o.value != 0 ? "ein" : "aus") * q
++    t == 3 && return pick(DOUBLE_TEXT, o.value) * q
++    t == 5 && return "Stufe $(num_text(o.value))" * (o.flags & 0x01 != 0 ? " (läuft)" : "") * q
++    t in (7, 33) && return "Bits 0x" * string(o.bits; base = 16, pad = 8) * q
++    t in (9, 11, 13, 21) && return "Wert " * num_text(o.value) * q
++    t == 15 && return "Zähler $(num_text(o.value)) Folge $(o.qualifier)" * q
++    t == 45 && return (o.value != 0 ? "ein" : "aus") * cmd(false)
++    t == 46 && return pick(DOUBLE_TEXT, o.value) * cmd(false)
++    t == 47 && return pick(STEP_TEXT, o.value) * cmd(false)
++    t in (48, 49, 50) && return "Sollwert " * num_text(o.value) * cmd(true)
++    t in (51, 64) && return "Bits 0x" * string(o.bits; base = 16, pad = 8)
++    return num_text(o.value)
++end
++has_timetag(t::Integer) = 30 <= t <= 37 || 58 <= t <= 64
++
++"Stores a received object in the process image (also used for captured frames)."
++function image_update(station::UInt16, o::Object, cause::Integer, negative::Bool; t = time())
++    key = (station, o.ioa)
++    p = get(GUI.image, key, nothing)
++    if p === nothing
++        p = Point(station, o.ioa, o.type, cause, negative, "", "", zeros(Int, CAUSE_SLOTS), t, 0)
++        GUI.image[key] = p
++    end
++    p.type = o.type
++    p.cause = cause
++    p.negative = negative
++    p.value = value_text(o)
++    p.timetag = has_timetag(o.type) ? time_text(o.time) : ""
++    p.counts[cause_slot(cause)] += 1
++    p.updated = t
++    GUI.image_version += 1
++    p.version = GUI.image_version
++    return p
++end
++
+ function cb_client_object(::Ptr{Cvoid}, ::UInt32, info::Ptr{AsduInfo}, obj::Ptr{Object})::Cvoid
+     i = unsafe_load(info)
+     o = unsafe_load(obj)
+-    key = (i.common_address, o.ioa, i.type)
+-    row = get(GUI.rows, key, nothing)
+-    if row === nothing
+-        GUI.rows[key] = Row(i.common_address, o.ioa, i.type, i.cause, i.negative != 0, o.value,
+-                            o.bits, o.quality, o.time, 1, time())
+-    else
+-        row.cause = i.cause
+-        row.negative = i.negative != 0
+-        row.value = o.value
+-        row.bits = o.bits
+-        row.quality = o.quality
+-        row.time = o.time
+-        row.count += 1
+-        row.updated = time()
++    t = Int(o.type)
++    (1 <= t <= 44 || is_command(t)) || return nothing   # answers to interrogations: in the log only
++    image_update(i.common_address, o, i.cause, i.negative != 0)
++    if t <= 44
++        # Feedback of sent commands: first value of the feedback IOA after sending.
++        for c in GUI.cmds
++            if c.feedback == o.ioa && c.t_feedback < 0 && c.station == i.common_address
++                c.t_feedback = cmd_ms(c)
++                c.feedback_value = value_text(o)
++                GUI.cmds_version += 1
++            end
++        end
++        return nothing
++    end
++    # Confirmation (7) and termination (10) of the newest open command with this address.
++    for c in Iterators.reverse(GUI.cmds)
++        (c.station == i.common_address && c.object.ioa == o.ioa && c.object.type == o.type &&
++         !c.final) || continue
++        if i.cause == 7
++            o.select != 0 ? (c.t_select < 0 && (c.t_select = cmd_ms(c))) :
++                            (c.t_con < 0 && (c.t_con = cmd_ms(c)))
++        elseif i.cause == 10 && c.t_term < 0
++            c.t_term = cmd_ms(c)
++        end
++        GUI.cmds_version += 1
++        break
+     end
+     return nothing
+ end
+ 
++const RESULT_TEXT = Dict(0 => "bestätigt", 1 => "ausgeführt", 2 => "ausgewählt", 3 => "abgelehnt",
++                         4 => "keine Bestätigung", 5 => "keine Beendigung", 6 => "Verbindung verloren")
++
+ function cb_command_result(::Ptr{Cvoid}, station::UInt16, cmd::Ptr{Object}, result::Cint)::Cvoid
+-    c = unsafe_load(cmd)
+-    note("Befehl Typ $(c.type) an $station/$(c.ioa), Wert $(c.value): " *
+-         IEC104.command_result_string(result))
++    o = unsafe_load(cmd)
++    res = get(RESULT_TEXT, Int(result), "Ergebnis $result")
++    for c in Iterators.reverse(GUI.cmds)
++        (c.station == station && c.object.ioa == o.ioa && c.object.type == o.type && !c.final) || continue
++        c.final = true
++        c.result = res
++        c.t_final = cmd_ms(c)
++        GUI.cmds_version += 1
++        note("Befehl $(c.id) Typ $(o.type) an $station/$(o.ioa) ($(c.mode)): $res nach $(c.t_final) ms";
++             kind = result in (0, 1, 2) ? "command" : "warning")
++        return nothing
++    end
++    note("Befehl Typ $(o.type) an $station/$(o.ioa): $res"; kind = "command")
+     return nothing
+ end
+ 
+ function cb_server_state(::Ptr{Cvoid}, conn::UInt32, state::Cint, reason::Cint)::Cvoid
+     if state == IEC104.LINK_CLOSED
+         delete!(GUI.connections, conn)
+-        hint = close_hint(reason)
+-        note("Station: Verbindung $conn getrennt (" * IEC104.close_reason_string(reason) * ")" *
+-             (isempty(hint) ? "" : " – " * hint))
++        note("Station: Verbindung $conn getrennt – " * close_hint(reason))
+     else
+         GUI.connections[conn] = state
+         note("Station: Verbindung $conn " * state_text(state))
+@@ -241,9 +387,14 @@ function log_entry(side::String, level::Cint, conn::UInt32, message::Cstring)
+         elseif level == 4
+             sent = startswith(m, "sent ")
+             (sent || startswith(m, "received ")) || return nothing
+-            summary, meaning = Frames.describe(Frames.parse_hex(m[(sent ? 6 : 10):end]))
++            hex = m[(sent ? 6 : 10):end]
++            b = Frames.parse_hex(hex)
++            summary, meaning = Frames.describe(b)
++            d = Frames.details(b)
+             who = side == "L" ? "Leitstelle" : "Station($conn)"
+-            note(who * (sent ? " → " : " ← ") * summary; kind = "frame", explain = meaning)
++            add_log("frame", who * (sent ? " → " : " ← ") * summary, meaning;
++                    dir = sent ? "out" : "in", format = d.format, type = d.type, cause = d.cause,
++                    ioas = d.ioas, hex = hex, objects = d.objects)
+         end
+     catch
+     end
+@@ -283,6 +434,9 @@ function gui_client_connect(p)
+         on_security = @cfunction(cb_security, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cstring)))
+     GUI.client = client_create(cfg, cb)
+     client_set_log(GUI.client, 4, @cfunction(cb_log_client, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
++    client_set_options(GUI.client; confirmation_ms = round(Int, p_num(p, "conf_to", 10) * 1000),
++                       termination_ms = round(Int, p_num(p, "term_to", 10) * 1000),
++                       expect_termination = get(p, "term", "1") == "1")
+     if get(p, "tls", "") == "1"
+         t = TlsConfig()
+         for (k, f) in (("ca", :ca_file), ("cert", :certificate_file), ("key", :private_key_file),
+@@ -296,24 +450,143 @@ function gui_client_connect(p)
+     port = p_int(p, "port", get(p, "tls", "") == "1" ? 19998 : 2404)
+     IEC104.client_connect(GUI.client, host, port)
+     GUI.client_state = IEC104.LINK_CONNECTING
+-    note("Leitstelle: verbinde mit $host:$port" * (get(p, "tls", "") == "1" ? " (TLS)" : ""))
++    GUI.auto_step = get(p, "auto", "0") == "1" ? 1 : 0
++    note("Leitstelle: verbinde mit $host:$port, Station $(GUI.station)" *
++         (get(p, "tls", "") == "1" ? " (TLS)" : "") *
++         (GUI.auto_step == 1 ? ", danach STARTDT und Generalabfrage" : ""))
++end
++
++"Runs STARTDT and the general interrogation after connecting (called by the poll task)."
++function auto_start()
++    GUI.client == C_NULL && return
++    if GUI.auto_step == 1 && GUI.client_state == IEC104.LINK_STOPPED
++        GUI.auto_step = 2
++        client_start(GUI.client)
++    elseif GUI.auto_step == 2 && GUI.client_state == IEC104.LINK_STARTED
++        GUI.auto_step = 0
++        client_interrogation(GUI.client, GUI.station, 20)
++        note("Leitstelle: Generalabfrage an Station $(GUI.station) gesendet")
++    end
+ end
+ 
+ need_client() = GUI.client == C_NULL && throw(ArgumentError("keine Verbindung"))
+ 
++const MODE_TEXT = Dict("direct" => "direkt", "sbo" => "Select+Execute", "select" => "nur Select",
++                       "execute" => "nur Execute")
++
+ function gui_client_command(p)
+     need_client()
+     type = p_int(p, "type", 45)
+-    o = Object(type, p_int(p, "ioa", 0), p_num(p, "value", 0.0))
+-    if type >= 58   # with time tag: now
+-        o = Object(o.type, o.ioa, o.value, 0, 0, 0, 0, 0, time_now())
++    is_command(type) || throw(ArgumentError("Typ $type ist kein Befehl"))
++    station = UInt16(p_int(p, "station", GUI.station))
++    ioa = p_int(p, "ioa", 0)
++    mode = get(MODE_TEXT, p_str(p, "mode"), nothing) === nothing ? "direct" : p_str(p, "mode")
++    bits = UInt32(0)
++    value = 0.0
++    if type in (51, 64)
++        s = strip(p_str(p, "value"))
++        bits = parse(UInt32, startswith(s, "0x") ? s[3:end] : s; base = startswith(s, "0x") ? 16 : 10)
++    else
++        value = p_num(p, "value", 0.0)
+     end
+-    if get(p, "mode", "direct") == "sbo"
+-        client_select_execute(GUI.client, GUI.station, o)
+-        note("Leitstelle: Auswahl und Ausführung Typ $type IOA $(o.ioa) Wert $(o.value)")
++    qu = p_int(p, "qu", 0)
++    o = Object(UInt8(type), UInt32(ioa), value, bits, 0x00, 0x00, UInt8(qu),
++               UInt8(mode == "select" ? 1 : 0), type >= 58 ? time_now() : IecTime())
++    if mode == "sbo"
++        client_select_execute(GUI.client, station, o)
+     else
+-        client_send_command(GUI.client, GUI.station, o)
+-        note("Leitstelle: Befehl Typ $type IOA $(o.ioa) Wert $(o.value)")
++        client_send_command(GUI.client, station, o)
++    end
++    entry = get(GUI.list, (station, UInt32(ioa)), nothing)
++    fb = haskey(p, "fb") && !isempty(p["fb"]) ? p_int(p, "fb", -1) :
++         entry === nothing ? -1 : entry.feedback
++    mode == "select" && (fb = -1)   # a select changes nothing
++    GUI.cmd_id += 1
++    push!(GUI.cmds, SentCommand(GUI.cmd_id, time(), station, o, MODE_TEXT[mode],
++                        entry === nothing ? "" : entry.text, "", false, -1, -1, -1, -1, fb, -1, ""))
++    length(GUI.cmds) > CMDS_MAX && popfirst!(GUI.cmds)
++    GUI.cmds_version += 1
++    note("Leitstelle: Befehl $(GUI.cmd_id) Typ $type an $station/$ioa: $(value_text(o)) ($(MODE_TEXT[mode]))" *
++         (fb >= 0 ? ", Rückmeldung erwartet auf IOA $fb" : ""); kind = "command")
++end
++
++# --- Value list (entered in the GUI, saved as tab-separated file) ---------------
++
++function list_save()
++    f = list_file()
++    mkpath(dirname(f))
++    tmp = f * ".neu"
++    open(tmp, "w") do io
++        println(io, "# Werteliste der IEC 104 Test-GUI: Station, IOA, Typ, Rückmelde-IOA, Text")
++        for e in sort!(collect(values(GUI.list)); by = e -> (e.station, e.ioa))
++            println(io, e.station, '\t', e.ioa, '\t', e.type, '\t', e.feedback, '\t',
++                    replace(e.text, '\t' => ' ', '\n' => ' '))
++        end
++    end
++    mv(tmp, f; force = true)
++    GUI.list_version += 1
++end
++
++function list_load()
++    f = list_file()
++    isfile(f) || return
++    n = 0
++    for line in eachline(f)
++        (isempty(strip(line)) || startswith(line, '#')) && continue
++        x = split(line, '\t'; limit = 5)
++        try
++            e = ListEntry(parse(UInt16, x[1]), parse(UInt32, x[2]), parse(Int, x[3]),
++                          length(x) >= 5 ? String(x[5]) : "", parse(Int, x[4]))
++            GUI.list[(e.station, e.ioa)] = e
++            n += 1
++        catch
++            note("Werteliste $f: Zeile nicht lesbar: $line"; kind = "warning")
++        end
++    end
++    GUI.list_version += 1
++    note("Werteliste geladen: $n Einträge aus $f")
++end
++
++function gui_list_add(p)
++    station = p_int(p, "station", 1)
++    ioa = p_int(p, "ioa", -1)
++    1 <= station <= 65534 || throw(ArgumentError("Station 1…65534"))
++    0 <= ioa <= 16777215 || throw(ArgumentError("IOA 0…16777215"))
++    fb = haskey(p, "fb") && !isempty(p["fb"]) ? p_int(p, "fb", -1) : -1
++    -1 <= fb <= 16777215 || throw(ArgumentError("Rückmelde-IOA 0…16777215 oder leer"))
++    GUI.list[(UInt16(station), UInt32(ioa))] =
++        ListEntry(station, ioa, p_int(p, "type", 0), strip(p_str(p, "text")), fb)
++    list_save()
++end
++
++function gui_list_remove(p)
++    delete!(GUI.list, (UInt16(p_int(p, "station", 1)), UInt32(p_int(p, "ioa", 0))))
++    list_save()
++end
++
++"Puts every received point that is not yet in the list into the list (type as received)."
++function gui_list_take(p)
++    n = 0
++    for pt in values(GUI.image)
++        haskey(GUI.list, (pt.station, pt.ioa)) && continue
++        GUI.list[(pt.station, pt.ioa)] = ListEntry(pt.station, pt.ioa, pt.type, "", -1)
++        n += 1
++    end
++    list_save()
++    note("Werteliste: $n empfangene Punkte übernommen")
++end
++
++function gui_image_clear(p)
++    empty!(GUI.image)
++    GUI.image_epoch += 1
++    GUI.image_version += 1
++end
++
++function gui_image_reset(p)
++    for pt in values(GUI.image)
++        fill!(pt.counts, 0)
++        GUI.image_version += 1
++        pt.version = GUI.image_version
+     end
+ end
+ 
+@@ -469,10 +742,17 @@ const ACTIONS = Dict{String,Function}(
+     "/api/client/stop" => p -> (need_client(); client_stop(GUI.client)),
+     "/api/client/close" => p -> (need_client(); client_close(GUI.client)),
+     "/api/client/gi" => p -> (need_client(); client_interrogation(GUI.client, GUI.station, p_int(p, "qoi", 20))),
+-    "/api/client/ci" => p -> (need_client(); client_counter_interrogation(GUI.client, GUI.station)),
++    "/api/client/ci" => p -> (need_client(); client_counter_interrogation(GUI.client, GUI.station,
++                                                                          p_int(p, "rqt", 5), p_int(p, "frz", 0))),
++    "/api/client/read" => p -> (need_client(); client_read(GUI.client, GUI.station, p_int(p, "ioa", 0))),
+     "/api/client/clock" => p -> (need_client(); client_clock_sync(GUI.client, GUI.station)),
+     "/api/client/command" => gui_client_command,
+-    "/api/client/clear" => p -> empty!(GUI.rows),
++    "/api/client/clear" => gui_image_clear,
++    "/api/image/reset" => gui_image_reset,
++    "/api/list/add" => gui_list_add,
++    "/api/list/remove" => gui_list_remove,
++    "/api/list/take" => gui_list_take,
++    "/api/list/clear" => p -> (empty!(GUI.list); list_save()),
+     "/api/server/listen" => gui_server_listen,
+     "/api/server/stop" => p -> (GUI.server != C_NULL && server_destroy(GUI.server); GUI.server = C_NULL;
+                                 empty!(GUI.connections); note("Station: beendet")),
+@@ -503,30 +783,67 @@ time_text(t::IecTime) = t.year == 0 ? "" :
+     @sprintf("%04d-%02d-%02d %02d:%02d:%02d.%03d%s%s", t.year, t.month, t.day, t.hour, t.minute,
+              t.second, t.millisecond, t.summer_time != 0 ? " SU" : "", t.invalid != 0 ? " IV" : "")
+ 
+-function state_json(since::Int)
++jfield(io, key, v::AbstractString) = (print(io, ",\"", key, "\":"); jstr(io, v))
++jfield(io, key, v) = print(io, ",\"", key, "\":", v)
++
++function state_json(p)
++    since = p_int(p, "since", 0)
+     io = IOBuffer()
+     print(io, "{\"boot\":\"", BOOT, "\",\"client\":{\"state\":")
+     jstr(io, GUI.client == C_NULL ? "–" : IEC104.state_string(GUI.client_state))
+     print(io, ",\"text\":")
+     jstr(io, GUI.client == C_NULL ? "nicht verbunden" : state_text(GUI.client_state))
+-    print(io, ",\"station\":", GUI.station, ",\"rows\":[")
+-    rows = sort!(collect(values(GUI.rows)); by = r -> (r.station, r.ioa, r.type))
+-    total = length(rows)
+-    length(rows) > ROWS_MAX && (rows = rows[1:ROWS_MAX])   # the page stays fast
+-    for (n, r) in enumerate(rows)
++    print(io, ",\"station\":", GUI.station)
++    # Process image: changed points only, all after a clear (epoch) or on the first request.
++    epoch = p_int(p, "pe", 0)
++    pv = epoch == GUI.image_epoch ? p_int(p, "pv", 0) : 0
++    print(io, ",\"epoch\":", GUI.image_epoch, ",\"pv\":", GUI.image_version, ",\"image\":[")
++    n = 0
++    for pt in values(GUI.image)
++        pt.version > pv || continue
++        n += 1
+         n > 1 && print(io, ',')
+-        print(io, "{\"station\":", r.station, ",\"ioa\":", r.ioa, ",\"type\":", r.type,
+-              ",\"cause\":", r.cause, ",\"negative\":", r.negative, ",\"value\":")
+-        jnum(io, r.value)
+-        print(io, ",\"bits\":", r.bits, ",\"quality\":")
+-        jstr(io, quality_text(r.quality))
+-        print(io, ",\"time\":")
+-        jstr(io, time_text(r.time))
+-        print(io, ",\"count\":", r.count, ",\"age\":")
+-        jnum(io, round(time() - r.updated; digits = 1))
+-        print(io, '}')
++        print(io, "{\"st\":", pt.station, ",\"ioa\":", pt.ioa, ",\"ty\":", pt.type, ",\"c\":",
++              pt.cause, ",\"neg\":", pt.negative)
++        jfield(io, "v", pt.value)
++        jfield(io, "tt", pt.timetag)
++        jfield(io, "u", Libc.strftime("%H:%M:%S", pt.updated))
++        print(io, ",\"n\":[", join(pt.counts, ','), "]}")
+     end
+-    print(io, "],\"rows_total\":", total, "},\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
++    print(io, ']')
++    # Value list and commands: complete, when changed.
++    print(io, ",\"lv\":", GUI.list_version)
++    if p_int(p, "lv", 0) != GUI.list_version
++        print(io, ",\"list\":[")
++        for (k, e) in enumerate(sort!(collect(values(GUI.list)); by = e -> (e.station, e.ioa)))
++            k > 1 && print(io, ',')
++            print(io, "{\"st\":", e.station, ",\"ioa\":", e.ioa, ",\"ty\":", e.type, ",\"fb\":", e.feedback)
++            jfield(io, "tx", e.text)
++            print(io, '}')
++        end
++        print(io, ']')
++        jfield(io, "list_file", list_file())
++    end
++    print(io, ",\"cv\":", GUI.cmds_version)
++    if p_int(p, "cv", 0) != GUI.cmds_version
++        print(io, ",\"cmds\":[")
++        for (k, c) in enumerate(Iterators.reverse(GUI.cmds))
++            k > 1 && print(io, ',')
++            print(io, "{\"id\":", c.id, ",\"st\":", c.station, ",\"ioa\":", c.object.ioa,
++                  ",\"ty\":", c.object.type, ",\"tsel\":", c.t_select, ",\"tcon\":", c.t_con,
++                  ",\"tterm\":", c.t_term, ",\"tfin\":", c.t_final, ",\"fb\":", c.feedback,
++                  ",\"tfb\":", c.t_feedback)
++            jfield(io, "t", Libc.strftime("%H:%M:%S", c.sent))
++            jfield(io, "v", value_text(c.object))
++            jfield(io, "mode", c.mode)
++            jfield(io, "tx", c.text)
++            jfield(io, "res", c.result)
++            jfield(io, "fbv", c.feedback_value)
++            print(io, '}')
++        end
++        print(io, ']')
++    end
++    print(io, "},\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
+           GUI.server == C_NULL ? 0 : server_port(GUI.server), ",\"station\":", GUI.server_station,
+           ",\"accept\":", GUI.accept_commands, ",\"connections\":[")
+     for (n, (id, st)) in enumerate(sort!(collect(GUI.connections)))
+@@ -559,18 +876,29 @@ function state_json(since::Int)
+     selftest_json(io)
+     print(io, ",\"log\":[")
+     first = true
+-    for (seq, t, kind, text, explain) in GUI.log
+-        seq <= since && continue
++    for e in GUI.log
++        e.seq <= since && continue
+         first || print(io, ',')
+         first = false
+-        print(io, "{\"seq\":", seq, ",\"time\":")
+-        jstr(io, Libc.strftime("%H:%M:%S", t))
+-        print(io, ",\"kind\":")
+-        jstr(io, kind)
+-        print(io, ",\"text\":")
+-        jstr(io, text)
+-        print(io, ",\"explain\":")
+-        jstr(io, explain)
++        print(io, "{\"seq\":", e.seq)
++        jfield(io, "time", Libc.strftime("%H:%M:%S", e.time) * @sprintf(".%03d", round(Int, (e.time % 1) * 1000) % 1000))
++        jfield(io, "kind", e.kind)
++        jfield(io, "text", e.text)
++        jfield(io, "explain", e.explain)
++        if e.kind == "frame"
++            jfield(io, "dir", e.dir)
++            jfield(io, "f", string(e.format))
++            print(io, ",\"ty\":", e.type, ",\"c\":", e.cause, ",\"io\":[", join(e.ioas, ','), ']')
++            jfield(io, "hex", e.hex)
++            if length(e.objects) > 1
++                print(io, ",\"obj\":[")
++                for (k, o) in enumerate(e.objects)
++                    k > 1 && print(io, ',')
++                    jstr(io, o)
++                end
++                print(io, ']')
++            end
++        end
+         print(io, '}')
+     end
+     print(io, "]}")
+@@ -613,6 +941,7 @@ const ACTION_NAMES = Dict(
+     "/api/client/stop" => "STOPDT", "/api/client/close" => "Trennen",
+     "/api/client/gi" => "Generalabfrage", "/api/client/ci" => "Zählerabfrage",
+     "/api/client/clock" => "Uhrzeit setzen", "/api/client/command" => "Befehl",
++    "/api/client/read" => "Lesebefehl", "/api/list/add" => "Werteliste",
+     "/api/server/listen" => "Station starten", "/api/server/point" => "Datenpunkt",
+     "/api/peer/start" => "Gegenstelle starten", "/api/peer/stop" => "Gegenstelle beenden",
+     "/api/selftest/start" => "Selbsttest")
+@@ -637,7 +966,7 @@ end
+ 
+ function route(path, p)
+     path == "/" && return ("200 OK", "text/html; charset=utf-8", PAGE)
+-    path == "/api/state" && return ("200 OK", "application/json", state_json(p_int(p, "since", 0)))
++    path == "/api/state" && return ("200 OK", "application/json", state_json(p))
+     path == "/api/selftest/report" &&
+         return ("200 OK", "text/plain; charset=utf-8", selftest_report(p_str(p, "full") == "1"))
+     action = get(ACTIONS, path, nothing)
+@@ -725,6 +1054,7 @@ function main(port = 8080, address = "127.0.0.1", lib60870 = "")
+     println("IEC 104 Test-GUI (Library ", IEC104.version(), "): http://localhost:$(GUI_PORT[])")
+     flush(stdout)   # scripts wait for this line
+     note("GUI gestartet, Library " * IEC104.version())
++    list_load()
+     if !isempty(PEER.folder)
+         found = [x.key for x in PEER_PROGRAMS if peer_found(x)]
+         note("Gegenstelle lib60870: $(PEER.folder), " *
+@@ -732,6 +1062,13 @@ function main(port = 8080, address = "127.0.0.1", lib60870 = "")
+     end
+     @async while true   # poll task: the library runs here, callbacks included
+         GUI.client != C_NULL && client_poll(GUI.client, 0)
++        try
++            auto_start()
++        catch e
++            GUI.auto_step = 0
++            note("Leitstelle: automatischer Start: " * error_text(e, "/api/client", Dict{String,String}());
++                 kind = "warning")
++        end
+         GUI.server != C_NULL && server_poll(GUI.server, 0)
+         selftest_poll()
+         sleep(0.02)
+diff --git a/examples/julia/gui/index.html b/examples/julia/gui/index.html
+index b8c79fc..da53450 100644
+--- a/examples/julia/gui/index.html
++++ b/examples/julia/gui/index.html
+@@ -42,14 +42,28 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+   .hint { font-size: 12px; color: #555; margin: 4px 0; }
+   code { font: 12px ui-monospace, monospace; background: #f0f2f5; padding: 0 3px; border-radius: 3px; }
+   option:disabled { color: #999; }
++  nav { display: flex; gap: 4px; padding: 8px 12px 0; }
++  nav button { border-radius: 6px 6px 0 0; border-bottom: none; background: #e3e6ea; }
++  nav button.on { background: #fff; font-weight: bold; }
++  .tab[hidden] { display: none; }
++  tr.missing td { color: #999; } tr.foreign td.tx { color: #777; font-style: italic; }
++  tr.warn td { background: #fff4d6; }
++  #log .command { color: #6a2c91; font-weight: bold; } #log .obj { color: #555; } #log .hex { color: #999; }
++  .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; font-size: 12px; }
++  .filters label { flex-direction: row; gap: 4px; align-items: center; }
+ </style>
+ </head>
+ <body>
+-<header><h1>IEC 60870-5-104 Test-GUI</h1><span id="err"></span></header>
++<header><h1>IEC 60870-5-104 Test-GUI und Prüfstand</h1><span id="err"></span></header>
++<nav>
++  <button id="tb-pruef" class="on" onclick="tab('pruef')">Prüfstand (Leitstelle)</button>
++  <button id="tb-station" onclick="tab('station')">Station und lib60870</button>
++  <button id="tb-selbst" onclick="tab('selbst')">Selbsttest</button>
++</nav>
+ <main>
+ 
+-<section>
+-  <h2>Leitstelle (Client) <span id="cstate" class="state">–</span></h2>
++<section class="tab" data-tab="pruef">
++  <h2>Verbindung zur Station <span id="cstate" class="state">–</span></h2>
+   <div class="row">
+     <label>Adresse<input id="host" class="m" value="127.0.0.1"></label>
+     <label>Port<input id="port" class="s" value="2404"></label>
+@@ -59,7 +73,9 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+     <label>&nbsp;<button onclick="act('client/stop')">STOPDT</button></label>
+     <label>&nbsp;<button onclick="act('client/close')">Trennen</button></label>
+   </div>
+-  <details><summary>Timer, Fenster, TLS</summary>
++  <div class="row"><label style="flex-direction: row; gap: 4px"><input id="auto" type="checkbox" checked>
++    nach dem Verbinden STARTDT und Generalabfrage</label></div>
++  <details><summary>Timer, Fenster, Befehle, TLS</summary>
+     <div class="row">
+       <label>t0 s<input id="t0" class="s" placeholder="30"></label>
+       <label>t1 s<input id="t1" class="s" placeholder="15"></label>
+@@ -69,6 +85,11 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+       <label>w<input id="w" class="s" placeholder="8"></label>
+       <label>tolerant<input id="tolerant" type="checkbox"></label>
+     </div>
++    <div class="row">
++      <label>Befehle enden mit ACTTERM<input id="term" type="checkbox" checked></label>
++      <label>Bestätigung bis s<input id="conf_to" class="s" placeholder="10"></label>
++      <label>Beendigung bis s<input id="term_to" class="s" placeholder="10"></label>
++    </div>
+     <div class="row">
+       <label>TLS<input id="tls" type="checkbox"></label>
+       <label>CA (PEM)<input id="ca" class="l"></label>
+@@ -76,29 +97,85 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+       <label>Schlüssel<input id="key" class="l"></label>
+       <label>Name der Gegenstelle<input id="peer" class="m"></label>
+     </div>
++    <p class="hint">Wirkt beim nächsten Verbinden. Ohne TLS ist der Port der Norm 2404, mit TLS 19998.</p>
+   </details>
+   <div class="row">
+-    <button onclick="act('client/gi', {qoi: document.getElementById('qoi').value})">Generalabfrage</button>
++    <button onclick="act('client/gi', {qoi: v('qoi')})">Generalabfrage</button>
+     <select id="qoi"><option value="20">Station</option></select>
+-    <button onclick="act('client/ci')">Zählerabfrage</button>
+-    <button onclick="act('client/clock')">Uhrzeit setzen</button>
+-    <button onclick="act('client/clear')">Tabelle leeren</button>
++    <button onclick="act('client/ci', {rqt: v('rqt'), frz: v('frz')})">Zählerabfrage</button>
++    <select id="rqt"><option value="5">alle</option><option value="1">Gruppe 1</option><option value="2">Gruppe 2</option><option value="3">Gruppe 3</option><option value="4">Gruppe 4</option></select>
++    <select id="frz"><option value="0">lesen</option><option value="1">einfrieren</option><option value="2">einfrieren + rücksetzen</option><option value="3">rücksetzen</option></select>
++  </div>
++  <div class="row">
++    <label>Lesebefehl IOA<input id="rioa" class="m"></label>
++    <label>&nbsp;<button onclick="act('client/read', {ioa: v('rioa')})">Lesen</button></label>
++    <label>&nbsp;<button onclick="act('client/clock')">Uhrzeit setzen (UTC)</button></label>
++  </div>
++</section>
++
++<section class="tab" data-tab="pruef">
++  <h2>Befehl</h2>
++  <div class="row">
++    <label>aus der Werteliste<select id="cpick" onchange="pickCommand()"><option value="">–</option></select></label>
+   </div>
+   <div class="row">
+-    <label>Befehl<select id="ctype" onchange="ranges()"></select></label>
++    <label>Typ<select id="ctype" onchange="ranges()"></select></label>
+     <label>IOA<input id="cioa" class="m" value="6000"></label>
+     <label>Wert <span id="crange" class="hint"></span><input id="cvalue" class="s" value="1"></label>
+-    <label>Ablauf<select id="cmode"><option value="direct">direkt</option><option value="sbo">Select/Execute</option></select></label>
++    <label>QU/QL<input id="cqu" class="s" value="0"></label>
++  </div>
++  <div class="row">
++    <label>Ablauf<select id="cmode"><option value="direct">direkt</option><option value="sbo">Select, dann Execute</option><option value="select">nur Select</option><option value="execute">nur Execute</option></select></label>
++    <label>Rückmelde-IOA<input id="cfb" class="m" placeholder="aus der Liste"></label>
+     <label>&nbsp;<button class="main" onclick="command()">Senden</button></label>
+   </div>
+-  <div class="scroll"><table>
+-    <thead><tr><th>Stat.</th><th>IOA</th><th>Typ</th><th>Wert</th><th>Qualität</th><th>Ursache</th><th>Zeitmarke</th><th>Anz.</th><th>Alter s</th></tr></thead>
+-    <tbody id="rows"></tbody>
+-  </table></div>
++  <p class="hint">Die Rückmelde-IOA ist die Meldung, an der man sieht, dass der Befehl gewirkt hat
++    (z. B. Befehl „Schalter EIN“ auf IOA 6001, Stellung des Schalters auf IOA 1001). Ihr erster neuer Wert nach dem
++    Befehl wird mit Zeit angezeigt.</p>
++</section>
++
++<section class="tab wide" data-tab="pruef">
++  <h2>Befehle und Laufzeiten <button onclick="cmds = []; renderCmds()">Leeren</button></h2>
++  <div class="scroll" style="max-height: 220px"><table>
++    <thead><tr><th>Nr.</th><th>Zeit</th><th>Stat.</th><th>IOA</th><th>Text</th><th>Typ</th><th>Befehl</th><th>Ablauf</th>
++      <th>Ergebnis</th><th title="Select bestätigt">Select ms</th><th title="Bestätigung (ACTCON)">Bestät. ms</th>
++      <th title="Beendigung (ACTTERM)">Beend. ms</th><th>Rückmeldung</th><th>gesamt ms</th></tr></thead>
++    <tbody id="cmds"></tbody></table></div>
+ </section>
+ 
+-<section>
+-  <h2>Station (Server) <span id="sstate" class="state">aus</span></h2>
++<section class="tab wide" data-tab="pruef">
++  <h2>Werteliste und Prozessabbild <span id="pcount" class="state"></span></h2>
++  <div class="row">
++    <label>Station<input id="lst" class="s" value="1"></label>
++    <label>IOA<input id="lioa" class="m"></label>
++    <label>Typ (leer = beliebig)<select id="lty"><option value="0">–</option></select></label>
++    <label>Text<input id="ltx" class="l"></label>
++    <label>Rückmelde-IOA<input id="lfb" class="m"></label>
++    <label>&nbsp;<button class="main" onclick="listAdd()">In die Liste</button></label>
++    <label>&nbsp;<button onclick="act('list/take')" title="alle empfangenen Punkte, die noch fehlen">Empfangene übernehmen</button></label>
++  </div>
++  <div class="row filters">
++    <label>Filter<input id="pfilter" class="m" placeholder="IOA, Text, Wert" oninput="renderImage()"></label>
++    <label><select id="pshow" onchange="renderImage()"><option value="all">alle</option><option value="recv">empfangen</option>
++      <option value="missing">in der Liste, noch nichts empfangen</option><option value="foreign">nicht in der Liste</option>
++      <option value="warn">Typ anders als in der Liste</option></select></label>
++    <button onclick="act('image/reset')">Zähler auf 0</button>
++    <button onclick="act('client/clear')">Werte leeren</button>
++    <button onclick="saveImage()">Als Tabelle speichern</button>
++    <button onclick="if (confirm('Ganze Werteliste löschen?')) act('list/clear')">Liste löschen</button>
++    <span id="listfile" class="hint"></span>
++  </div>
++  <div class="scroll" style="max-height: 420px"><table>
++    <thead><tr><th>Stat.</th><th>IOA</th><th>Text</th><th>Typ</th><th>Wert</th><th>Ursache</th><th>Zeitmarke</th><th>zuletzt</th>
++      <th title="zyklisch (1)">zyk</th><th title="Hintergrund (2)">hgd</th><th title="spontan (3)">spo</th>
++      <th title="Generalabfrage (20–36)">GA</th><th title="Zählerabfrage (37–41)">ZA</th><th title="Lesen (5)">les</th>
++      <th title="Rückmeldung (11, 12)">RM</th><th title="Antworten auf Befehle (6–10)">bef</th><th title="andere Ursachen">sonst</th>
++      <th></th></tr></thead>
++    <tbody id="image"></tbody></table></div>
++</section>
++
++<section class="tab" data-tab="station" hidden>
++  <h2>Teststation (Server) <span id="sstate" class="state">aus</span></h2>
+   <div class="row">
+     <label>Port<input id="sport" class="s" value="2404"></label>
+     <label>Station (CA)<input id="sstation" class="s" value="1"></label>
+@@ -119,7 +196,7 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+   <p>Verbindungen: <span id="conns">keine</span></p>
+ </section>
+ 
+-<section class="wide">
++<section class="tab" data-tab="station" hidden>
+   <h2>Gegenstelle lib60870 (Leitstelle) <span id="pstate" class="state">–</span></h2>
+   <div id="peeron" hidden>
+     <div class="row">
+@@ -142,7 +219,7 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+   </div>
+ </section>
+ 
+-<section class="wide">
++<section class="tab wide" data-tab="selbst" hidden>
+   <h2>Selbsttest <span id="tstate" class="state">nicht gelaufen</span></h2>
+   <div class="row">
+     <button class="main" onclick="act('selftest/start')">Selbsttest starten</button>
+@@ -156,19 +233,33 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+     <thead><tr><th>Nr.</th><th>Schritt</th><th>Ergebnis</th><th>Erwartet</th><th>Beobachtet</th><th>Dauer</th></tr></thead>
+     <tbody id="steps"></tbody>
+   </table></div>
+-  <div id="copyarea" hidden><p class="hint">Die Zwischenablage ist über diese Adresse gesperrt:
+-    Text ist markiert, mit Strg+C kopieren.</p><textarea id="copybox" readonly></textarea></div>
+ </section>
+ 
+ <section class="wide">
+-  <h2>Ereignisse
+-    <span class="row" style="margin: 0">
+-      <label style="flex-direction: row; gap: 4px">Rahmen<input id="showframes" type="checkbox" checked onchange="renderLog()"></label>
+-      <label style="flex-direction: row; gap: 4px">Erklärungen<input id="showexplain" type="checkbox" checked onchange="renderLog()"></label>
+-      <button onclick="copyText(logText())">Ereignisse kopieren</button>
+-      <button onclick="entries = []; renderLog()">Leeren</button>
+-    </span>
+-  </h2>
++  <h2>Telegramme und Ereignisse <span id="lcount" class="state"></span></h2>
++  <div class="filters">
++    <label><select id="fdir" onchange="renderLog()"><option value="">beide Richtungen</option><option value="in">nur empfangen ←</option><option value="out">nur gesendet →</option></select></label>
++    <label><input id="fI" type="checkbox" checked onchange="renderLog()">I</label>
++    <label><input id="fS" type="checkbox" checked onchange="renderLog()">S</label>
++    <label><input id="fU" type="checkbox" checked onchange="renderLog()">U</label>
++    <label><input id="showframes" type="checkbox" checked onchange="renderLog()">Rahmen</label>
++    <label><input id="fev" type="checkbox" checked onchange="renderLog()">Ereignisse</label>
++    <label>Typ<input id="fty" class="s" oninput="renderLog()"></label>
++    <label>Ursache<input id="fc" class="s" oninput="renderLog()"></label>
++    <label>IOA<input id="fioa" class="s" oninput="renderLog()"></label>
++    <label>Text<input id="ftext" class="m" oninput="renderLog()"></label>
++  </div>
++  <div class="filters" style="margin: 4px 0">
++    <label><input id="showexplain" type="checkbox" checked onchange="renderLog()">Erklärungen</label>
++    <label><input id="showobj" type="checkbox" onchange="renderLog()">alle Objekte</label>
++    <label><input id="showhex" type="checkbox" onchange="renderLog()">Hex</label>
++    <label><input id="pause" type="checkbox">anhalten</label>
++    <button onclick="copyText(logText())">Angezeigte kopieren</button>
++    <button onclick="saveText(logText(), 'iec104_telegramme')">Angezeigte speichern</button>
++    <button onclick="entries = []; renderLog()">Leeren</button>
++  </div>
++  <div id="copyarea" hidden><p class="hint">Die Zwischenablage ist über diese Adresse gesperrt:
++    Text ist markiert, mit Strg+C kopieren.</p><textarea id="copybox" readonly></textarea></div>
+   <div id="log"></div>
+ </section>
+ </main>
+@@ -191,6 +282,7 @@ const CAUSES = {1:'zyklisch', 2:'Hintergrund', 3:'spontan', 4:'initialisiert', 5
+ for (let g = 1; g <= 16; g++) CAUSES[20 + g] = 'Gruppe ' + g;
+ const opt = (sel, keys) => keys.forEach(k => sel.add(new Option(k + ' ' + TYPES[k], k)));
+ opt(document.getElementById('ctype'), [45, 46, 47, 48, 49, 50, 58, 59, 61, 62, 63]);
++opt(document.getElementById('lty'), [1, 3, 5, 7, 9, 11, 13, 15, 30, 31, 34, 35, 36, 37, 45, 46, 47, 48, 49, 50, 58, 59, 61, 62, 63]);
+ opt(document.getElementById('ptype'), [1, 3, 5, 9, 11, 13, 15]);
+ document.getElementById('ptype').value = 13;
+ const qoi = document.getElementById('qoi');
+@@ -217,14 +309,131 @@ async function act(path, params = {}) {
+   document.getElementById('err').textContent = j.ok ? '' : j.error;
+   refresh();
+ }
++function tab(name) {
++  for (const s of document.querySelectorAll('section.tab')) s.hidden = s.dataset.tab !== name;
++  for (const b of document.querySelectorAll('nav button')) b.className = b.id === 'tb-' + name ? 'on' : '';
++}
++const checked = id => document.getElementById(id).checked ? 1 : 0;
+ function connect() {
+-  const checked = id => document.getElementById(id).checked ? 1 : 0;
+   const p = {host: v('host'), port: v('port'), station: v('station'), tls: checked('tls'),
+-             tolerant: checked('tolerant')};
+-  for (const k of ['t0', 't1', 't2', 't3', 'k', 'w', 'ca', 'cert', 'key', 'peer']) p[k] = v(k);
++             tolerant: checked('tolerant'), auto: checked('auto'), term: checked('term')};
++  for (const k of ['t0', 't1', 't2', 't3', 'k', 'w', 'ca', 'cert', 'key', 'peer', 'conf_to', 'term_to']) p[k] = v(k);
+   act('client/connect', p);
+ }
+-function command() { act('client/command', {type: v('ctype'), ioa: v('cioa'), value: v('cvalue'), mode: v('cmode')}); }
++function command() {
++  act('client/command', {station: v('station'), type: v('ctype'), ioa: v('cioa'), value: v('cvalue'),
++                         qu: v('cqu'), mode: v('cmode'), fb: v('cfb')});
++}
++
++// --- Value list, process image, commands -------------------------------------
++let list = [], image = new Map(), cmds = [];
++let pe = 0, pv = 0, lv = 0, cv = 0;
++const key = (st, ioa) => st * 16777216 + ioa;
++function listAdd() {
++  act('list/add', {station: v('lst'), ioa: v('lioa'), type: v('lty'), text: v('ltx'), fb: v('lfb')});
++}
++function listEdit(st, ioa) {
++  const e = list.find(x => x.st === st && x.ioa === ioa);
++  document.getElementById('lst').value = st;
++  document.getElementById('lioa').value = ioa;
++  document.getElementById('lty').value = e ? e.ty : (image.get(key(st, ioa)) || {}).ty || 0;
++  document.getElementById('ltx').value = e ? e.tx : '';
++  document.getElementById('lfb').value = e && e.fb >= 0 ? e.fb : '';
++}
++function pickCommand() {
++  const e = list.find(x => key(x.st, x.ioa) === Number(v('cpick')));
++  if (!e) return;
++  document.getElementById('station').value = e.st;
++  document.getElementById('cioa').value = e.ioa;
++  if (e.ty) document.getElementById('ctype').value = e.ty;
++  document.getElementById('cfb').value = e.fb >= 0 ? e.fb : '';
++  ranges();
++}
++const isCommand = t => (t >= 45 && t <= 51) || (t >= 58 && t <= 64);
++// Same type, or the variant with/without time tag (1 <-> 30, 3 <-> 31, 45 <-> 58, ...).
++const BASE = {30: 1, 31: 3, 32: 5, 33: 7, 34: 9, 35: 11, 36: 13, 37: 15, 58: 45, 59: 46, 60: 47, 61: 48,
++              62: 49, 63: 50, 64: 51};
++const sameType = (a, b) => (BASE[a] || a) === (BASE[b] || b);
++function rows() {
++  const out = new Map();
++  for (const e of list) out.set(key(e.st, e.ioa), {st: e.st, ioa: e.ioa, li: e, p: null});
++  for (const [k, p] of image) (out.get(k) || out.set(k, {st: p.st, ioa: p.ioa, li: null}).get(k)).p = p;
++  return [...out.values()].sort((a, b) => a.st - b.st || a.ioa - b.ioa);
++}
++function rowClass(r) {
++  if (r.li && !r.p) return 'missing';
++  if (!r.li) return 'foreign';
++  if (r.li.ty && !sameType(r.li.ty, r.p.ty)) return 'warn';
++  return '';
++}
++let imageTimer = null;
++function renderImage() {
++  if (imageTimer) return;   // at most every 300 ms, many values may arrive
++  imageTimer = setTimeout(() => { imageTimer = null; drawImage(); }, 300);
++}
++function drawImage() {
++  const body = document.getElementById('image');
++  const f = v('pfilter').toLowerCase(), show = v('pshow');
++  const all = rows();
++  let shown = 0, html = [];
++  for (const r of all) {
++    const cls = rowClass(r);
++    if (show === 'recv' && !r.p) continue;
++    if (show !== 'all' && show !== 'recv' && cls !== show) continue;
++    const text = r.li ? r.li.tx : '';
++    if (f && !(String(r.ioa).includes(f) || text.toLowerCase().includes(f) || (r.p && r.p.v.toLowerCase().includes(f)))) continue;
++    if (++shown > 2000) continue;
++    const p = r.p;
++    const ty = p ? p.ty + ' ' + typeName(p.ty) : r.li && r.li.ty ? '(' + r.li.ty + ' ' + typeName(r.li.ty) + ')' : '';
++    const tip = cls === 'warn' ? ` title="Liste erwartet Typ ${r.li.ty}"` : cls === 'foreign' ? ' title="nicht in der Werteliste"' : '';
++    html.push(`<tr class="${cls}"${tip}><td>${r.st}</td><td class="num">${r.ioa}</td>` +
++      `<td class="tx">${esc(text || (r.li ? '' : 'nicht in der Liste'))}${r.li && r.li.fb >= 0 ? ' <span class="hint">→ RM ' + r.li.fb + '</span>' : ''}</td>` +
++      `<td>${esc(ty)}</td><td>${p ? esc(p.v) : ''}</td>` +
++      `<td class="${p && p.neg ? 'neg' : ''}">${p ? p.c + ' ' + esc(CAUSES[p.c] || '') + (p.neg ? ' negativ' : '') : ''}</td>` +
++      `<td>${p ? esc(p.tt) : ''}</td><td>${p ? p.u : ''}</td>` +
++      (p ? p.n.map(x => `<td class="num">${x || ''}</td>`).join('') : '<td></td>'.repeat(9)) +
++      `<td><button onclick="listEdit(${r.st}, ${r.ioa})" title="in die Eingabezeile der Liste">✎</button>` +
++      (r.li ? ` <button onclick="act('list/remove', {station: ${r.st}, ioa: ${r.ioa}})" title="aus der Liste">✕</button>` : '') +
++      `</td></tr>`);
++  }
++  body.innerHTML = html.join('') + (shown > 2000 ? `<tr><td colspan="18" class="hint">… ${shown - 2000} weitere, Filter benutzen</td></tr>` : '');
++  document.getElementById('pcount').textContent = `${list.length} in der Liste, ${image.size} empfangen`;
++}
++function saveImage() {
++  const head = 'Station;IOA;Text;Typ;Wert;Ursache;Zeitmarke;zuletzt;zyklisch;Hintergrund;spontan;GA;Zählerabfrage;Lesen;Rückmeldung;Befehl;sonst';
++  const lines = rows().map(r => [r.st, r.ioa, (r.li ? r.li.tx : '').replace(/;/g, ','), r.p ? r.p.ty : (r.li ? r.li.ty || '' : ''),
++    r.p ? r.p.v : '', r.p ? r.p.c : '', r.p ? r.p.tt : '', r.p ? r.p.u : '', ...(r.p ? r.p.n : Array(9).fill(''))].join(';'));
++  saveText([head, ...lines].join('\n') + '\n', 'iec104_prozessabbild', 'csv');
++}
++const ms = x => x >= 0 ? x : '';
++function renderCmds() {
++  document.getElementById('cmds').innerHTML = cmds.map(c => `<tr><td class="num">${c.id}</td><td>${c.t}</td>` +
++    `<td>${c.st}</td><td class="num">${c.ioa}</td><td>${esc(c.tx)}</td><td>${c.ty}</td><td>${esc(c.v)}</td><td>${esc(c.mode)}</td>` +
++    `<td class="${/abgelehnt|keine|verloren/.test(c.res) ? 'neg' : ''}">${esc(c.res || 'läuft …')}</td>` +
++    `<td class="num">${ms(c.tsel)}</td><td class="num">${ms(c.tcon)}</td><td class="num">${ms(c.tterm)}</td>` +
++    `<td>${c.fb >= 0 ? (c.tfb >= 0 ? c.tfb + ' ms, IOA ' + c.fb + ': ' + esc(c.fbv) : 'IOA ' + c.fb + ' …') : ''}</td>` +
++    `<td class="num">${ms(c.tfin)}</td></tr>`).join('');
++}
++function showList(s) {
++  if (s.list === undefined) return;
++  list = s.list;
++  lv = s.lv;
++  document.getElementById('listfile').textContent = 'gespeichert in ' + s.list_file;
++  const sel = document.getElementById('cpick'), old = sel.value;
++  sel.innerHTML = '<option value="">–</option>' + list.filter(e => isCommand(e.ty) || e.fb >= 0).map(e =>
++    `<option value="${key(e.st, e.ioa)}">${e.st}/${e.ioa} ${esc(e.tx)}${e.ty ? ' (Typ ' + e.ty + ')' : ''}</option>`).join('');
++  sel.value = old;
++  renderImage();
++}
++function saveText(text, name, ext = 'txt') {
++  const a = document.createElement('a');
++  a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain;charset=utf-8'}));
++  const d = new Date(), z = n => String(n).padStart(2, '0');
++  a.download = `${name}_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_` +
++               `${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.${ext}`;
++  a.click();
++  setTimeout(() => URL.revokeObjectURL(a.href), 2000);   // the download needs the URL a moment longer
++}
+ function sendPoint(ioa, type, delta) {
+   const input = document.getElementById('pv' + ioa);
+   const value = delta === undefined ? input.value : String(Number(input.value) + delta);
+@@ -283,16 +492,7 @@ async function report(full) {
+   return r.text();
+ }
+ async function copyReport() { copyText(await report(false)); }
+-async function saveReport() {
+-  const text = await report(true);
+-  const a = document.createElement('a');
+-  a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain;charset=utf-8'}));
+-  const d = new Date(), z = n => String(n).padStart(2, '0');
+-  a.download = `iec104_selbsttest_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_` +
+-               `${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.txt`;
+-  a.click();
+-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);   // the download needs the URL a moment longer
+-}
++async function saveReport() { saveText(await report(true), 'iec104_selbsttest'); }
+ function showSelftest(t) {
+   const ts = document.getElementById('tstate');
+   if (t.steps.length === 0) { ts.textContent = 'nicht gelaufen'; ts.className = 'state'; }
+@@ -308,28 +508,44 @@ function showSelftest(t) {
+     `<td class="num">${esc(x.duration)}</td></tr>`).join('');
+ }
+ 
+-// Event list: kept here, shown with or without frames and explanations.
++// Event list: kept here (at most 20000), filtered and shown (the last 1500).
+ let entries = [];
+-const ENTRIES_MAX = 3000;
+-const PAD = ' '.repeat(10);
+-function entryText(e, explain) {
+-  return e.time + '  ' + e.text + (explain && e.explain ? '\n' + PAD + '↳ ' + e.explain : '');
++const ENTRIES_MAX = 20000, SHOW_MAX = 1500;
++const PAD = ' '.repeat(14);
++function entryText(e) {
++  let t = e.time + '  ' + e.text;
++  if (e.kind === 'frame' && checked('showhex')) t += '\n' + PAD + '[' + e.hex + ']';
++  if (e.explain && checked('showexplain')) t += '\n' + PAD + '↳ ' + e.explain;
++  if (e.obj && checked('showobj')) t += e.obj.map(o => '\n' + PAD + '  ' + o).join('');
++  return t;
+ }
+ function visible() {
+-  const frames = document.getElementById('showframes').checked;
+-  return entries.filter(e => frames || e.kind !== 'frame');
+-}
+-function logText() {
+-  const explain = document.getElementById('showexplain').checked;
+-  return visible().map(e => entryText(e, explain)).join('\n') + '\n';
++  const dir = v('fdir'), ty = v('fty'), c = v('fc'), ioa = v('fioa'), text = v('ftext').toLowerCase();
++  const frameFilter = dir || ty || c || ioa;
++  return entries.filter(e => {
++    if (e.kind === 'frame') {
++      if (!checked('showframes') || ('ISU'.includes(e.f) && !checked('f' + e.f))) return false;
++      if (dir && e.dir !== dir) return false;
++      if (ty !== '' && e.ty !== Number(ty)) return false;
++      if (c !== '' && e.c !== Number(c)) return false;
++      if (ioa !== '' && !e.io.includes(Number(ioa))) return false;
++    } else if (!checked('fev') || frameFilter) return false;
++    return !text || (e.text + ' ' + e.explain).toLowerCase().includes(text);
++  });
+ }
++function logText() { return visible().map(entryText).join('\n') + '\n'; }
++let logTimer = null;
+ function renderLog() {
++  if (logTimer) return;
++  logTimer = setTimeout(() => { logTimer = null; drawLog(); }, 200);
++}
++function drawLog() {
+   const log = document.getElementById('log');
+-  const explain = document.getElementById('showexplain').checked;
+   const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+-  log.innerHTML = visible().map(e =>
+-    `<div class="${e.kind}">${esc(e.time + '  ' + e.text)}` +
+-    (explain && e.explain ? `<div class="explain">${esc(PAD + '↳ ' + e.explain)}</div>` : '') + '</div>').join('');
++  const sel = visible();
++  log.innerHTML = sel.slice(-SHOW_MAX).map(e => `<div class="${e.kind}">${esc(entryText(e))}</div>`).join('');
++  document.getElementById('lcount').textContent = `${sel.length} von ${entries.length}` +
++    (sel.length > SHOW_MAX ? `, angezeigt die letzten ${SHOW_MAX}` : '');
+   if (atEnd) log.scrollTop = log.scrollHeight;
+ }
+ 
+@@ -345,7 +561,7 @@ async function refresh() {
+ async function update() {
+   let s;
+   try {
+-    const r = await fetch('/api/state?since=' + since, GUI_HEADER);
++    const r = await fetch('/api/state?' + new URLSearchParams({since, pe, pv, lv, cv}), GUI_HEADER);
+     if (!r.ok) { document.getElementById('err').textContent = await r.text(); return; }
+     s = await r.json();
+   } catch (e) { document.getElementById('err').textContent = 'GUI-Programm nicht erreichbar'; return; }
+@@ -354,19 +570,18 @@ async function update() {
+   if (s.boot !== boot) {   // GUI program (re)started: its event numbers start again
+     const restarted = boot !== '';
+     boot = s.boot;
+-    if (restarted) { since = 0; entries = []; pointsShown = ''; renderLog(); return; }   // next round: all events
++    if (restarted) {   // next round: everything anew
++      since = 0; entries = []; pointsShown = ''; pe = pv = lv = cv = 0; image.clear(); renderLog(); return;
++    }
+   }
+   const cs = document.getElementById('cstate');
+   cs.textContent = s.client.text || s.client.state;
+   cs.className = 'state ' + (s.client.state === 'started' ? 'started' : s.client.state === 'closed' ? 'closed' : '');
+-  document.getElementById('rows').innerHTML = s.client.rows.map(r =>
+-    `<tr class="${r.age < 2 ? 'fresh' : ''}"><td>${r.station}</td><td class="num">${r.ioa}</td>` +
+-    `<td title="${esc(TYPES[r.type] || '')}">${r.type} ${esc(typeName(r.type))}</td>` +
+-    `<td class="num">${r.type === 7 ? '0x' + r.bits.toString(16) : r.value}</td><td>${esc(r.quality)}</td>` +
+-    `<td class="${r.negative ? 'neg' : ''}">${r.cause} ${esc(CAUSES[r.cause] || '')}${r.negative ? ' negativ' : ''}</td>` +
+-    `<td>${esc(r.time)}</td><td class="num">${r.count}</td><td class="num">${r.age}</td></tr>`).join('') +
+-    (s.client.rows_total > s.client.rows.length
+-      ? `<tr><td colspan="9" class="hint">… ${s.client.rows_total - s.client.rows.length} weitere Punkte nicht angezeigt</td></tr>` : '');
++  if (s.epoch !== pe) { image.clear(); pe = s.epoch; }
++  for (const p of s.image) image.set(key(p.st, p.ioa), p);
++  if (s.image.length || s.pv !== pv) { pv = s.pv; renderImage(); }
++  showList(s);
++  if (s.cmds !== undefined) { cmds = s.cmds; cv = s.cv; renderCmds(); }
+   const ss = document.getElementById('sstate');
+   ss.textContent = s.server.running ? 'Port ' + s.server.port + ', Station ' + s.server.station : 'aus';
+   ss.className = 'state ' + (s.server.running ? 'started' : '');
+@@ -392,7 +607,7 @@ async function update() {
+     added = true;
+   }
+   if (entries.length > ENTRIES_MAX) entries = entries.slice(-ENTRIES_MAX);
+-  if (added) renderLog();
++  if (added && !checked('pause')) renderLog();
+ }
+ ranges();
+ setInterval(refresh, 500);
+diff --git a/include/iec104/iec104.h b/include/iec104/iec104.h
+index cde4a6f..706381b 100644
+--- a/include/iec104/iec104.h
++++ b/include/iec104/iec104.h
+@@ -61,7 +61,7 @@ extern "C" {
+ /** @brief Major version of this header. Incompatible API changes increment it. */
+ #define IEC104_VERSION_MAJOR 0
+ /** @brief Minor version of this header. Compatible additions increment it. */
+-#define IEC104_VERSION_MINOR 8
++#define IEC104_VERSION_MINOR 9
+ /** @brief Patch version of this header. Fixes without API change increment it. */
+ #define IEC104_VERSION_PATCH 0
+ 
+@@ -430,6 +430,47 @@ typedef struct iec104_asdu_info {
+     uint16_t common_address; /**< Common address (station). */
+ } iec104_asdu_info;
+ 
++/**
++ * @brief Name of a type identification as in the standard, e.g. "M_SP_NA_1" for 1.
++ *
++ * Covers the types of the library's type table (see the interoperability
++ * list). Intended for logs and test tools.
++ *
++ * @return Pointer to a static, NUL-terminated string. Never NULL. Types
++ *         outside the table (unknown, private) yield "unknown type".
++ */
++IEC104_API const char* iec104_type_name(uint8_t type);
++
++/**
++ * @brief Decodes a complete ASDU into its data unit identifier and objects.
++ *
++ * For applications and test tools that see raw ASDUs, e.g. in on_asdu or in
++ * a frame trace (the octets behind the 6 octets of the APCI). The decoding is
++ * the same the library uses for its own callbacks.
++ *
++ * @param config   Field lengths and strict/tolerant handling; NULL = values of
++ *                 the standard (iec104_link_config_init()).
++ * @param asdu     The ASDU octets.
++ * @param length   Number of octets at @p asdu.
++ * @param info     Receives the data unit identifier. Filled whenever the
++ *                 ASDU itself is well formed, also for IEC104_ERR_UNSUPPORTED.
++ * @param objects  Caller's array for the objects; may be NULL if @p capacity is 0.
++ * @param capacity Number of entries in @p objects. 127 is always enough.
++ * @param count    Receives the number of objects in the ASDU (also for
++ *                 IEC104_ERR_UNSUPPORTED, then without writing @p objects).
++ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL pointers or an
++ *         invalid @p config; IEC104_ERR_MALFORMED if the octets do not form
++ *         an ASDU (length does not match the objects, header too short);
++ *         IEC104_ERR_UNSUPPORTED if the type is not in the table or has no
++ *         mapping to ::iec104_object (see the table there);
++ *         IEC104_ERR_BUFFER_TOO_SMALL if @p capacity is less than the number
++ *         of objects.
++ */
++IEC104_API iec104_status iec104_decode_asdu(const iec104_link_config* config, const uint8_t* asdu,
++                                            size_t length, iec104_asdu_info* info,
++                                            iec104_object* objects, size_t capacity,
++                                            size_t* count);
++
+ /** @brief Final result of a command sent by the client (see on_command_result). */
+ /* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
+ typedef enum iec104_command_result {
+diff --git a/packaging/README-binary.md b/packaging/README-binary.md
+index e203a33..44f3e49 100644
+--- a/packaging/README-binary.md
++++ b/packaging/README-binary.md
+@@ -9,7 +9,7 @@ Geteilte Library für Linux x86-64 (Release, mit TLS).
+ | `LICENSES/` | Lizenzen: Header Apache-2.0, Library proprietär |
+ | `julia/` | Anbindung für Julia (`IEC104.jl`) mit Client- und Server-Beispiel, Test-GUI im Browser (`gui/`) |
+ | `pruefen.sh` | prüft System, OpenSSL und Julia: `bash pruefen.sh` |
+-| `gui.sh` | startet die Test-GUI: `bash gui.sh`, dann `http://localhost:8080` |
++| `gui.sh` | startet Test-GUI und Prüfstand: `bash gui.sh`, dann `http://localhost:8080` |
+ | `beispiel.sh` | Julia-Station und -Leitstelle gegeneinander: `bash beispiel.sh` |
+ 
+ ## Schnellstart (Linux oder WSL)
+@@ -64,7 +64,7 @@ julia julia/server.jl 2404 &          # Station 1, Messwert IOA 100, steigt jede
+ julia julia/client.jl 127.0.0.1 2404  # Generalabfrage, drei spontane Werte
+ ```
+ 
+-Test-GUI im Browser: `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080` öffnen (Leitstelle und Station, Abfragen, Befehle, TLS).
++Test-GUI und Prüfstand im Browser: `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080` öffnen (Leitstelle gegen eine Station mit Werteliste, Prozessabbild, Befehlslaufzeiten; Teststation, Selbsttest, Telegramme im Klartext; Anleitung `julia/` bzw. docs/07_Julia.md, Abschnitt 7.4).
+ 
+ `IEC104.jl` findet die Library in `lib/` von selbst. Anleitung: `docs/07_Julia.md` im Quellpaket.
+ 
+diff --git a/src/api/iec104.cpp b/src/api/iec104.cpp
+index e50faac..31d6f36 100644
+--- a/src/api/iec104.cpp
++++ b/src/api/iec104.cpp
+@@ -14,6 +14,7 @@
+  */
+ #include "iec104/iec104.h"
+ 
++#include "codec/type_table.hpp"
+ #include "transport/tls.hpp"
+ 
+ /*
+@@ -119,6 +120,11 @@ const char* iec104_log_level_string(iec104_log_level level) {
+     return "unknown level";
+ }
+ 
++const char* iec104_type_name(uint8_t type) {
++    const iec104::codec::TypeInfo* info = iec104::codec::find_type(type);
++    return info != nullptr ? info->name : "unknown type";
++}
++
+ const char* iec104_command_result_string(iec104_command_result result) {
+     switch (result) {
+     case IEC104_COMMAND_CONFIRMED:
+diff --git a/src/api/values.cpp b/src/api/values.cpp
+index b85627d..9d09812 100644
+--- a/src/api/values.cpp
++++ b/src/api/values.cpp
+@@ -13,6 +13,7 @@
+  */
+ #include "api/values.hpp"
+ 
++#include <array>
+ #include <cmath>
+ 
+ namespace iec104::api {
+@@ -541,6 +542,44 @@ iec104_status iec104_time_from_unix_ms(int64_t unix_ms, iec104_time* out) {
+     return IEC104_OK;
+ }
+ 
++iec104_status iec104_decode_asdu(const iec104_link_config* config, const uint8_t* asdu,
++                                 size_t length, iec104_asdu_info* info, iec104_object* objects,
++                                 size_t capacity, size_t* count) {
++    if (asdu == nullptr || info == nullptr || count == nullptr ||
++        (objects == nullptr && capacity > 0U)) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    iec104_link_config c{};
++    iec104_link_config_init(&c);
++    if (config != nullptr) {
++        c = *config;
++    }
++    const iec104::codec::AsduProfile profile = iec104::api::to_profile(c);
++    if (!iec104::codec::is_valid(profile)) {
++        return IEC104_ERR_INVALID_ARGUMENT;
++    }
++    std::array<iec104::codec::InformationObject, iec104::codec::kMaxObjects> decoded{};
++    iec104::codec::DecodedAsdu d{};
++    const iec104_status st =
++        iec104::codec::decode_asdu(asdu, length, profile, decoded.data(), decoded.size(), d);
++    if (st != IEC104_OK) {
++        return st;
++    }
++    *info = iec104::api::to_info(d.header);
++    *count = d.object_count;
++    if (d.type == nullptr || !iec104::api::value_type_supported(d.header.type_id)) {
++        return IEC104_ERR_UNSUPPORTED;
++    }
++    if (capacity < d.object_count) {
++        return IEC104_ERR_BUFFER_TOO_SMALL;
++    }
++    for (std::size_t i = 0; i < d.object_count; ++i) {
++        // from_codec() only fails for types without mapping, excluded above.
++        (void)iec104::api::from_codec(d.header.type_id, decoded[i], objects[i]);
++    }
++    return IEC104_OK;
++}
++
+ int64_t iec104_time_to_unix_ms(const iec104_time* time) {
+     if (time == nullptr || time->year < 2000U) {
+         return 0;
+diff --git a/src/transport/link.cpp b/src/transport/link.cpp
+index fd3fcb2..84c7832 100644
+--- a/src/transport/link.cpp
++++ b/src/transport/link.cpp
+@@ -107,6 +107,10 @@ void Link::service(short revents, apci::TimeMs now, LinkSink& sink) noexcept {
+         }
+         just_opened = true;
+     }
++    // Events queued before this call (above all "connected" of a link that
++    // just opened) are reported before the frames read now, so that callbacks
++    // and frame trace keep the order of the protocol.
++    dispatch_events(sink);
+     // TLS: data that arrived with the end of the handshake is already
+     // buffered inside the TLS session, and a renegotiation may need a
+     // writable socket to go on reading.
+diff --git a/tests/gui/test_frames.jl b/tests/gui/test_frames.jl
+index 0442f55..30e1d02 100644
+--- a/tests/gui/test_frames.jl
++++ b/tests/gui/test_frames.jl
+@@ -84,6 +84,21 @@ d(hex) = describe(parse_hex(hex))
+     s, m = d("68 0d 00 00 00 00 0d 01 03 00 01 00 64 00 00 41")
+     @test occursin("Station 1 · IOA 100 (Element unvollständig: 41)", s) && startswith(m, "Spontane Meldung")
+ 
++    # details: fields for the filters and one line per object
++    x = details(parse_hex("68 1c 06 00 02 00 0b 03 14 03 01 00 64 00 00 ff ff 00 65 00 00 17 00 00 66 00 00 fc 08 00"))
++    @test (x.format, x.type, x.cause, x.station, x.negative) == ('I', 11, 20, 1, false)
++    @test x.ioas == [100, 101, 102]
++    @test x.objects == ["IOA 100 Wert -1", "IOA 101 Wert 23", "IOA 102 Wert 2300"]
++    # capture: sequence (SQ = 1) of 8 single points from IOA 300
++    x = details(parse_hex("68 15 0a 00 02 00 01 88 14 03 01 00 2c 01 00 01 00 01 00 01 00 01 00"))
++    @test x.ioas == collect(UInt32(300):UInt32(307)) && x.objects[2] == "IOA 301 aus"
++    @test details(parse_hex("68 04 01 00 14 00")).format == 'S'
++    @test details(parse_hex("68 04 43 00 00 00")).format == 'U'
++    # built: negative answer (P/N) to an interrogation of station 99
++    x = details(parse_hex("68 0e 00 00 00 00 64 01 6e 00 63 00 00 00 00 14"))
++    @test x.negative && x.cause == 46 && x.station == 99
++    @test details(parse_hex("01 02 03")).format == '?'
++
+     # unreadable input never throws
+     @test startswith(d("68 0e 00 00")[1], "?")
+     @test startswith(d("01 02 03 04 05 06")[1], "?")
+diff --git a/tests/gui/test_gui.sh b/tests/gui/test_gui.sh
+index dfd1011..90ca05c 100755
+--- a/tests/gui/test_gui.sh
++++ b/tests/gui/test_gui.sh
+@@ -107,7 +107,7 @@ wait_state() { # Sekunden, Beschreibung, since, Muster...
+ }
+ 
+ # --- GUI starten ---------------------------------------------------------------
+-IEC104_LIB="$LIB" IEC104_LIB60870="" "$JULIA" --startup-file=no "$GUI" 0 127.0.0.1 \
++IEC104_LIB="$LIB" IEC104_LIB60870="" IEC104_GUI_LISTE="$WORK/werteliste.tsv" "$JULIA" --startup-file=no "$GUI" 0 127.0.0.1 \
+     ${LIB60870:+"$LIB60870"} < /dev/null > "$LOG" 2>&1 &
+ GPID=$!
+ for _ in $(seq 1 1200); do   # der erste Julia-Start übersetzt einmalig
+@@ -166,14 +166,42 @@ ok "Station auf 127.0.0.1:$SPORT"
+ act 'server/point?type=13&ioa=100&value=42.5'
+ wait_state 5 "Datenpunkt angelegt" 0 '"points":\[\{"ioa":100,"type":13,"value":42.5\}\]'
+ 
+-act "client/connect?host=127.0.0.1&port=$SPORT&station=1"
+-wait_state 10 "Leitstelle verbunden" 0 '"client":\{"state":"stopped"'
+-act 'client/start'
+-wait_state 10 "STARTDT" 0 '"client":\{"state":"started"'
+-act 'client/gi?qoi=20'
+-wait_state 10 "Generalabfrage: Punkt in der Tabelle" 0 \
+-    '\{"station":1,"ioa":100,"type":13,"cause":20,"negative":false,"value":42.5,' \
+-    'Station: Generalabfrage \(Typ 100, Ursache 6\)'
++# Prüfstand: Werteliste, automatischer Start, Prozessabbild mit Zählern je Ursache.
++act 'list/add?station=1&ioa=100&type=13&text=Spannung%20L1'
++act 'server/point?type=1&ioa=1001&value=0'
++act 'list/add?station=1&ioa=6001&type=45&text=Schalter%20Q1&fb=1001'
++wait_state 5 "Werteliste" 0 '"list":\[\{"st":1,"ioa":100,"ty":13,"fb":-1,"tx":"Spannung L1"\}' \
++    '\{"st":1,"ioa":6001,"ty":45,"fb":1001,"tx":"Schalter Q1"\}'
++grep -q $'^1\t6001\t45\t1001\tSchalter Q1$' "$WORK/werteliste.tsv" || fail "Werteliste nicht gespeichert"
++ok "Werteliste gespeichert"
++act_rejected 'list/add?station=0&ioa=1' 'Station 1'
++
++act "client/connect?host=127.0.0.1&port=$SPORT&station=1&auto=1&term=1"
++wait_state 10 "Verbinden mit STARTDT und Generalabfrage" 0 '"client":\{"state":"started"' \
++    '\{"st":1,"ioa":100,"ty":13,"c":20,"neg":false,"v":"Wert 42.5","tt":"","u":"[0-9:]*","n":\[0,0,0,1,0,0,0,0,0\]\}' \
++    '"kind":"frame","text":"Leitstelle → I [^"]*C_IC_NA_1[^"]*","explain":"Leitstelle fordert alle Werte an","dir":"out","f":"I","ty":100,"c":6,"io":\[0\]'
++act 'server/point?type=13&ioa=100&value=43'
++act 'client/read?ioa=100'
++wait_state 10 "spontan und gelesen gezählt" 0 \
++    '\{"st":1,"ioa":100,"ty":13,"c":5,"neg":false,"v":"Wert 43","tt":"","u":"[0-9:]*","n":\[0,0,1,1,0,1,0,0,0\]\}'
++act 'image/reset'
++wait_state 5 "Zähler auf 0" 0 '"ioa":100,[^}]*"n":\[0,0,0,0,0,0,0,0,0\]'
++
++# Befehl mit Laufzeiten; die Station nimmt alles an, die Rückmeldung setzt der Test.
++act 'client/command?type=45&ioa=6001&value=1&mode=direct'
++wait_state 10 "Befehl bestätigt und beendet" 0 \
++    '"cmds":\[\{"id":1,"st":1,"ioa":6001,"ty":45,"tsel":-1,"tcon":[0-9]+,"tterm":[0-9]+,"tfin":[0-9]+,"fb":1001,"tfb":-1,[^}]*"res":"ausgeführt"'
++act 'server/point?type=1&ioa=1001&value=1'
++wait_state 10 "Rückmeldung mit Zeit" 0 '"cmds":\[\{"id":1,[^}]*"fb":1001,"tfb":[0-9]+,[^}]*"fbv":"ein"'
++act 'client/command?type=45&ioa=6001&value=0&mode=sbo'
++wait_state 10 "Select und Execute" 0 '"cmds":\[\{"id":2,[^}]*"tsel":[0-9]+,"tcon":[0-9]+,"tterm":[0-9]+,[^}]*"mode":"Select\+Execute"[^}]*"res":"ausgeführt"'
++act_rejected 'client/command?type=13&ioa=1&value=1' 'kein Befehl'
++act 'server/accept?on=0'
++act 'client/command?type=45&ioa=6001&value=1'
++wait_state 10 "abgelehnter Befehl" 0 '"cmds":\[\{"id":3,[^}]*"res":"abgelehnt"'
++act 'server/accept?on=1'
++act 'list/take'
++wait_state 5 "empfangene Punkte übernommen" 0 '\{"st":1,"ioa":1001,"ty":1,"fb":-1,"tx":""\}'
+ act 'client/close'
+ 
+ # --- Gegenstelle lib60870 ---------------------------------------------------------------
+diff --git a/tests/test_operation.cpp b/tests/test_operation.cpp
+index b941355..5a52aaf 100644
+--- a/tests/test_operation.cpp
++++ b/tests/test_operation.cpp
+@@ -10,11 +10,15 @@
+  */
+ #include "iec104/iec104.h"
+ 
++#include <arpa/inet.h>
+ #include <cstdio>
+ #include <fstream>
+ #include <functional>
+ #include <gtest/gtest.h>
++#include <netinet/in.h>
+ #include <string>
++#include <sys/socket.h>
++#include <unistd.h>
+ #include <vector>
+ 
+ namespace {
+@@ -31,13 +35,15 @@ struct Log {
+         static_cast<Log*>(user)->lines.push_back(std::string(iec104_log_level_string(level)) + " " +
+                                                  std::to_string(connection) + " " + message);
+     }
+-    [[nodiscard]] bool contains(const std::string& part) const {
+-        for (const auto& l : lines) {
+-            if (l.find(part) != std::string::npos) {
+-                return true;
++    [[nodiscard]] bool contains(const std::string& part) const { return index(part) >= 0; }
++    // Position of the first line containing @p part, -1 if none.
++    [[nodiscard]] long index(const std::string& part) const {
++        for (std::size_t i = 0; i < lines.size(); ++i) {
++            if (lines[i].find(part) != std::string::npos) {
++                return static_cast<long>(i);
+             }
+         }
+-        return false;
++        return -1;
+     }
+ };
+ 
+@@ -196,6 +202,42 @@ TEST(Operation, StatisticsAndLogging) {
+     iec104_server_destroy(server);
+ }
+ 
++// Rule: callbacks and frame trace keep the order of the protocol. A peer
++// that sends STARTDT act right after connecting (before the server has polled
++// the new connection) is first reported as connected (stopped), then its
++// frames, then the started state.
++TEST(Operation, ConnectedReportedBeforeFirstFrame) {
++    Log log;
++    iec104_server* server = nullptr;
++    ASSERT_EQ(iec104_server_create(nullptr, nullptr, &server), IEC104_OK);
++    iec104_server_set_log(server, IEC104_LOG_TRACE, Log::fn, &log);
++    ASSERT_EQ(iec104_server_listen(server, "127.0.0.1", 0), IEC104_OK);
++
++    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
++    ASSERT_GE(fd, 0);
++    sockaddr_in addr{};
++    addr.sin_family = AF_INET;
++    addr.sin_port = htons(iec104_server_port(server));
++    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++    ASSERT_EQ(::connect(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof addr), 0);
++    const unsigned char startdt_act[] = {0x68, 0x04, 0x07, 0x00, 0x00, 0x00};
++    ASSERT_EQ(::send(fd, startdt_act, sizeof startdt_act, 0),
++              static_cast<ssize_t>(sizeof startdt_act));
++
++    for (int i = 0; i < 5000 && !log.contains("info 1 state started"); ++i) {
++        (void)iec104_server_poll(server, 1);
++    }
++    const long stopped = log.index("info 1 state stopped");
++    const long received = log.index("trace 1 received 68 04 07 00 00 00");
++    const long started = log.index("info 1 state started");
++    EXPECT_GE(stopped, 0);
++    EXPECT_LT(stopped, received);
++    EXPECT_LT(received, started);
++
++    ::close(fd);
++    iec104_server_destroy(server);
++}
++
+ // Rule: violated recommendations of the configuration are reported as
+ // warnings when the log is switched on (E2: warning, not error).
+ TEST(Operation, ConfigWarningsAreLogged) {
+diff --git a/tests/test_values.cpp b/tests/test_values.cpp
+index 954a522..0570b47 100644
+--- a/tests/test_values.cpp
++++ b/tests/test_values.cpp
+@@ -14,6 +14,7 @@
+ #include "api/values.hpp"
+ #include "iec104/iec104.h"
+ 
++#include <array>
+ #include <gtest/gtest.h>
+ 
+ using namespace iec104;
+@@ -125,3 +126,69 @@ TEST(Values, UnixTime) {
+     EXPECT_EQ(back.month, 2U);
+     EXPECT_EQ(back.day, 29U);
+ }
++
++// Rule: iec104_decode_asdu() yields the data unit identifier and the objects
++// as the callbacks do. Reference: tests/data/lib60870_capture.txt (lib60870-C),
++// answer to an interrogation with three scaled values from IOA 100.
++TEST(DecodeAsdu, ScaledValuesFromCapture) {
++    const std::uint8_t asdu[] = {0x0b, 0x03, 0x14, 0x03, 0x01, 0x00, 0x64, 0x00,
++                                 0x00, 0xff, 0xff, 0x00, 0x65, 0x00, 0x00, 0x17,
++                                 0x00, 0x00, 0x66, 0x00, 0x00, 0xfc, 0x08, 0x00};
++    iec104_asdu_info info{};
++    std::array<iec104_object, 4> objects{};
++    std::size_t count = 0;
++    ASSERT_EQ(iec104_decode_asdu(nullptr, asdu, sizeof asdu, &info, objects.data(), objects.size(),
++                                 &count),
++              IEC104_OK);
++    EXPECT_EQ(info.type, 11);
++    EXPECT_EQ(info.cause, 20);
++    EXPECT_EQ(info.originator, 3);
++    EXPECT_EQ(info.common_address, 1);
++    ASSERT_EQ(count, 3U);
++    EXPECT_EQ(objects[0].ioa, 100U);
++    EXPECT_EQ(objects[0].value, -1.0);
++    EXPECT_EQ(objects[1].ioa, 101U);
++    EXPECT_EQ(objects[1].value, 23.0);
++    EXPECT_EQ(objects[2].ioa, 102U);
++    EXPECT_EQ(objects[2].value, 2300.0);
++}
++
++// Rule: types without mapping to iec104_object still give header and count;
++// errors of the octets and of the arguments are reported.
++TEST(DecodeAsdu, UnsupportedAndErrors) {
++    // M_EP_TD_1 (38), event of protection equipment with CP56: one object.
++    const std::uint8_t ep[] = {0x26, 0x01, 0x03, 0x00, 0x01, 0x00, 0x0a, 0x00, 0x00, 0x01,
++                               0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x1a};
++    iec104_asdu_info info{};
++    iec104_object object{};
++    std::size_t count = 0;
++    EXPECT_EQ(iec104_decode_asdu(nullptr, ep, sizeof ep, &info, &object, 1, &count),
++              IEC104_ERR_UNSUPPORTED);
++    EXPECT_EQ(info.type, 38);
++    EXPECT_EQ(count, 1U);
++
++    // Single point, two objects announced (VSQ 2) but only one present.
++    const std::uint8_t short_sp[] = {0x01, 0x02, 0x03, 0x00, 0x01, 0x00, 0x64, 0x00, 0x00, 0x01};
++    EXPECT_EQ(iec104_decode_asdu(nullptr, short_sp, sizeof short_sp, &info, &object, 1, &count),
++              IEC104_ERR_MALFORMED);
++    const std::uint8_t sp2[] = {0x01, 0x02, 0x03, 0x00, 0x01, 0x00, 0x64,
++                                0x00, 0x00, 0x01, 0x65, 0x00, 0x00, 0x00};
++    EXPECT_EQ(iec104_decode_asdu(nullptr, sp2, sizeof sp2, &info, &object, 1, &count),
++              IEC104_ERR_BUFFER_TOO_SMALL);
++    EXPECT_EQ(iec104_decode_asdu(nullptr, nullptr, 0, &info, &object, 1, &count),
++              IEC104_ERR_INVALID_ARGUMENT);
++    iec104_link_config bad{};
++    iec104_link_config_init(&bad);
++    bad.ioa_length = 4;
++    EXPECT_EQ(iec104_decode_asdu(&bad, sp2, sizeof sp2, &info, &object, 1, &count),
++              IEC104_ERR_INVALID_ARGUMENT);
++}
++
++// Rule: names as in the standard; unknown types give a fixed text.
++TEST(TypeName, KnownAndUnknown) {
++    EXPECT_STREQ(iec104_type_name(1), "M_SP_NA_1");
++    EXPECT_STREQ(iec104_type_name(100), "C_IC_NA_1");
++    EXPECT_STREQ(iec104_type_name(107), "C_TS_TA_1");
++    EXPECT_STREQ(iec104_type_name(0), "unknown type");
++    EXPECT_STREQ(iec104_type_name(200), "unknown type");
++}
+diff --git a/tools/interop/run_lib60870.sh b/tools/interop/run_lib60870.sh
+index ecef04b..aac4210 100755
+--- a/tools/interop/run_lib60870.sh
++++ b/tools/interop/run_lib60870.sh
+@@ -106,6 +106,9 @@ fi
+ 
+ # --- 2. lib60870-Client gegen eigenen Server -----------------------------------
+ # hello_server auf 127.0.0.1 mit freiem Port (0); der Port steht in seiner Ausgabe.
++# Log vorher leeren: sonst liest die Schleife den Port des vorigen Laufs, bevor
++# der Hintergrundprozess die Datei neu angelegt hat.
++: > "$OUT/2_server.log"
+ "$HELLO" 0 127.0.0.1 < /dev/null > "$OUT/2_server.log" 2>&1 &
+ PID=$!
+ HPORT=""
