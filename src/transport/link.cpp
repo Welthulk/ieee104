@@ -107,6 +107,10 @@ void Link::service(short revents, apci::TimeMs now, LinkSink& sink) noexcept {
         }
         just_opened = true;
     }
+    // Events queued before this call (above all "connected" of a link that
+    // just opened) are reported before the frames read now, so that callbacks
+    // and frame trace keep the order of the protocol.
+    dispatch_events(sink);
     // TLS: data that arrived with the end of the handshake is already
     // buffered inside the TLS session, and a renegotiation may need a
     // writable socket to go on reading.

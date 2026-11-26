@@ -10,11 +10,15 @@
  */
 #include "iec104/iec104.h"
 
+#include <arpa/inet.h>
 #include <cstdio>
 #include <fstream>
 #include <functional>
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 #include <string>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -31,13 +35,15 @@ struct Log {
         static_cast<Log*>(user)->lines.push_back(std::string(iec104_log_level_string(level)) + " " +
                                                  std::to_string(connection) + " " + message);
     }
-    [[nodiscard]] bool contains(const std::string& part) const {
-        for (const auto& l : lines) {
-            if (l.find(part) != std::string::npos) {
-                return true;
+    [[nodiscard]] bool contains(const std::string& part) const { return index(part) >= 0; }
+    // Position of the first line containing @p part, -1 if none.
+    [[nodiscard]] long index(const std::string& part) const {
+        for (std::size_t i = 0; i < lines.size(); ++i) {
+            if (lines[i].find(part) != std::string::npos) {
+                return static_cast<long>(i);
             }
         }
-        return false;
+        return -1;
     }
 };
 
@@ -193,6 +199,42 @@ TEST(Operation, StatisticsAndLogging) {
     EXPECT_EQ(after.u_frames_sent, cs.u_frames_sent);
 
     iec104_client_destroy(client);
+    iec104_server_destroy(server);
+}
+
+// Rule: callbacks and frame trace keep the order of the protocol. A peer
+// that sends STARTDT act right after connecting (before the server has polled
+// the new connection) is first reported as connected (stopped), then its
+// frames, then the started state.
+TEST(Operation, ConnectedReportedBeforeFirstFrame) {
+    Log log;
+    iec104_server* server = nullptr;
+    ASSERT_EQ(iec104_server_create(nullptr, nullptr, &server), IEC104_OK);
+    iec104_server_set_log(server, IEC104_LOG_TRACE, Log::fn, &log);
+    ASSERT_EQ(iec104_server_listen(server, "127.0.0.1", 0), IEC104_OK);
+
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(fd, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(iec104_server_port(server));
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ASSERT_EQ(::connect(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof addr), 0);
+    const unsigned char startdt_act[] = {0x68, 0x04, 0x07, 0x00, 0x00, 0x00};
+    ASSERT_EQ(::send(fd, startdt_act, sizeof startdt_act, 0),
+              static_cast<ssize_t>(sizeof startdt_act));
+
+    for (int i = 0; i < 5000 && !log.contains("info 1 state started"); ++i) {
+        (void)iec104_server_poll(server, 1);
+    }
+    const long stopped = log.index("info 1 state stopped");
+    const long received = log.index("trace 1 received 68 04 07 00 00 00");
+    const long started = log.index("info 1 state started");
+    EXPECT_GE(stopped, 0);
+    EXPECT_LT(stopped, received);
+    EXPECT_LT(received, started);
+
+    ::close(fd);
     iec104_server_destroy(server);
 }
 

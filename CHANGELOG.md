@@ -1,5 +1,12 @@
 # Änderungen
 
+## Unveröffentlicht
+
+| Bereich | Änderung |
+| --- | --- |
+| Transport | Reihenfolge der Ereignisse: Eine angenommene Verbindung meldet „verbunden“ jetzt vor ihren ersten Rahmen. Bisher kam die Meldung erst danach, wenn die Gegenstelle STARTDT gleich nach dem Verbindungsaufbau schickte |
+| Test | `Operation.ConnectedReportedBeforeFirstFrame` prüft diese Reihenfolge; `run_lib60870.sh` las den Port gelegentlich aus dem Log des vorigen Laufs (Fall „Server <- Client“ schlug selten fehl) |
+
 ## 0.8.0 (26.11.2026)
 
 | Bereich | Änderung |

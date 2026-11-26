@@ -106,6 +106,9 @@ fi
 
 # --- 2. lib60870-Client gegen eigenen Server -----------------------------------
 # hello_server auf 127.0.0.1 mit freiem Port (0); der Port steht in seiner Ausgabe.
+# Log vorher leeren: sonst liest die Schleife den Port des vorigen Laufs, bevor
+# der Hintergrundprozess die Datei neu angelegt hat.
+: > "$OUT/2_server.log"
 "$HELLO" 0 127.0.0.1 < /dev/null > "$OUT/2_server.log" 2>&1 &
 PID=$!
 HPORT=""
