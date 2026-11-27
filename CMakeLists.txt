@@ -6,7 +6,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(iec104
-    VERSION 0.9.3
+    VERSION 1.0.0
     DESCRIPTION "IEC 60870-5-104 library (C++17 core, C API)"
     LANGUAGES C CXX)
 
@@ -402,9 +402,9 @@ install(EXPORT iec104Targets NAMESPACE iec104:: DESTINATION ${IEC104_CMAKE_DIR})
 configure_package_config_file(cmake/iec104Config.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/iec104Config.cmake
     INSTALL_DESTINATION ${IEC104_CMAKE_DIR})
-# Version 0.x: only the same minor version is compatible.
+# Version 1.x: every later 1.x is compatible (same major version, same SONAME).
 write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/iec104ConfigVersion.cmake
-    VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
+    VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/iec104Config.cmake
               ${CMAKE_CURRENT_BINARY_DIR}/iec104ConfigVersion.cmake
         DESTINATION ${IEC104_CMAKE_DIR})

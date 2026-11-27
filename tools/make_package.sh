@@ -25,7 +25,7 @@
 #   2. Verweise auf die internen Unterlagen und den Arbeitsablauf.
 #
 # Fertig gebaute Library: aus dem geprüften Quell-Zip gebaut (Release,
-# geteilt, mit TLS). Ins Zip kommt nur das Nötigste: lib/libiec104.so.0
+# geteilt, mit TLS). Ins Zip kommt nur das Nötigste: lib/libiec104.so.1
 # (eine Datei, keine Symlinks), include/, LICENSES/, julia/ (Anbindung für
 # Julia) und eine Kurzanleitung (packaging/README-binary.md). Geprüft werden die Zeichenketten der Library
 # (Begriffsliste, interne Verweise, Pfade des Bau-Rechners) und die

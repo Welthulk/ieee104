@@ -86,12 +86,20 @@ bool PathSelector::encode(const codec::AsduHeader& header, const codec::Informat
     return true;
 }
 
+bool PathSelector::delivered_since(const Entry& e) const {
+    // The leading path delivered this point at about the same time or later.
+    const auto d = delivered_.find(e.key);
+    return d != delivered_.end() && d->second.time + settings_.replay_tolerance_ms >= e.time;
+}
+
 void PathSelector::prune(Path& path, PathTime now) const {
     while (!path.buffer.empty() && (path.buffer.size() > settings_.replay_max_objects ||
                                     now - path.buffer.front().time > settings_.replay_window_ms)) {
+        if (!delivered_since(path.buffer.front())) {
+            ++path.dropped_since_switch; // a replay would have needed it
+            ++path.counters.dropped;
+        }
         path.buffer.pop_front();
-        ++path.dropped_since_switch;
-        ++path.counters.dropped;
     }
 }
 

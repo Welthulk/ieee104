@@ -4,13 +4,13 @@
 
 Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
 
-Stand: 26.11.2026, Version 0.9.3, Linux x86-64.
+Stand: 27.11.2026, Version 1.0.0, Linux x86-64.
 
 ## Sofort nutzen, ohne zu bauen
 
 | Was | Wo |
 | --- | --- |
-| Fertig gebaute Library für Linux x86-64 (Release, mit TLS) | `dist/iec104-<version>-linux-x86_64/` (auch als gleichnamiges Zip): `lib/libiec104.so.0`, `include/iec104/iec104.h`, Kurzanleitung `README.md` |
+| Fertig gebaute Library für Linux x86-64 (Release, mit TLS) | `dist/iec104-<version>-linux-x86_64/` (auch als gleichnamiges Zip): `lib/libiec104.so.1`, `include/iec104/iec104.h`, Kurzanleitung `README.md` |
 | Beispielprogramme für Julia | `julia/` im selben Ordner bzw. `examples/julia/`: `IEC104.jl` (Anbindung), `client.jl`, `server.jl`; Anleitung `docs/07_Julia.md` |
 | Test-GUI und Prüfstand im Browser | `julia julia/gui/iec104_gui.jl`, dann `http://localhost:8080`: Leitstelle gegen eine Station mit Werteliste, Prozessabbild mit Zählern je Ursache, Befehlen mit Laufzeiten, TLS; Teststation, lib60870 als Gegenstelle; Selbsttest mit Protokoll zum Weitergeben; Telegramme im Klartext mit Filtern; Mithören aus Mitschnitten, auch live (`docs/07_Julia.md`, Abschnitt 7) |
 | Beispielprogramme in C | `examples/hello_server.c`, `examples/hello_client.c`; Anleitung `docs/06_Anleitung.md` |
@@ -20,8 +20,8 @@ Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab
 Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iec104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
 
 ```bash
-cd dist/iec104-0.9.3-linux-x86_64
-gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
+cd dist/iec104-1.0.0-linux-x86_64
+gcc -Iinclude meine_app.c lib/libiec104.so.1 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
 julia julia/server.jl 2404 &                                                       # Julia: Station
 julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
 julia julia/gui/iec104_gui.jl                                                      # Test-GUI: http://localhost:8080
@@ -37,7 +37,7 @@ Reiter „Prüfstand“ mit Teststation als Gegenstelle: Befehle mit Laufzeiten 
 | --- | --- |
 | ![Mithören](docs/bilder/test_gui_mithoeren.png) | ![Teststation](docs/bilder/test_gui_station.png) |
 
-Bilder neu erzeugen: `tools/gui_screenshot.sh build/shared/libiec104.so.0`.
+Bilder neu erzeugen: `tools/gui_screenshot.sh build/shared/libiec104.so.1`.
 
 ## Funktionen
 
@@ -48,7 +48,7 @@ Bilder neu erzeugen: `tools/gui_screenshot.sh build/shared/libiec104.so.0`.
 | Parameter | Timer, k, w, Feldlängen (COT, CA, IOA), maximale ASDU-Länge, Port, Adresse; alles je Verbindung einstellbar, auch per Konfigurationsdatei |
 | Server | Prozessabbild; Generalabfrage (Station, Gruppen 1–16), Zählerabfrage, Lesebefehl und Testbefehl beantwortet die Library selbst; Uhrzeit und Reset entscheidet die Anwendung (`on_command`); Ende der Initialisierung; negative Bestätigungen (Ursachen 44–47); Broadcast-Adresse |
 | Befehle | Einzel-, Doppel-, Stufen-, Sollwert- und Bitmusterbefehle mit und ohne Zeitmarke; Befehlsmodell je IOA (direkt oder Select/Execute mit Auswahl-Timeout); maximale Befehlsverzögerung; Client verfolgt jeden Befehl bis zum Ergebnis |
-| Redundanz | Redundanzgruppen nach Edition 2: eine aktive Verbindung je Gruppe, Umschaltung per STOPDT/STARTDT, Ereignispuffer je Gruppe bis zur Quittung, erneutes Senden nach Abbruch, Überlaufstrategie, Zuordnung über die Adresse der Leitstelle |
+| Redundanz | Redundanzgruppen nach Edition 2: eine aktive Verbindung je Gruppe, Umschaltung per STOPDT/STARTDT, Ereignispuffer je Gruppe bis zur Quittung, erneutes Senden nach Abbruch, Überlaufstrategie, Zuordnung über die Adresse der Leitstelle. Wegeredundanz der Leitstelle: bis 4 gestartete Wege zu Stationen mit demselben Prozess, Umschalten ohne Verlust mit Nachlauf und Generalabfrage, Neuaufbau verlorener Wege |
 | Sicherheit | TLS 1.2/1.3 nach IEC 62351-3 mit OpenSSL 3: gegenseitige Authentifizierung, Sperrlisten, Prüfung von Name oder Fingerprint, Key Update und Renegotiation, Session Resumption, Zertifikatswechsel zur Laufzeit, Sicherheitsereignisse; Abweisung unbekannter Absender |
 | Betrieb | Log mit Stufen bis zum APDU-Hexdump, Statistik je Verbindung und Gruppe, Konfigurationsdatei, kein interner Thread (Poll im Thread der Anwendung) |
 | Einbindung | stabile C-Schnittstelle (ein Header), statisch oder geteilt, `find_package(iec104)`, Anbindung für Julia per `ccall`; fertig gebaute Library |
@@ -60,10 +60,10 @@ Bilder neu erzeugen: `tools/gui_screenshot.sh build/shared/libiec104.so.0`.
 | --- | --- |
 | Unit-Tests (GoogleTest) | Codec mit Referenz-Hexdumps, Zustandsmaschine mit simulierter Zeit, Abläufe der Station, Befehle, C-API über Loopback, TLS mit Negativfällen, Redundanz, Konfigurationsdatei |
 | Referenzdaten | Mitschnitte einer fremden Implementierung, auch über TLS (`tests/data/`); jede APDU wird dekodiert und bitgenau neu kodiert |
-| Selbsttest | Server und Client über TCP, über TLS und mit Umschaltung einer Redundanzgruppe, als Teil von `ctest` |
+| Selbsttest | Server und Client über TCP, über TLS, mit Umschaltung einer Redundanzgruppe und mit zwei Wegen unter Störungen, als Teil von `ctest` |
 | Sanitizer | alle Tests mit AddressSanitizer und UBSan (Preset `asan`) |
 | Statische Analyse | clang-tidy ohne Befunde, Übersetzung mit `-Werror`; API-Doku ohne Doxygen-Warnungen (Test `Doc.NoDoxygenWarnings`) |
-| Fuzzing | libFuzzer für Codec, Zustandsmaschine und Abläufe der Station |
+| Fuzzing | libFuzzer für Codec, Zustandsmaschine, Abläufe der Station und Wegewahl |
 | Interop | gegen lib60870 als fremde Gegenstelle, mit und ohne TLS: `tools/interop/run_lib60870.sh`, Ergebnisse in `docs/08_Interop.md` |
 
 ## Unterlagen
@@ -74,9 +74,9 @@ Bilder neu erzeugen: `tools/gui_screenshot.sh build/shared/libiec104.so.0`.
 | `docs/02_Technik_und_Quellen.md` | Architektur, Protokollaufbau, Parameter, Typkennungen, Elemente, Quellen |
 | `docs/03_Quellen_APCI.md` | Öffentliche Belege für die Regeln der Verbindungssteuerung |
 | `docs/04_Selbsttest.md` | Selbsttest-Programme und manuelle Tests: Aufruf, Testfälle, Optionen |
-| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E10), auf die der Code verweist |
-| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Redundanz, TLS, Regeln |
-| `docs/07_Julia.md` | Library aus Julia verwenden: Schnellstart, Typen, Callbacks, Beispiele; Test-GUI, Prüfstand, Mithören (Abschnitt 7) |
+| `docs/05_Normfragen_und_Festlegungen.md` | Offene Normfragen (N1–N13) und technische Festlegungen (E1–E12), auf die der Code verweist |
+| `docs/06_Anleitung.md` | Anleitung: einbinden, Hello World, typische Aufgaben, Konfigurationsdatei, Redundanz, zwei Wege, TLS, Regeln |
+| `docs/07_Julia.md` | Library aus Julia verwenden: Schnellstart, Typen, Callbacks, Beispiele; Test-GUI, Prüfstand, Mithören, zwei Wege (Abschnitt 7) |
 | `docs/08_Interop.md` | Tests gegen eine fremde Implementierung, Befunde, Vorbereitung des Integrationstests mit einer Gegenstelle |
 | `docs/09_Interoperabilitaetsliste.md` | Interoperabilitätsliste nach Abschnitt 9 der Norm (Standardwerte), erzeugt mit `iec104_interop_list` |
 | `docs/10_Glossar.md` | Glossar: Station, Leitstelle, Prüfstand, Adressen, Datenpunkt, Befehle, Abfragen, Verbindung, Begriffe der GUI |

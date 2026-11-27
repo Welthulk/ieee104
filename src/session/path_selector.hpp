@@ -74,7 +74,7 @@ struct PathAction {
     std::string reason;             ///< Switched, AllLost: why.
     std::size_t replayed{0};        ///< Switched: objects delivered from the buffer.
     std::size_t suppressed{0};      ///< Switched: buffered objects not delivered (already known).
-    std::size_t dropped{0};         ///< Switched: objects dropped from the buffer (window, size).
+    std::size_t dropped{0};         ///< Switched: objects lost from the buffer (see PathCounters).
 };
 
 /** @brief Counters of one path. */
@@ -82,8 +82,11 @@ struct PathCounters {
     std::uint64_t became_leading{0}; ///< Times this path became leading.
     std::uint64_t replayed{0};       ///< Objects replayed from its buffer.
     std::uint64_t suppressed{0};     ///< Buffered objects not replayed.
-    std::uint64_t dropped{0};        ///< Objects dropped from its buffer (window or size).
-    std::uint64_t followed{0};       ///< Objects received while following.
+    /// Objects that fell out of its buffer (window or size) although the leading path
+    /// had not delivered that point since: a switch-over then would have missed them.
+    /// Objects the leading path delivered as well are not counted.
+    std::uint64_t dropped{0};
+    std::uint64_t followed{0}; ///< Objects received while following.
 };
 
 /** @brief Selector of the leading path, with replay buffer. */
@@ -152,6 +155,7 @@ class PathSelector {
     bool encode(const codec::AsduHeader& header, const codec::InformationObject& object,
                 Entry& out) const;
     void prune(Path& path, PathTime now) const;
+    [[nodiscard]] bool delivered_since(const Entry& e) const;
     [[nodiscard]] std::size_t replay_start(const std::deque<Entry>& buffer,
                                            const std::vector<std::size_t>& positions,
                                            std::uint64_t key) const;

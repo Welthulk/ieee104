@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
 Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
 
 ```bash
-cd iec104-0.9.3-linux-x86_64
+cd iec104-1.0.0-linux-x86_64
 julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
 julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
 ```
@@ -34,8 +34,8 @@ type 13  cause 3  station 1  IOA 100  value 31.0    spontan
 
 | Ort | Wann |
 | --- | --- |
-| Umgebungsvariable `IEC104_LIB` | z. B. `IEC104_LIB=/opt/iec104/lib/libiec104.so.0 julia app.jl` |
-| `../lib/libiec104.so.0` neben `IEC104.jl` | Aufbau des Binärpakets |
+| Umgebungsvariable `IEC104_LIB` | z. B. `IEC104_LIB=/opt/iec104/lib/libiec104.so.1 julia app.jl` |
+| `../lib/libiec104.so.1` neben `IEC104.jl` | Aufbau des Binärpakets |
 | Suchpfad des Systems | `LD_LIBRARY_PATH` oder installiert |
 
 ## 2. Eigenes Programm
@@ -164,6 +164,7 @@ end
 | --- | --- |
 | Prüfstand (Leitstelle) | Leitstelle gegen eine Station, z. B. ein Gerät im Netz: Werteliste, Prozessabbild mit Zählern je Ursache, Befehle mit Laufzeiten (Abschnitt 7.4) |
 | Mithören | Verkehr zwischen fremder Leitstelle und Station aus einem Mitschnitt (tcpdump, Wireshark), auch live (Abschnitt 7.5) |
+| Zwei Wege | Leitstelle mit zwei Wegen, Station B, Wege stören, Reihenprüfung (Abschnitt 7.6) |
 | Station und lib60870 | eigene Teststation und lib60870 als fremde Leitstelle (Abschnitt 7.1) |
 | Selbsttest | prüft die Library mit eigener Station und Leitstelle (Abschnitt 7.2) |
 | immer darunter | Telegramme und Ereignisse mit Filtern (Abschnitt 7.3) |
@@ -336,3 +337,23 @@ Reiter „Mithören“: Verkehr zwischen einer fremden Leitstelle und einer Stat
 Nur dort mithören, wo es erlaubt ist.
 
 ![Reiter Mithören nach Auswertung eines Beispiel-Mitschnitts](bilder/test_gui_mithoeren.png)
+
+### 7.6 Zwei Wege
+
+Ausprobieren ohne zweite echte Station:
+
+1. Reiter „Station“: Port 2404, **Port Station B** 2405, „Starten“. Station B hat dieselben Datenpunkte; eine Wertänderung geht an beide („Wertänderung an“ = beide; „nur A“/„nur B“ erzeugt absichtlich eine Abweichung).
+2. Reiter „Prüfstand“: Port 2404, **Weg 2: Port** 2405, „Verbinden“. Für schnelles Umschalten bei „stumm“ unter „Timer …“ t1 = 2 und t3 = 1 eintragen.
+3. Bereich „Wege und Reihenprüfung“: Tabelle der Wege; je Weg „trennen“, „stumm“, „freigeben“.
+4. „Reihe starten“: beide Stationen senden IOA 9000 = 1, 2, 3 … Die Zeile darunter zeigt gesendet, zugestellt, fehlend, doppelt; **fehlend muss 0 bleiben**.
+5. „zufällig stören“: alle von–bis Sekunden wird ein Weg getrennt oder stumm geschaltet, nie beide zugleich (abschaltbar). Der Startwert steht im Protokoll; mit demselben Startwert wiederholt sich der Lauf.
+
+| Spalte | Bedeutung |
+| --- | --- |
+| Rolle | „führend“: seine Meldungen werden verwendet; „läuft mit“: gestartet, puffert |
+| Verbindungen | Aufbauversuche; ein verlorener Weg verbindet sich in der GUI nach 2 s neu |
+| mitgelaufen, im Puffer | Meldungen, die der Weg als mitlaufender empfangen hat bzw. gerade für einen Nachlauf hält |
+| nachgeliefert, unterdrückt | bei Umschaltungen auf diesen Weg aus dem Puffer zugestellt bzw. schon bekannt |
+| verloren | aus dem Puffer gefallen (Fenster zu kurz); muss 0 sein |
+
+Unter „Telegramme“ stehen die Rahmen mit „Leitstelle Weg 1“/„Weg 2“ und jede Umschaltung mit Grund. Verfahren: `docs/06_Anleitung.md`, Abschnitt 6, „Zwei Wege“.

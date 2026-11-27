@@ -7,7 +7,7 @@
 #
 # Aufruf: tests/gui/test_gui.sh LIBRARY [LIB60870_C]
 #
-#   LIBRARY     geteilte Library (libiec104.so.0), wird der GUI als IEC104_LIB übergeben
+#   LIBRARY     geteilte Library (libiec104.so.1), wird der GUI als IEC104_LIB übergeben
 #   LIB60870_C  optional, sonst Umgebungsvariable IEC104_LIB60870: Ordner lib60870-C
 #               mit gebauten Beispielen; dann zusätzlich die Gegenstelle lib60870
 #   JULIA, CURL Programme, Default aus dem Suchpfad
@@ -23,7 +23,7 @@
 
 set -u
 
-LIB="${1:?Library fehlt (libiec104.so.0)}"
+LIB="${1:?Library fehlt (libiec104.so.1)}"
 LIB60870="${2:-${IEC104_LIB60870:-}}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GUI="$ROOT/examples/julia/gui/iec104_gui.jl"

@@ -23,7 +23,7 @@ cmake --install build/release --prefix /opt/iec104
 
 | Datei | Inhalt |
 | --- | --- |
-| `lib/libiec104.so.0` | geteilte Library (Release, mit TLS), eine Datei ohne Symlinks |
+| `lib/libiec104.so.1` | geteilte Library (Release, mit TLS), eine Datei ohne Symlinks |
 | `include/iec104/iec104.h` | Header |
 | `LICENSES/` | Lizenztexte |
 | `README.md` | Voraussetzungen, Übersetzen, Starten |
@@ -35,15 +35,15 @@ cmake --install build/release --prefix /opt/iec104
 | OpenSSL | 3.0 (`libssl.so.3`, auf diesen Systemen vorhanden) |
 
 ```bash
-gcc -Iinclude meine_app.c lib/libiec104.so.0 -Wl,-rpath,'$ORIGIN/lib' -o meine_app
+gcc -Iinclude meine_app.c lib/libiec104.so.1 -Wl,-rpath,'$ORIGIN/lib' -o meine_app
 ```
 
-Für `-liec104` einmal `ln -s libiec104.so.0 lib/libiec104.so` anlegen. `find_package(iec104)` braucht die installierte Variante (oben), nicht das Zip.
+Für `-liec104` einmal `ln -s libiec104.so.1 lib/libiec104.so` anlegen. `find_package(iec104)` braucht die installierte Variante (oben), nicht das Zip.
 
 Eigenes CMake-Projekt:
 
 ```cmake
-find_package(iec104 0.6 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
+find_package(iec104 1.0 REQUIRED)          # CMAKE_PREFIX_PATH=/opt/iec104
 target_link_libraries(meine_app PRIVATE iec104::iec104)
 ```
 
@@ -270,6 +270,64 @@ overflow = drop_oldest
 
 ```c
 for (uint32_t i = 0; i < cfg.group_count; ++i) iec104_server_add_group(server, &cfg.groups[i], NULL);
+```
+
+### Zwei Wege (Wegeredundanz der Leitstelle)
+
+Liefern zwei Stationen denselben Prozess (gleiche gemeinsame Adresse, gleiche IOAs), hält ein Client zu beiden je eine gestartete Verbindung. Die Anwendung sieht eine logische Verbindung (Kennung 1); zugestellt wird nur der führende Weg. Verfahren und Ablaufbild: `docs/02_Technik_und_Quellen.md`, Abschnitt Redundanz; Festlegungen: `docs/05_Normfragen_und_Festlegungen.md`, E11 und E12.
+
+```c
+iec104_path_config wege[2] = {0};
+strcpy(wege[0].host, "10.0.1.5"); wege[0].port = 2404;   /* Station A */
+strcpy(wege[1].host, "10.0.2.5"); wege[1].port = 2404;   /* Station B */
+iec104_path_options o;
+iec104_path_options_init(&o);                             /* Neuaufbau 5 s, Fenster t1 + t3 + 5 s */
+iec104_client_set_path_callback(client, bei_umschaltung, NULL);
+iec104_client_connect_paths(client, wege, 2, &o);
+iec104_client_start(client);                              /* einmal: jeder Weg startet, sobald er steht */
+/* ... wie mit einer Verbindung: poll, Befehle, Abfragen ... */
+iec104_client_close(client);                              /* beendet alle Wege */
+```
+
+| Aufgabe | Aufruf |
+| --- | --- |
+| führender Weg | `iec104_client_leading_path(client)`: 1…n, 0 = keiner |
+| Zustand und Zähler eines Wegs | `iec104_client_get_path_info(client, 2, &info)`: Zustand, führend, Verbindungsaufbauten, mitgelaufen, nachgeliefert, unterdrückt, verloren, im Puffer, Link-Statistik |
+| Meldung jeder Umschaltung | `iec104_client_set_path_callback()`: neuer und alter Weg, Grund, Anzahlen; zusätzlich Warnung im Log |
+| Weg stören (Test) | `iec104_client_disturb_path(client, 1, IEC104_PATH_SILENT)`; `IEC104_PATH_CLOSE`, `IEC104_PATH_RESTORE` |
+| TLS je Weg | `tls_peer_name`, `tls_peer_fingerprint` in `iec104_path_config`; leer = wie in `iec104_tls_config` |
+
+| Parameter (`iec104_path_options`) | Standard | Wirkung |
+| --- | --- | --- |
+| `reconnect_interval_ms` | 5000 | Abstand zwischen zwei Versuchen, einen verlorenen Weg aufzubauen; ohne Ende |
+| `replay_window_ms` | 0 = t1 + t3 + 5 s | so lange puffert ein mitlaufender Weg; muss die Erkennungszeit decken |
+| `replay_max_objects` | 10000 | Obergrenze je Weg; ältere fallen heraus (Zähler „verloren“) |
+| `replay_tolerance_ms` | 500 | so weit dürfen die Empfangszeiten desselben Werts auf beiden Wegen auseinanderliegen |
+| `interrogation_after_switch` | 1 | Generalabfrage nach jeder Umschaltung |
+| `prefer_first_path` | 0 | 1: Weg 1 führt wieder, sobald er zurück ist |
+
+| Verhalten | |
+| --- | --- |
+| logischer Zustand (`on_state`, Kennung 1) | „gestartet“, solange ein Weg führt; „verbinde“, wenn keiner gestartet ist; „getrennt“ nur nach `iec104_client_close()` |
+| Doppelte | um eine Umschaltung möglich (z. B. Wert ohne Gegenstück auf dem alten Weg, Generalabfrage); Verluste nicht, solange das Fenster reicht |
+| Timer | ein schweigender Weg fällt erst nach t3 + t1 auf (Standard 35 s); für schnelles Umschalten t1 und t3 kürzer wählen, z. B. t1 = 5 s, t3 = 5 s |
+| Voraussetzung | beide Stationen dürfen gleichzeitig gestartet sein und senden dieselben Punkte; sonst ist es Kanalredundanz (oben) |
+| Grenze | kein Verfahren der Norm; eine Umsetztabelle für abweichende Adressen je Weg gibt es nicht |
+
+In der Konfigurationsdatei eine Zeile je Weg; IPv6 in Klammern:
+
+```ini
+path = 10.0.1.5:2404
+path = [2001:db8::5]:2404 station-b.example     # optional TLS-Name und Fingerabdruck des Wegs
+path_reconnect = 5
+path_replay_window = 40
+path_replay_tolerance = 0.5
+path_interrogation = yes
+path_prefer_first = no
+```
+
+```c
+iec104_client_connect_paths(client, cfg.paths, cfg.path_count, &cfg.path_options);
 ```
 
 ## 7. TLS

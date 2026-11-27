@@ -1,6 +1,6 @@
 # Glossar
 
-Stand: 26.11.2026
+Stand: 27.11.2026
 
 Begriffe für Test-GUI und Prüfstand. Einführung: `docs/01_IEC104_verstehen.md`, Bedienung: `docs/07_Julia.md`, Abschnitt 7.
 
@@ -116,6 +116,14 @@ Die Teststation beantwortet die Generalabfrage für diesen Punkt mit Typ 3 (ohne
 | tolerant | lässt bekannte Abweichungen einer Gegenstelle zu | Standard ist strikt; GUI-Haken „tolerant“ |
 | TLS | Verschlüsselung und gegenseitige Anmeldung mit Zertifikaten nach IEC 62351-3 | Port 19998; GUI-Felder CA (PEM), Zertifikat, Schlüssel, Name der Gegenstelle |
 | Redundanzgruppe | mehrere Verbindungen einer Leitstelle zur Station; genau eine überträgt (STARTDT), die anderen stehen in STOPDT bereit | Umschalten: STOPDT auf der alten, STARTDT auf der neuen Verbindung |
+| Kanalredundanz | anderes Wort für die Redundanzgruppe: mehrere Verbindungen zu **einer** Station, eine gestartet | Verfahren der Norm (Abschnitt 10); `docs/06_Anleitung.md`, Abschnitt 6 |
+| Wegeredundanz | Leitstelle mit Verbindungen zu **mehreren** Stationen mit demselben Prozess, alle gestartet; verwendet wird nur einer | kein Verfahren der Norm; `docs/05_Normfragen_und_Festlegungen.md`, E11 |
+| Weg | eine Verbindung der Wegeredundanz, nummeriert 1…4 | GUI: „Weg 1“, „Weg 2“; Rahmen „Leitstelle Weg 2 → …“ |
+| führender Weg | der Weg, dessen Meldungen die Leitstelle verwendet | der erste gestartete; wechselt nur, wenn er ausfällt |
+| mitlaufender Weg | gestarteter Weg, der nicht führt; puffert Meldungen für einen Nachlauf | Puffer reicht standardmäßig t1 + t3 + 5 s zurück |
+| Umschalten (Wege) | der führende Weg fällt aus, ein mitlaufender übernimmt | danach Nachlauf und Generalabfrage; offene Befehle enden mit „Verbindung verloren“ |
+| Nachlauf | beim Umschalten zustellen, was der neue Weg empfangen hat, während der Ausfall noch nicht erkannt war | „nachgeliefert“; schon Bekanntes „unterdrückt“; aus dem Puffer Gefallenes „verloren“ |
+| Reihenprüfung | GUI: beide Stationen senden eine laufende Nummer, die Leitstelle zählt gesendet, zugestellt, fehlend, doppelt | fehlend muss 0 bleiben |
 
 ## 7. Begriffe der GUI
 

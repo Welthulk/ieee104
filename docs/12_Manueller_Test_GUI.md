@@ -1,6 +1,6 @@
 # Manueller Test der Test-GUI
 
-Stand: 26.11.2026 · für die Test-GUI ab Version 0.9.3 · Dauer etwa 30 Minuten · Begriffe: `docs/10_Glossar.md`
+Stand: 27.11.2026 · für die Test-GUI ab Version 1.0.0 · Dauer etwa 40 Minuten · Begriffe: `docs/10_Glossar.md`
 
 Dieser Durchgang prüft alle Teile der GUI, ohne dass eine echte Station nötig ist: Die GUI bringt eine eigene Teststation mit, gegen die ihre Leitstelle arbeitet. Wer ihn einmal durchgespielt hat, kennt alle Knöpfe, die er beim Test gegen eine echte Station braucht (`docs/11_Test_gegen_Station.md`).
 
@@ -28,7 +28,7 @@ Aufbau der Seite: oben die Reiter „Prüfstand (Leitstelle)“, „Mithören“
 
 | Nr | Tun | Erwartet | Erklärung | ✓ |
 | --- | --- | --- | --- | --- |
-| A1 | Reiter „Selbsttest“, „Selbsttest starten“ | Tabelle füllt sich Schritt für Schritt; nach etwa 10 s (mit lib60870 20 s) „22 von 22 bestanden“ bzw. „23 von 23“ | Schritt 23 (lib60870) braucht 9 s, weil das fremde Programm absichtlich wartet | |
+| A1 | Reiter „Selbsttest“, „Selbsttest starten“ | Tabelle füllt sich Schritt für Schritt; nach etwa 20 s (mit lib60870 30 s) „26 von 26 bestanden“ bzw. „27 von 27“ | Schritt 27 (lib60870) braucht 9 s, weil das fremde Programm absichtlich wartet; die Schritte 23–26 prüfen zwei Wege | |
 | A2 | „Protokoll kopieren“ und in einen Editor einfügen | Kurzfassung: Kopf, Ergebnis, Tabelle aller Schritte | Kopiert man vor dem Ende, steht dort „Zwischenstand … (noch nicht fertig)“ | |
 | A3 | „Protokoll speichern“ | Datei `iec104_selbsttest_<datum>.txt` mit allen Rahmen jedes Schritts | Zum Weitergeben, wenn ein Schritt fehlschlägt | |
 
@@ -141,3 +141,19 @@ Wichtig: ✎ in einer Zeile kopiert die Werte nur in die **Eingabezeile über de
 | Nr | Tun | Erwartet | Erklärung | ✓ |
 | --- | --- | --- | --- | --- |
 | J1 | im Terminal der GUI Strg+C, dann V4 wiederholen; im Browser F5 | Werteliste aus Block D und E ist wieder da (Prozessabbild leer) | Die Werteliste steht in `~/.config/iec104/werteliste.tsv` | |
+
+## K. Zwei Wege (Wegeredundanz)
+
+**Worum es geht:** Die Leitstelle hält zwei Wege zu zwei Stationen mit demselben Prozess. Nur der führende Weg wird verwendet; fällt er aus, übernimmt der andere, ohne dass Werte fehlen. Station B der GUI spielt die zweite Station. Erklärung der Spalten: `docs/07_Julia.md`, Abschnitt 7.6.
+
+| Nr | Tun | Erwartet | Erklärung | ✓ |
+| --- | --- | --- | --- | --- |
+| K1 | Reiter „Station“: Port 2404, Port Station B 2405, „Starten“ | Kopfzeile „Port 2404 und 2405 (B), Station 1“ | Station B hat dieselben Datenpunkte wie A | |
+| K2 | Prüfstand: Port 2404, Weg 2 Port 2405; unter „Timer …“ t1 = 2, t3 = 1; „Verbinden“ | „Wege und Reihenprüfung“: „Weg 1 führend, 0 Umschaltungen“, Tabelle mit zwei Zeilen, beide „Datenübertragung läuft“ | Der erste gestartete Weg führt, der andere läuft mit | |
+| K3 | „Reihe starten“ (IOA 9000, 200 ms) | Zeile darunter: gesendet und zugestellt steigen, fehlend 0 | Beide Stationen senden 1, 2, 3 … | |
+| K4 | Weg 1 „trennen“ | sofort „Weg 2 führend, 1 Umschaltungen“; unter Telegramme „Umschaltung auf Weg 2 … nachgeliefert …“; nach 2 s Weg 1 wieder „läuft mit“; fehlend 0 | Ein Abbruch wird sofort bemerkt | |
+| K5 | Weg 2 „stumm“ | etwa 3 s nichts, dann Umschaltung auf Weg 1 mit „nachgeliefert“ > 0; fehlend 0 | Ein schweigender Weg fällt erst nach t3 + t1 auf; was in der Zeit fehlte, liefert Weg 1 nach | |
+| K6 | „zufällig stören“ mit 2 bis 5 s, eine Minute laufen lassen, dann Haken weg | Störungen und Umschaltungen im Protokoll mit Startwert; fehlend 0, doppelt evtl. > 0 | Doppelte um eine Umschaltung sind erlaubt, Verluste nicht | |
+| K7 | In der Tabelle ablesen, welcher Weg führt (Weg 1 = Station A, Weg 2 = Station B). Reiter „Station“: „Wertänderung an“ = nur die Station des **anderen** Wegs; bei IOA 100 „+1“ | Prozessabbild im Prüfstand: IOA 100 unverändert | Der neue Wert kam nur über den mitlaufenden Weg und liegt in dessen Puffer | |
+| K7b | innerhalb von 8 s: Prüfstand, den führenden Weg „trennen“ | Umschaltung mit „nachgeliefert“ ≥ 1; IOA 100 zeigt den neuen Wert, danach Generalabfrage | Der Puffer reicht t1 + t3 + 5 s = 8 s zurück. Dauert es länger, fällt der Wert aus dem Puffer („verloren“ zählt hoch) und kommt über die Generalabfrage | |
+| K8 | „Anhalten“, „Wertänderung an“ = beide | Zeile „angehalten: … fehlend 0 …“ | – | |

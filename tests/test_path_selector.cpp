@@ -224,6 +224,27 @@ TEST(PathSelector, WindowAndSizeLimitTheBuffer) {
     EXPECT_EQ(t.sel.counters(1).dropped, 5U);
 }
 
+// Rule (E11): in normal operation the following path drops what falls out of
+// the window, but the leading path delivered the same points: nothing is
+// counted as lost. Only points the leading path has not delivered since count.
+TEST(PathSelector, DroppedCountsOnlyWhatTheLeadingPathMissed) {
+    PathSettings s;
+    s.replay_window_ms = 1000;
+    Two t(s);
+    for (std::uint64_t i = 0; i < 10; ++i) {
+        const std::uint64_t now = 1000 + i * 500;
+        t.sel.received(0, header(), value(100, static_cast<float>(i)), now);
+        t.sel.received(1, header(), value(100, static_cast<float>(i)), now + 20);
+    }
+    t.sel.tick(20000);
+    EXPECT_EQ(t.sel.buffered(1), 0U);
+    EXPECT_EQ(t.sel.counters(1).dropped, 0U);
+    // The leading path falls silent: what only the following path has is lost after the window.
+    t.sel.received(1, header(), value(100, 99.0F), 20000);
+    t.sel.tick(22000);
+    EXPECT_EQ(t.sel.counters(1).dropped, 1U);
+}
+
 // Rule (E11, D6): no started path -> AllLost; the next path that starts is
 // leading and interrogates; a returning path follows (no switch back).
 TEST(PathSelector, AllLostAndReturn) {

@@ -138,6 +138,34 @@ UTC oder Ortszeit ist nicht genormt, sondern Teil der Interoperabilitätsliste. 
 | Ereignispuffer | gehört der Gruppe, puffert auch ohne gestartete Verbindung; Modelle in [LIB]: eine Gruppe für alle, Gruppe je Verbindung, mehrere Gruppen nach Adresse |
 | Umsetzung | `src/session/redundancy_group.hpp`; Festlegungen docs/05, N7 und E10 |
 
+### Wegeredundanz der Leitstelle (kein Verfahren der Norm)
+
+Die Redundanzgruppe oben ist Kanalredundanz: mehrere Verbindungen zu **einer** Station, eine davon gestartet. Bei Wegeredundanz hält die Leitstelle Verbindungen zu **zwei oder mehr** Stationen mit demselben Prozess (z. B. zwei Vorrechner einer Anlage), und alle sind gestartet.
+
+| Punkt | Festlegung |
+| --- | --- |
+| Wege | bis 4 Verbindungen, alle gestartet; ein verlorener Weg wird nach `reconnect_interval_ms` neu aufgebaut |
+| führend | der erste gestartete Weg; nur er wird der Anwendung zugestellt |
+| mitlaufend | die anderen Wege; Meldungen (Überwachungsrichtung) werden für ein Zeitfenster gepuffert, Standard t1 + t3 + 5 s |
+| Umschalten | verlässt der führende Weg „gestartet“, führt sofort der nächste gestartete |
+| Nachlauf | je Datenpunkt wird nachgeliefert, was der neue Weg nach dem zuletzt zugestellten Wert empfangen hat (gleicher Wert und Qualität, Empfang innerhalb 500 ms, Zeitmarke nicht verglichen) |
+| Abgleich | danach Generalabfrage auf dem neuen Weg |
+| Befehle | nur über den führenden Weg; offener Befehl beim Umschalten: `CONNECTION_LOST`, kein Wiederholen; Uhrzeit an alle Wege |
+| Umsetzung | `src/session/path_selector.hpp` (ohne I/O), `src/api/client.cpp`; Festlegungen docs/05, E11 und E12 |
+
+```
+Leitstelle                     Weg 1 (führend)          Weg 2 (läuft mit)
+    |<-- Meldung 41 ---------------- |                        |  41 gepuffert
+    |    Weg 1 schweigt (Leitung unterbrochen)                |
+    |                                X                        |  42, 43 gepuffert
+    |    t3 + t1 abgelaufen: Weg 1 aus                        |
+    |<-- Umschalten: Weg 2 führend, Nachlauf 42, 43 ----------|  (41 unterdrückt)
+    |--- Generalabfrage ------------------------------------->|
+    |<-- Werte (Ursache 20), danach laufende Meldungen -------|
+```
+
+Erkennungszeit: Abbruch oder Trennen sofort, schweigender Weg nach t1 (Daten unterwegs) bzw. t3 + t1 (Ruhe). Das Pufferfenster muss diese Zeit decken; sonst meldet die Umschaltung „verloren“ > 0.
+
 ## Sicherheit
 
 | Punkt | Stand |

@@ -22,9 +22,9 @@ else
     nein "glibc ab 2.32" "${GLIBC:-unbekannt}"
 fi
 
-MISSING="$(ldd lib/libiec104.so.0 2>&1 | grep 'not found')"
+MISSING="$(ldd lib/libiec104.so.1 2>&1 | grep 'not found')"
 if [ -z "$MISSING" ]; then
-    ok "Abhängigkeiten der Library" "$(ldd lib/libiec104.so.0 | grep -o 'libssl.so.[0-9]*' | head -1)"
+    ok "Abhängigkeiten der Library" "$(ldd lib/libiec104.so.1 | grep -o 'libssl.so.[0-9]*' | head -1)"
 else
     nein "Abhängigkeiten der Library" "$(echo "$MISSING" | awk '{print $1}' | tr '\n' ' ')"
     echo "      OpenSSL 3 nachinstallieren: sudo apt install libssl3  (bzw. dnf install openssl-libs)"

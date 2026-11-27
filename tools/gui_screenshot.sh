@@ -18,7 +18,7 @@
 # Braucht julia, curl, gjs, WebKitGTK 4.0 und ein Display (DISPLAY).
 
 set -u
-LIB="${1:?Library fehlt (libiec104.so.0)}"
+LIB="${1:?Library fehlt (libiec104.so.1)}"
 LIB="$(cd "$(dirname "$LIB")" && pwd)/$(basename "$LIB")"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${2:-$ROOT/docs/bilder}"

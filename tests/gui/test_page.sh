@@ -14,7 +14,7 @@
 # Alles auf 127.0.0.1 mit freien Ports. Rückgabe: 0 bestanden, 1 Fehler, 2 Voraussetzung fehlt.
 
 set -u
-LIB="${1:?Library fehlt (libiec104.so.0)}"
+LIB="${1:?Library fehlt (libiec104.so.1)}"
 LIB60870="${2:-}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 JULIA="${JULIA:-julia}"

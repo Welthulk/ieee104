@@ -59,11 +59,11 @@ extern "C" {
 #endif
 
 /** @brief Major version of this header. Incompatible API changes increment it. */
-#define IEC104_VERSION_MAJOR 0
+#define IEC104_VERSION_MAJOR 1
 /** @brief Minor version of this header. Compatible additions increment it. */
-#define IEC104_VERSION_MINOR 9
+#define IEC104_VERSION_MINOR 0
 /** @brief Patch version of this header. Fixes without API change increment it. */
-#define IEC104_VERSION_PATCH 3
+#define IEC104_VERSION_PATCH 0
 
 /**
  * @brief Default TCP port of an IEC 60870-5-104 connection without TLS.
@@ -1170,9 +1170,11 @@ typedef struct iec104_path_info {
     uint64_t followed;              /**< Objects received while following. */
     uint64_t replayed;              /**< Objects delivered afterwards at a switch-over. */
     uint64_t suppressed;            /**< Buffered objects not delivered (already known). */
-    uint64_t dropped;               /**< Objects dropped from the buffer (window or size). */
-    uint32_t buffered;              /**< Objects kept for a replay now. */
-    iec104_link_stats stats;        /**< Counters of the current connection (zero without). */
+    /** Objects that fell out of the buffer (window or size) before the leading path delivered
+     *  the same point: a switch-over would have missed them. 0 in normal operation. */
+    uint64_t dropped;
+    uint32_t buffered;       /**< Objects kept for a replay now. */
+    iec104_link_stats stats; /**< Counters of the current connection (zero without). */
 } iec104_path_info;
 
 /**
@@ -1189,8 +1191,8 @@ typedef struct iec104_path_switch {
     uint32_t previous;   /**< Former leading path, 0 if none. */
     uint32_t replayed;   /**< Objects delivered afterwards from the new path. */
     uint32_t suppressed; /**< Buffered objects not delivered (already known). */
-    uint32_t dropped;    /**< Objects lost from the buffer (window or size too small). */
-    const char* reason;  /**< e.g. "path 1 closed: t1 timeout"; valid only during the call. */
+    uint32_t dropped; /**< Objects lost from the buffer since the last switch (window too short). */
+    const char* reason; /**< e.g. "path 1 closed: t1 timeout"; valid only during the call. */
 } iec104_path_switch;
 
 /**

@@ -1,5 +1,17 @@
 # Änderungen – ausführlich (nur intern, nicht im öffentlichen Repo)
 
+## 1.0.0 (27.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| session | `PathSelector` (ohne I/O): führender Weg, Puffer der mitlaufenden Wege (Fenster, Größe), Nachlauf je Punkt über das zuletzt Zugestellte (Wert ohne Zeitmarke, Toleranz 500 ms), Generalabfrage nach dem Umschalten, Rückschalten optional; „verloren“ zählt nur, was der führende Weg nicht zugestellt hat |
+| transport | Testhilfe „stumm“ im Link: liest und schreibt nicht, Timer laufen (t1 beendet) |
+| api | `iec104_client_connect_paths`, `_leading_path`, `_get_path_info`, `_set_path_callback`, `_disturb_path`, `iec104_path_options_init`; logischer Zustand mit Kennung 1; Neuaufbau in der Poll-Schleife; Befehle über den führenden Weg, Uhrzeit an alle; offene Befehle beim Umschalten `CONNECTION_LOST` (E12); GA an alle gesehenen Stationen (sonst Broadcast); TLS-Name/Fingerabdruck je Weg; Konfigurationsschlüssel `path…`; `iec104_config` um Wege erweitert (ABI-Änderung, daher SONAME .so.1) |
+| Tests | 11 Unit-Tests Selector, 10 TCP-Tests (zwei und drei Server, stumm mit Nachlauf, alle weg, Befehl, Rückschalten, Schließen, Konfiguration), TLS je Weg; `SelfTest.PathRedundancy` (400 Werte, Störung alle 4 s, abwechselnd getrennt/stumm, lückenlos); Fuzzer `fuzz_paths` (10 min ohne Befund) |
+| Test-GUI | `paths.jl`: Weg 2 im Prüfstand, Tabelle der Wege, trennen/stumm/freigeben, zufällige Störungen mit Startwert, Station B, Wertänderung an beide/nur A/nur B, Reihenprüfung (gesendet, zugestellt, fehlend, doppelt); Rahmen „Leitstelle Weg n“; Selbsttest 26 Schritte (vier neue); Seitentest mit zwei Wegen |
+| Doku | docs/02 Wegeredundanz mit Ablaufbild, docs/05 E11/E12, docs/06 „Zwei Wege“, docs/07 7.6, docs/10 Begriffe, docs/12 Block K; Logo im README |
+| Version | 1.0.0, SONAME libiec104.so.1; CMake-Paket kompatibel innerhalb 1.x |
+
 ## 0.9.3 (26.11.2026)
 
 | Bereich | Änderung |

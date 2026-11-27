@@ -1,6 +1,6 @@
 # Anleitung: Station mit dem Prüfstand testen
 
-Stand: 26.11.2026 · für die Test-GUI ab Version 0.9.3 · Begriffe: `docs/10_Glossar.md` · Probelauf in der GUI: `docs/12_Manueller_Test_GUI.md`
+Stand: 27.11.2026 · für die Test-GUI ab Version 1.0.0 · Begriffe: `docs/10_Glossar.md` · Probelauf in der GUI: `docs/12_Manueller_Test_GUI.md`
 
 Der Prüfstand ist die Leitstelle der Test-GUI. Mit ihm liest man Werte einer Station aus, sendet Befehle und prüft, ob die Rückmeldung kommt. Bedient wird er im Browser, kompiliert wird nichts.
 
@@ -48,7 +48,7 @@ Die GUI zeigt Störungen oben meist nur knapp („getrennt“, „abgelehnt“).
 
 | Schritt | In der GUI | Ergebnis |
 | --- | --- | --- |
-| 1. Rechner prüfen | Reiter „Selbsttest“, „Selbsttest starten“, warten bis fertig | „22 von 22 bestanden“ (mit lib60870 23) |
+| 1. Rechner prüfen | Reiter „Selbsttest“, „Selbsttest starten“, warten bis fertig | „26 von 26 bestanden“ (mit lib60870 27) |
 | 2. Verbinden | Reiter „Prüfstand (Leitstelle)“: Adresse, Port, Station (CA); Haken „nach dem Verbinden STARTDT und Generalabfrage“; „Verbinden“ | neben „Verbindung zur Station“ steht „Datenübertragung läuft“; das Prozessabbild füllt sich |
 | 3. Werteliste | „Empfangene übernehmen“. Dann je Zeile ✎: Die Werte stehen in der Eingabezeile über der Tabelle; Text und erwarteten Typ ergänzen, „In die Liste“. Fehlende Punkte dort mit Station, IOA und Typ eintragen, „In die Liste“ | grau = in der Liste, aber nichts empfangen; kursiv = empfangen, aber nicht in der Liste; gelb = anderer Typ |
 | 4. Werte beobachten | „Generalabfrage“ wiederholen, auf spontane Meldungen warten | Zähler je Ursache (GA, spo, zyk …) zeigen, wie jeder Punkt kommt |

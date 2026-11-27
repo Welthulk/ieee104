@@ -1,5 +1,11 @@
 # Änderungen
 
+## 1.0.0 (27.11.2026)
+
+- Wegeredundanz: Eine Leitstelle hält bis zu vier Wege zu Stationen mit demselben Prozess. Fällt der führende Weg aus, übernimmt ein anderer ohne Verlust von Meldungen (`iec104_client_connect_paths()`, `docs/06_Anleitung.md`).
+- Test-GUI: zweiter Weg im Prüfstand, Station B, Wege von Hand oder zufällig stören, Reihenprüfung.
+- Die Library heißt jetzt `libiec104.so.1`; neue Felder in `iec104_config`.
+
 ## 0.9.3 (26.11.2026)
 
 - Anleitung `docs/11_Test_gegen_Station.md`: eine Station mit dem Prüfstand testen.

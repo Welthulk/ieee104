@@ -7,7 +7,7 @@
 #
 # Only the types and functions the examples need; every other function of
 # the header is called the same way (see docs/07_Julia.md). The library is
-# taken from the environment variable IEC104_LIB (path of libiec104.so.0),
+# taken from the environment variable IEC104_LIB (path of libiec104.so.1),
 # else from ../lib next to this file (layout of the binary package), else
 # from the normal search path (LD_LIBRARY_PATH).
 
@@ -25,8 +25,8 @@ export client_create, client_connect, client_start, client_stop, client_poll,
 export PathOptions, PathInfo, PathSwitch, client_connect_paths, client_leading_path,
        client_path_info, client_set_path_callback, client_disturb_path, text
 
-const LIB = let packaged = normpath(joinpath(@__DIR__, "..", "lib", "libiec104.so.0"))
-    get(ENV, "IEC104_LIB", isfile(packaged) ? packaged : "libiec104.so.0")
+const LIB = let packaged = normpath(joinpath(@__DIR__, "..", "lib", "libiec104.so.1"))
+    get(ENV, "IEC104_LIB", isfile(packaged) ? packaged : "libiec104.so.1")
 end
 
 # Values of the C enums used here (C enums are Cint).
