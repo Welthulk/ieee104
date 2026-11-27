@@ -18,7 +18,7 @@ Geteilte Library für Linux x86-64 (Release, mit TLS).
 bash pruefen.sh        # alles bereit?
 bash gui.sh            # Test-GUI, dann http://localhost:8080 im Browser
 bash gui.sh 8080 0.0.0.0   # WSL: wenn Windows localhost nicht erreicht; angezeigte Adresse öffnen
-bash gui.sh 8080 127.0.0.1 ~/src/lib60870/lib60870-C   # dazu lib60870 als fremde Leitstelle (ohne Angabe sucht gui.sh lib60870/lib60870-C neben dem Paket und neben dem Quellordner)
+bash gui.sh 8080 127.0.0.1 ~/src/lib60870/lib60870-C   # dazu lib60870 als fremde Leitstelle (ohne Angabe sucht gui.sh testgegenstelle/lib60870-C des Repos, in dem das Paket unter dist/ liegt)
 bash beispiel.sh       # Station und Leitstelle in Julia gegeneinander
 ```
 

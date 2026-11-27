@@ -59,7 +59,7 @@ Werkzeuge installiert `tools/setup_tools.sh`.
 - C++17, keine Exceptions, kein RTTI im Library-Code (`-fno-exceptions -fno-rtti`). Fehler als `iec104_status`.
 - Öffentliche Header: nur C, keine STL-Typen, alles mit `IEC104_API` exportiert.
 - Normverhalten ist Default. Jede bekannte Abweichung einer Gegenstelle wird ein Parameter, nie ein Code-Zweig für einen Hersteller.
-- Keine GPL-Abhängigkeit im Produkt. lib60870 nur als externe Testgegenstelle, nie linken, nie Code übernehmen.
+- Keine GPL-Abhängigkeit im Produkt. lib60870 nur als externe Testgegenstelle, nie linken, nie Code übernehmen. Gebaute Beispielprogramme (v2.4.1) liegen mit GPL-Text und Quellarchiv in `testgegenstelle/` (Entscheidung des Nutzers vom 27.11.2026); nie ins Binärpaket der Library.
 - Werte, die aus der Norm stammen und im Repo nicht belegt sind, nicht raten. Stattdessen `// TODO(norm): …` mit Abschnittsangabe und in der Aufgabe als offen melden.
 - Bezeichner und Code-Kommentare auf Englisch, Dokumentation unter `docs/` auf Deutsch.
 - Formatierung mit `.clang-format`, keine Warnungen (Library baut mit `-Werror`).

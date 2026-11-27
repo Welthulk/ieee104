@@ -18,7 +18,7 @@ Alle Befehle in diesem Dokument tippt man in ein **Terminal**: unter Linux ein T
 | V4 | Terminal | `bash gui.sh 8080 127.0.0.1` | Die GUI läuft, solange das Fenster offen ist; Startzeile „IEC 104 Test-GUI (Library …): http://localhost:8080“. Beenden mit Strg+C |
 | V5 | Browser | `http://localhost:8080` öffnen; war die Seite schon offen, einmal F5 | Erreicht der Windows-Browser die GUI nicht: in V4 `bash gui.sh 8080 0.0.0.0` und die angezeigte Adresse öffnen |
 
-Für Block G (fremde Leitstelle lib60870) muss lib60870 gebaut vorliegen. `gui.sh` findet es selbst unter `lib60870/lib60870-C` neben dem Paketordner oder neben dem Quellordner (dort legt es `tools/wsl_ausprobieren.sh --mit-lib60870` ab); sonst in V4 den Ordner angeben: `bash gui.sh 8080 127.0.0.1 <ordner>/lib60870-C`. Beim Start steht „Gegenstelle lib60870: …“ oder „Ohne lib60870“. Ohne lib60870 entfällt Block G, der Selbsttest zeigt Schritt 27 als übersprungen.
+Für Block G (fremde Leitstelle lib60870) liegt lib60870 gebaut im Repo unter `testgegenstelle/lib60870-C`. `gui.sh` findet es dort selbst, wenn das Binärpaket unter `dist/` des Repos liegt, ebenso unter `lib60870/lib60870-C` neben dem Paketordner oder neben dem Repo; sonst in V4 den Ordner angeben: `bash gui.sh 8080 127.0.0.1 <ordner>/lib60870-C`. Beim Start steht „Gegenstelle lib60870: …“ oder „Ohne lib60870“. Ohne lib60870 entfällt Block G, der Selbsttest zeigt Schritt 27 als übersprungen.
 
 Aufbau der Seite: oben die Reiter „Prüfstand (Leitstelle)“, „Mithören“, „Station und lib60870“, „Selbsttest“; darunter immer der Bereich **„Telegramme und Ereignisse“**. Dort steht jede Meldung und jeder Rahmen mit einer Erklärung in einem Satz – bei Fragen zuerst dort nachsehen.
 

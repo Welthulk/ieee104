@@ -88,6 +88,7 @@ Bilder neu erzeugen: `tools/gui_screenshot.sh build/shared/libiec104.so.1`.
 | `docs/10_Glossar.md` | Glossar: Station, Leitstelle, Prüfstand, Adressen, Datenpunkt, Befehle, Abfragen, Verbindung, Begriffe der GUI |
 | `docs/11_Test_gegen_Station.md` | Anleitung: eine Station mit dem Prüfstand der Test-GUI testen (was man braucht, was man erfragt, Ablauf, Fehlerbilder) |
 | `docs/12_Manueller_Test_GUI.md` | Manueller Test aller Teile der Test-GUI gegen ihre Teststation, mit Erklärungen und Abhakliste |
+| `testgegenstelle/` | gebaute Beispielprogramme von lib60870 v2.4.1 als fremde Leitstelle für die Test-GUI; fremde Software unter GPLv3 mit Lizenztext und Quellen, nicht Teil der Library |
 | API-Doku | `cmake --build --preset debug --target doc`, dann `build/debug/doc/html/index.html` (Doxygen) |
 
 ## Verzeichnisse

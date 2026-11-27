@@ -362,6 +362,14 @@ if(IEC104_BUILD_TESTS AND BUILD_SHARED_LIBS)
             set_tests_properties(Julia.GuiLib60870 PROPERTIES TIMEOUT 300
                 ENVIRONMENT "${_gui_env}")
         endif()
+        # The built test peer of the repository (testgegenstelle/, lib60870 v2.4.1, GPLv3).
+        if(EXISTS ${PROJECT_SOURCE_DIR}/testgegenstelle/lib60870-C/build/examples/cs104_client/simple_client)
+            add_test(NAME Julia.GuiTestgegenstelle
+                COMMAND ${PROJECT_SOURCE_DIR}/tests/gui/test_gui.sh $<TARGET_FILE:iec104>
+                        ${PROJECT_SOURCE_DIR}/testgegenstelle/lib60870-C)
+            set_tests_properties(Julia.GuiTestgegenstelle PROPERTIES TIMEOUT 300
+                ENVIRONMENT "${_gui_env}")
+        endif()
     endif()
 endif()
 

@@ -9,3 +9,7 @@
 *.so.* binary
 *.pdf binary
 *.png binary
+
+# Gebaute Testgegenstelle (fremde Software, GPLv3) unverändert lassen
+testgegenstelle/lib60870-C/build/** binary
+*.tar.gz binary

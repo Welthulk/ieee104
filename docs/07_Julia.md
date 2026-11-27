@@ -202,7 +202,9 @@ Beide Seiten lassen sich gegeneinander testen: Station auf Port 2404 starten, Pu
 
 ### 7.1 Gegenstelle lib60870
 
-Die GUI startet ein unverändertes Beispielprogramm von lib60870-C als eigenen Prozess; gelinkt wird nichts. Es verbindet sich mit der Station der GUI. So läuft die Station im Browser gegen eine unabhängige Implementierung. lib60870 holen und bauen: README, Abschnitt „Gegen lib60870 testen“ (`build` ohne TLS genügt).
+Die GUI startet ein unverändertes Beispielprogramm von lib60870-C als eigenen Prozess; gelinkt wird nichts. Es verbindet sich mit der Station der GUI. So läuft die Station im Browser gegen eine unabhängige Implementierung.
+
+Die drei Programme liegen gebaut im Repo unter `testgegenstelle/` (lib60870 v2.4.1, GPLv3, mit Lizenztext und Quellarchiv, siehe `testgegenstelle/LIESMICH.md`). Liegt das Binärpaket unter `dist/` des Repos, findet `gui.sh` sie ohne Angabe. Ein eigenes lib60870 (README, Abschnitt „Gegen lib60870 testen“; `build` ohne TLS genügt) gibt man als Ordner an:
 
 ```bash
 bash gui.sh 8080 127.0.0.1 ~/src/lib60870/lib60870-C                     # Binärpaket

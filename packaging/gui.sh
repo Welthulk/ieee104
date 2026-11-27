@@ -12,9 +12,10 @@
 #             "bash gui.sh 8080 0.0.0.0" und die angezeigte Adresse öffnen.
 #             Achtung: die GUI hat keine Anmeldung und kann Befehle senden.
 #   lib60870  Ordner lib60870-C mit gebauten Beispielen (build/examples), sonst
-#             Umgebungsvariable IEC104_LIB60870, sonst wird gesucht: lib60870/lib60870-C
-#             neben dem Paketordner und neben dem Quellordner, in dem das Paket unter
-#             dist/ liegt (dorthin legt es tools/wsl_ausprobieren.sh --mit-lib60870).
+#             Umgebungsvariable IEC104_LIB60870, sonst wird gesucht: der Ordner
+#             testgegenstelle/lib60870-C des Repos, in dem das Paket unter dist/ liegt
+#             (gebaut, GPLv3, siehe testgegenstelle/LIESMICH.md), dann lib60870/lib60870-C
+#             neben dem Paketordner und neben diesem Repo.
 #             Dann kann die GUI deren Leitstellen-Beispiele gegen ihre Station starten.
 # Beenden mit Strg-C. Der erste Start nach einer Julia-Installation dauert
 # länger (Julia übersetzt einmalig).
@@ -27,7 +28,7 @@ if [ -n "$LIB60870" ]; then
 fi
 cd "$(dirname "$0")" || exit 1
 if [ -z "$LIB60870" ]; then
-    for c in ../lib60870/lib60870-C ../../../lib60870/lib60870-C; do
+    for c in ../../testgegenstelle/lib60870-C ../lib60870/lib60870-C ../../../lib60870/lib60870-C; do
         if [ -d "$c/build/examples" ]; then
             LIB60870="$(cd "$c" && pwd)"
             break
@@ -45,6 +46,10 @@ else
 fi
 echo "Bereit ist sie, sobald die Zeile \"IEC 104 Test-GUI ...\" erscheint (Strg-C beendet)."
 if [ -n "$LIB60870" ]; then
+    # Nach dem Kopieren über Windows fehlt manchmal das Ausführungsrecht.
+    for p in "$LIB60870"/build/examples/*/*; do
+        [ -f "$p" ] && [ ! -x "$p" ] && [ -w "$p" ] && chmod u+x "$p" 2>/dev/null
+    done
     echo "Gegenstelle lib60870: $LIB60870"
 else
     echo "Ohne lib60870 (Ordner als dritten Parameter angeben, siehe Kopf von gui.sh)."

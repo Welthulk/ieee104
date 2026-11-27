@@ -5,7 +5,7 @@
 - Bild und Schritt-für-Schritt-Anleitung „Zwei Wege“ in README und `docs/07_Julia.md`.
 - Test-GUI: Meldungen der ersten Station heißen „Station A“, sobald Station B läuft.
 - Teststation: die IOA eines neuen Datenpunkts wird vorgeschlagen (nächste freie), eigene Eingabe gilt.
-- `gui.sh` findet lib60870 auch ohne Angabe, wenn es neben dem Paket oder dem Quellordner liegt.
+- lib60870 v2.4.1 liegt gebaut unter `testgegenstelle/` (fremde Leitstelle für die Test-GUI, GPLv3, mit Quellen); `gui.sh` findet sie ohne Angabe.
 
 ## 1.0.0 (27.11.2026)
 
