@@ -12,8 +12,10 @@
 #             "bash gui.sh 8080 0.0.0.0" und die angezeigte Adresse öffnen.
 #             Achtung: die GUI hat keine Anmeldung und kann Befehle senden.
 #   lib60870  Ordner lib60870-C mit gebauten Beispielen (build/examples), sonst
-#             Umgebungsvariable IEC104_LIB60870; dann kann die GUI deren
-#             Leitstellen-Beispiele gegen ihre Station starten.
+#             Umgebungsvariable IEC104_LIB60870, sonst wird gesucht: lib60870/lib60870-C
+#             neben dem Paketordner und neben dem Quellordner, in dem das Paket unter
+#             dist/ liegt (dorthin legt es tools/wsl_ausprobieren.sh --mit-lib60870).
+#             Dann kann die GUI deren Leitstellen-Beispiele gegen ihre Station starten.
 # Beenden mit Strg-C. Der erste Start nach einer Julia-Installation dauert
 # länger (Julia übersetzt einmalig).
 
@@ -24,6 +26,14 @@ if [ -n "$LIB60870" ]; then
     LIB60870="$DIR"
 fi
 cd "$(dirname "$0")" || exit 1
+if [ -z "$LIB60870" ]; then
+    for c in ../lib60870/lib60870-C ../../../lib60870/lib60870-C; do
+        if [ -d "$c/build/examples" ]; then
+            LIB60870="$(cd "$c" && pwd)"
+            break
+        fi
+    done
+fi
 PORT="${1:-8080}"
 ADDR="${2:-127.0.0.1}"
 command -v julia > /dev/null 2>&1 || { echo "Julia fehlt (bash pruefen.sh)"; exit 1; }
@@ -34,5 +44,9 @@ else
     echo "Test-GUI startet auf $ADDR. Im Browser öffnen: http://${IP:-<adresse dieses Rechners>}:$PORT"
 fi
 echo "Bereit ist sie, sobald die Zeile \"IEC 104 Test-GUI ...\" erscheint (Strg-C beendet)."
-[ -n "$LIB60870" ] && echo "Gegenstelle lib60870: $LIB60870"
+if [ -n "$LIB60870" ]; then
+    echo "Gegenstelle lib60870: $LIB60870"
+else
+    echo "Ohne lib60870 (Ordner als dritten Parameter angeben, siehe Kopf von gui.sh)."
+fi
 exec julia --startup-file=no julia/gui/iec104_gui.jl "$PORT" "$ADDR" ${LIB60870:+"$LIB60870"}

@@ -13,3 +13,4 @@ fuzz/corpus_apci/
 fuzz/corpus_session/
 *.swp
 fuzz/corpus_paths/
+.claude/

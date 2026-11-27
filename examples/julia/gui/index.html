@@ -287,7 +287,8 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
   </div>
   <div id="peeroff" class="hint" hidden>
     <span id="pmissing">Kein lib60870-Ordner angegeben.</span> Der Ordner wird beim Start der GUI festgelegt:
-    <code>bash gui.sh 8080 127.0.0.1 /pfad/zu/lib60870-C</code> oder Umgebungsvariable
+    <code>bash gui.sh 8080 127.0.0.1 /pfad/zu/lib60870-C</code> (ohne Angabe sucht <code>gui.sh</code>
+    <code>lib60870/lib60870-C</code> neben dem Paket und neben dem Quellordner) oder Umgebungsvariable
     <code>IEC104_LIB60870=/pfad/zu/lib60870-C</code>. Erwartet werden die gebauten Beispiele unter
     <code>build/examples/</code> (<code>simple_client</code>, <code>cs104_client_async</code>,
     <code>cs104_client_no_threads</code>).
