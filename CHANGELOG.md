@@ -1,5 +1,9 @@
 # Änderungen
 
+## 1.0.2 (27.11.2026)
+
+- Teststation: Datenpunkte bekommen auf Wunsch einen Text; er erscheint in der Tabelle der Station und in der Werteliste des Prüfstands.
+
 ## 1.0.1 (27.11.2026)
 
 - Bild und Schritt-für-Schritt-Anleitung „Zwei Wege“ in README und `docs/07_Julia.md`.

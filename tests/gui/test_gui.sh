@@ -165,7 +165,7 @@ SPORT="$(api state | grep -o '"server":{"running":true,"port":[0-9]*' | grep -o 
 ss -ltn 2> /dev/null | grep -q -E "127\.0\.0\.1:$SPORT[[:space:]]" || fail "Station lauscht nicht auf 127.0.0.1"
 ok "Station auf 127.0.0.1:$SPORT"
 act 'server/point?type=13&ioa=100&value=42.5'
-wait_state 5 "Datenpunkt angelegt" 0 '"points":\[\{"ioa":100,"type":13,"value":42.5\}\]'
+wait_state 5 "Datenpunkt angelegt" 0 '"points":\[\{"ioa":100,"type":13,"value":42.5,"tx":""\}\]'
 
 # Prüfstand: Werteliste, automatischer Start, Prozessabbild mit Zählern je Ursache.
 act 'list/add?station=1&ioa=100&type=13&text=Spannung%20L1'
@@ -259,6 +259,12 @@ wait_state 5 "gleiche Ports vorher abgelehnt, Station läuft weiter" 0 "\"server
 act_rejected "server/listen?port=0&station=1&port_b=$PORT" 'Station A wieder beendet'   # Port der GUI belegt
 wait_state 5 "Station B scheitert: keine halbe Station" 0 '"server":\{"running":false'
 act 'server/listen?port=0&station=1&port_b=0'
+# Text eines Datenpunkts der Station geht in die Werteliste; ein Wert ohne Text lässt ihn stehen.
+act 'server/point?type=13&ioa=2001&value=1&text=Spannung%20L1%20(kV)'
+act 'server/point?type=13&ioa=2001&value=2'
+wait_state 5 "Text der Station in Tabelle und Werteliste" 0 \
+    '"ioa":2001,"type":13,"value":2(\.0)?,"tx":"Spannung L1 \(kV\)"' \
+    '\{"st":1,"ioa":2001,"ty":13,"fb":-1,"tx":"Spannung L1 \(kV\)"\}'
 PORTS="$(api state | grep -o '"server":{"running":true,"port":[0-9]*,"station":1,"accept":[a-z]*,"port_b":[0-9]*')"
 PA="$(echo "$PORTS" | grep -o '"port":[0-9]*' | grep -o '[0-9]*')"
 PB="$(echo "$PORTS" | grep -o '"port_b":[0-9]*' | grep -o '[0-9]*')"

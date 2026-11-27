@@ -30,8 +30,17 @@ PORT=""
 DEPOT="${JULIA_DEPOT_PATH:-$HOME/.julia}"   # the real one: compiled code is reused
 JULIA_BIN="$(julia --startup-file=no -e 'print(first(Base.julia_cmd().exec))')"
 
+# Beendet die GUI; hängt Julia beim Beenden (bekannter Hänger der Laufzeit bei SIGTERM
+# während eines Timers), wird es nach 10 s hart beendet.
+stop_pid() {
+    local p="$1"
+    kill "$p" 2> /dev/null || return 0
+    for _ in $(seq 1 100); do kill -0 "$p" 2> /dev/null || break; sleep 0.1; done
+    kill -9 "$p" 2> /dev/null
+    wait "$p" 2> /dev/null
+}
 stop_gui() {
-    [ -n "$GPID" ] && kill "$GPID" 2> /dev/null && wait "$GPID" 2> /dev/null
+    [ -n "$GPID" ] && stop_pid "$GPID"
     GPID=""
 }
 cleanup() { stop_gui; rm -rf "$WORK"; }

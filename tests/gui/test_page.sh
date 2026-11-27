@@ -13,6 +13,15 @@
 #   JULIA, GJS, CURL  Programme, Default aus dem Suchpfad
 # Alles auf 127.0.0.1 mit freien Ports. Rückgabe: 0 bestanden, 1 Fehler, 2 Voraussetzung fehlt.
 
+# Beendet die GUI; hängt Julia beim Beenden (bekannter Hänger der Laufzeit bei SIGTERM
+# während eines Timers), wird es nach 10 s hart beendet.
+stop_pid() {
+    local p="$1"
+    kill "$p" 2> /dev/null || return 0
+    for _ in $(seq 1 100); do kill -0 "$p" 2> /dev/null || break; sleep 0.1; done
+    kill -9 "$p" 2> /dev/null
+    wait "$p" 2> /dev/null
+}
 set -u
 LIB="${1:?Library fehlt (libiec104.so.1)}"
 LIB60870="${2:-}"
@@ -25,7 +34,7 @@ done
 WORK="$(mktemp -d)"
 GPID=""
 cleanup() {
-    [ -n "$GPID" ] && kill "$GPID" 2> /dev/null && wait "$GPID" 2> /dev/null
+    [ -n "$GPID" ] && stop_pid "$GPID"
     rm -rf "$WORK"
 }
 trap cleanup EXIT

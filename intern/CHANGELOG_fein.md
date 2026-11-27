@@ -1,5 +1,12 @@
 # Änderungen – ausführlich (nur intern, nicht im öffentlichen Repo)
 
+## 1.0.2 (27.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| Test-GUI | Teststation: Feld „Text (optional)“; server/point mit text legt den Eintrag der Werteliste an (Station der Teststation, IOA, Typ), eine Rückmelde-IOA bleibt; Wert ohne Text lässt den Text stehen; Stationstabelle mit Spalte Text (aus der Werteliste); Wunsch des Nutzers |
+| Test | test_gui.sh prüft Text in Tabelle und Werteliste |
+
 ## 1.0.1 (27.11.2026)
 
 | Bereich | Änderung |

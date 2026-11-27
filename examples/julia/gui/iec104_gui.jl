@@ -771,7 +771,21 @@ function gui_server_point(p)
         end
     end
     GUI.points[o.ioa] = o   # only after the library accepted it
+    # Text of the point: goes into the value list of the test bench (same station and IOA),
+    # so that the controlling station shows it; a feedback IOA entered there is kept.
+    text = strip(p_str(p, "text"))
+    if !isempty(text)
+        key = (GUI.server_station, UInt32(o.ioa))
+        old_entry = get(GUI.list, key, nothing)
+        GUI.list[key] = ListEntry(GUI.server_station, o.ioa, o.type, text,
+                                  old_entry === nothing ? -1 : old_entry.feedback)
+        list_save()
+        note("Station: Text „$(text)“ für IOA $(o.ioa) in die Werteliste übernommen")
+    end
 end
+
+"Text of a station point from the value list, \"\" if none."
+point_text(ioa) = (e = get(GUI.list, (GUI.server_station, UInt32(ioa)), nothing); e === nothing ? "" : e.text)
 
 # --- Listening in: frames from a capture file (tcpdump, Wireshark) ----------------
 
@@ -1140,6 +1154,7 @@ function state_json(p)
         n > 1 && print(io, ',')
         print(io, "{\"ioa\":", o.ioa, ",\"type\":", o.type, ",\"value\":")
         jnum(io, o.value)
+        jfield(io, "tx", point_text(o.ioa))
         print(io, '}')
     end
     print(io, "]},\"peer\":{\"available\":", any(peer_found, PEER_PROGRAMS), ",\"folder\":")

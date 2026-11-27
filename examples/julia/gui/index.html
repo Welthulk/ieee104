@@ -254,10 +254,11 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
     <label>Datenpunkt<select id="ptype" onchange="ranges()"></select></label>
     <label title="Informationsobjektadresse: Nummer des Datenpunkts in der Station">IOA (Adresse des Punkts)<input id="pioa" class="m" value="100" oninput="pioaTouched = true"></label>
     <label>Wert <span id="prange" class="hint"></span><input id="pvalue" class="s" value="0"></label>
+    <label title="Bedeutung des Punkts, z. B. „Spannung L1 (kV)“; kommt in die Werteliste des Prüfstands">Text (optional)<input id="ptext" class="l" placeholder="z. B. Spannung L1 (kV)"></label>
     <label>&nbsp;<button class="main" onclick="createPoint()">Anlegen / senden</button></label>
   </div>
   <div class="scroll"><table>
-    <thead><tr><th>IOA</th><th>Typ</th><th>Wert</th><th></th></tr></thead>
+    <thead><tr><th>IOA</th><th>Typ</th><th>Text</th><th>Wert</th><th></th></tr></thead>
     <tbody id="points"></tbody>
   </table></div>
   <div class="row">
@@ -601,8 +602,10 @@ function suggestIoa(points) {
 }
 async function createPoint() {
   const ioa = Number(v('pioa'));
-  await act('server/point', {type: v('ptype'), ioa: v('pioa'), value: v('pvalue')});
-  if (!document.getElementById('err').textContent) { lastPointIoa = ioa; pioaTouched = false; }
+  await act('server/point', {type: v('ptype'), ioa: v('pioa'), value: v('pvalue'), text: v('ptext')});
+  if (!document.getElementById('err').textContent) {
+    lastPointIoa = ioa; pioaTouched = false; document.getElementById('ptext').value = '';
+  }
 }
 function sendPoint(ioa, type, delta) {
   const input = document.getElementById('pv' + ioa);
@@ -767,7 +770,7 @@ async function update() {
   if (ptsKey !== pointsShown && !pts.contains(document.activeElement)) {
     pointsShown = ptsKey;
     pts.innerHTML = s.server.points.map(p =>
-      `<tr><td class="num">${p.ioa}</td><td>${p.type} ${esc(typeName(p.type))}</td>` +
+      `<tr><td class="num">${p.ioa}</td><td>${p.type} ${esc(typeName(p.type))}</td><td>${esc(p.tx || '')}</td>` +
       `<td><input id="pv${p.ioa}" class="s" value="${p.value}"></td>` +
       `<td><button onclick="sendPoint(${p.ioa}, ${p.type})">Senden</button> ` +
       `<button onclick="sendPoint(${p.ioa}, ${p.type}, 1)">+1</button></td></tr>`).join('');

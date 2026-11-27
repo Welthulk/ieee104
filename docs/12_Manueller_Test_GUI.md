@@ -40,7 +40,7 @@ Aufbau der Seite: oben die Reiter „Prüfstand (Leitstelle)“, „Mithören“
 | --- | --- | --- | --- | --- |
 | B1 | Reiter „Station und lib60870“: Port 2404, Station (CA) 1, „Starten“ | rechts oben grün „Port 2404, Station 1“ | 2404 ist der Standardport von IEC 104; die Station lauscht nur auf 127.0.0.1 | |
 | B2 | Datenpunkt „1 M_SP_NA_1 Einzelmeldung“, IOA 1001, Wert 0, „Anlegen / senden“ | Zeile 1001 in der Tabelle | Einzelmeldung: 0 = aus, 1 = ein (z. B. Schalterstellung). Die IOA ist die Adresse des Datenpunkts in der Station; die GUI schlägt die nächste freie vor, eine eigene Eingabe gilt | |
-| B3 | Datenpunkt „13 M_ME_NC_1 Messwert Gleitkomma“, IOA 2001, Wert 230.5, „Anlegen / senden“ | Zeile 2001 | Messwert als Gleitkommazahl (z. B. Spannung) | |
+| B3 | Datenpunkt „13 M_ME_NC_1 Messwert Gleitkomma“, IOA 2001, Wert 230.5, Text `Spannung L1 (kV)`, „Anlegen / senden“ | Zeile 2001 mit dem Text | Messwert als Gleitkommazahl (z. B. Spannung). Der Text ist optional und landet auch in der Werteliste des Prüfstands (Block D), dort mit ✎ änderbar | |
 | B4 | Datenpunkt Typ 1, IOA 2001, Wert 1, „Anlegen / senden“ | rote Zeile oben: „IOA 2001 ist schon als Typ 13 angelegt …“ | Eine IOA hat genau einen Typ; die GUI verhindert Verwechslungen | |
 | B5 | Datenpunkt Typ 1, IOA 1002, Wert 2, „Anlegen / senden“ | rote Zeile: „Wert 2.0 passt nicht zu Typ 1 – erlaubt: 0 oder 1“ | Werte werden vor dem Senden geprüft | |
 
