@@ -15,9 +15,12 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 
 namespace iec104::session {
 namespace {
+
+constexpr std::uint8_t kEndOfInit = 70; // M_EI_NA_1
 
 std::uint64_t point_key(std::uint16_t station, std::uint32_t ioa) {
     return (static_cast<std::uint64_t>(station) << 24U) | ioa;
@@ -78,8 +81,8 @@ bool PathSelector::encode(const codec::AsduHeader& header, const codec::Informat
         return false;
     }
     out.asdu.assign(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n));
-    // The type is part of the value: a point delivered with and without time
-    // tag compares equal only by its elements, which is what both paths send.
+    // Only the element octets are compared: the time tag is left out, and the
+    // type is not compared (both paths send the same type for a point).
     out.value.assign(buf.begin() + static_cast<std::ptrdiff_t>(begin),
                      buf.begin() + static_cast<std::ptrdiff_t>(n - tag));
     out.key = point_key(header.common_address, object.ioa);
@@ -87,9 +90,13 @@ bool PathSelector::encode(const codec::AsduHeader& header, const codec::Informat
 }
 
 bool PathSelector::delivered_since(const Entry& e) const {
-    // The leading path delivered this point at about the same time or later.
+    // The leading path delivered this point later, or the same value at about the same time.
     const auto d = delivered_.find(e.key);
-    return d != delivered_.end() && d->second.time + settings_.replay_tolerance_ms >= e.time;
+    if (d == delivered_.end()) {
+        return false;
+    }
+    return d->second.time >= e.time ||
+           (d->second.value == e.value && d->second.time + settings_.replay_tolerance_ms >= e.time);
 }
 
 void PathSelector::prune(Path& path, PathTime now) const {
@@ -107,6 +114,14 @@ void PathSelector::tick(PathTime now) {
     for (Path& path : paths_) {
         prune(path, now);
     }
+    // A delivery older than every buffered object plus the tolerance decides
+    // nothing any more (replay_start() then replays all of the point, as for
+    // a point never delivered): forget it, so that the map stays small.
+    const PathTime keep = settings_.replay_window_ms + settings_.replay_tolerance_ms;
+    for (auto it = delivered_.begin(); it != delivered_.end();) {
+        it = now > it->second.time && now - it->second.time > keep ? delivered_.erase(it)
+                                                                   : std::next(it);
+    }
 }
 
 bool PathSelector::received(std::size_t p, const codec::AsduHeader& header,
@@ -122,7 +137,9 @@ bool PathSelector::received(std::size_t p, const codec::AsduHeader& header,
         }
         return true;
     }
-    if (encoded) {
+    // The end of initialization (70) belongs to the station that sent it, not to
+    // the process: a following path does not keep it for a replay.
+    if (encoded && header.type_id != kEndOfInit) {
         e.time = now;
         Path& path = paths_[p];
         path.buffer.push_back(std::move(e));
@@ -182,6 +199,22 @@ void PathSelector::lost(std::size_t p, const std::string& reason, PathTime now,
     make_leading(next, p, "path " + std::to_string(p + 1) + " " + reason, now, out);
 }
 
+void PathSelector::stop_all(const std::string& reason, std::vector<PathAction>& out) {
+    for (Path& path : paths_) {
+        path.started = false;
+        path.buffer.clear();
+        path.dropped_since_switch = 0;
+    }
+    if (leading_ != kNoPath) {
+        PathAction a;
+        a.kind = PathActionKind::AllLost;
+        a.path = leading_;
+        a.reason = reason;
+        out.push_back(std::move(a));
+        leading_ = kNoPath;
+    }
+}
+
 void PathSelector::make_leading(std::size_t p, std::size_t previous, const std::string& reason,
                                 PathTime now, std::vector<PathAction>& out) {
     const bool first = !ever_led_;
@@ -213,21 +246,15 @@ std::size_t PathSelector::replay_start(const std::deque<Entry>& buffer,
     if (d == delivered_.end()) {
         return 0; // never delivered: all of it
     }
-    // Counterpart: same value, arrival closest to the last delivery, within the tolerance.
+    // Counterpart: the earliest object with the same value received within the
+    // tolerance. If the value recurs (a, b, a) inside the tolerance, the first a
+    // is taken: b and the second a are replayed. Doubles are allowed, losses not.
     const PathTime tol = settings_.replay_tolerance_ms;
-    std::size_t best = kNoPath;
-    PathTime best_distance = 0;
     for (const std::size_t i : positions) {
         const Entry& e = buffer[i];
-        const PathTime dist = distance(e.time, d->second.time);
-        if (e.value == d->second.value && dist <= tol &&
-            (best == kNoPath || dist <= best_distance)) {
-            best = i;
-            best_distance = dist;
+        if (e.value == d->second.value && distance(e.time, d->second.time) <= tol) {
+            return i + 1;
         }
-    }
-    if (best != kNoPath) {
-        return best + 1;
     }
     // No counterpart: everything from (last delivery - tolerance) on.
     const PathTime from = d->second.time > tol ? d->second.time - tol : 0;

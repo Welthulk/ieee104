@@ -253,6 +253,39 @@ act_rejected 'listen/start?path=/gibt/es/nicht.pcap' 'gibt es nicht'
 
 act 'client/close'
 
+# --- Zwei Wege: Station A und B, Prüfstand mit Weg 2, Reihe, Störung, Schließen -----------
+act_rejected "server/listen?port=$SPORT&station=1&port_b=$SPORT" 'anderen Port'
+wait_state 5 "gleiche Ports vorher abgelehnt, Station läuft weiter" 0 "\"server\":\\{\"running\":true,\"port\":$SPORT"
+act_rejected "server/listen?port=0&station=1&port_b=$PORT" 'Station A wieder beendet'   # Port der GUI belegt
+wait_state 5 "Station B scheitert: keine halbe Station" 0 '"server":\{"running":false'
+act 'server/listen?port=0&station=1&port_b=0'
+PORTS="$(api state | grep -o '"server":{"running":true,"port":[0-9]*,"station":1,"accept":[a-z]*,"port_b":[0-9]*')"
+PA="$(echo "$PORTS" | grep -o '"port":[0-9]*' | grep -o '[0-9]*')"
+PB="$(echo "$PORTS" | grep -o '"port_b":[0-9]*' | grep -o '[0-9]*')"
+[ -n "$PA" ] && [ -n "$PB" ] && [ "$PB" -gt 0 ] || fail "Station A und B melden keine Ports: $PORTS"
+ok "Station A auf $PA, Station B auf $PB"
+act "client/connect?host=127.0.0.1&port=$PA&port2=$PB&station=1&auto=1"
+wait_state 10 "zwei Wege gestartet" 0 '"paths":\{"count":2,"leading":[12],' \
+    '"nr":1,[^}]*"up":true' '"nr":2,[^}]*"up":true'
+act 'series?do=start&ioa=9000&ms=50'
+sleep 1
+act 'series?do=reset'                        # während der Lauf weitergeht
+L="$(api state | grep -o '"paths":{"count":2,"leading":[0-9]' | grep -o '[0-9]$')"
+act "client/path?nr=$L&fault=close"
+wait_state 10 "Umschaltung nach Trennen" 0 '"paths":\{"count":2,"leading":[12],"switches":1,'
+sleep 1
+act 'series?do=stop'
+wait_state 5 "Reihe nach Zurücksetzen ohne Fehlende" 0 '"series":\{"on":false,[^}]*"missing":0,"dup":[0-9]+,"pending":0\}'
+S3="$(last_seq)"
+act 'client/stop'
+wait_state 10 "STOPDT auf beiden Wegen ohne Umschaltung" "$S3" \
+    '"text":"Leitstelle: Datenübertragung auf allen Wegen angehalten \(STOPDT\); kein Weg führt"' \
+    '"paths":\{"count":2,"leading":0,"switches":1,'
+api "state?since=$S3" | grep -q 'verbindet weiter' && fail "STOPDT als Ausfall gemeldet"
+act 'client/close'
+wait_state 10 "Client mit Wegen geschlossen, Zustand weiter lesbar" 0 \
+    '"client":\{"state":"closed"' '"paths":\{"count":1,"leading":0,'
+
 # --- Gegenstelle lib60870 ---------------------------------------------------------------
 if [ -n "$LIB60870" ]; then
     S="$(last_seq)"

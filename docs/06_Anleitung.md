@@ -308,7 +308,10 @@ iec104_client_close(client);                              /* beendet alle Wege *
 
 | Verhalten | |
 | --- | --- |
-| logischer Zustand (`on_state`, Kennung 1) | „gestartet“, solange ein Weg führt; „verbinde“, wenn keiner gestartet ist; „getrennt“ nur nach `iec104_client_close()` |
+| logischer Zustand (`on_state`, Kennung 1) | „gestartet“, solange ein Weg führt; führt keiner, der Zustand des am weitesten gekommenen Wegs („verbinde“, „gestoppt“, „STARTDT/STOPDT läuft“); „getrennt“ nur nach `iec104_client_close()` |
+| Anhalten und Schließen | `iec104_client_stop()` hält alle Wege an ohne Umschaltung (ein Rückruf mit führend = 0); `iec104_client_close()` beendet alle ohne Rückruf |
+| Namen | ein Rechnername wird einmal bei `iec104_client_connect_paths()` aufgelöst; der Neuaufbau verwendet die Adresse und wartet nicht auf DNS. Ist ein Name dort nicht auflösbar, starten die anderen Wege trotzdem, und der Name wird bei jedem Neuaufbau wieder gesucht (das kann den Poll kurz aufhalten; Adressen statt Namen vermeiden es) |
+| TLS | jeder Weg hat seinen eigenen TLS-Kontext und Sitzungsspeicher |
 | Doppelte | um eine Umschaltung möglich (z. B. Wert ohne Gegenstück auf dem alten Weg, Generalabfrage); Verluste nicht, solange das Fenster reicht |
 | Timer | ein schweigender Weg fällt erst nach t3 + t1 auf (Standard 35 s); für schnelles Umschalten t1 und t3 kürzer wählen, z. B. t1 = 5 s, t3 = 5 s |
 | Voraussetzung | beide Stationen dürfen gleichzeitig gestartet sein und senden dieselben Punkte; sonst ist es Kanalredundanz (oben) |

@@ -1118,16 +1118,18 @@ typedef struct iec104_path_config {
 
 /** @brief Behaviour of a client with several paths. */
 typedef struct iec104_path_options {
-    uint32_t
-        reconnect_interval_ms; /**< Wait before a lost path is connected again, default 5000. */
-    /** Objects of following paths are kept this long for the replay; 0 (default) = t1 + t3 + 5 s.
-     */
+    /** Wait before a lost path is connected again; default 5000, at least 100. */
+    uint32_t reconnect_interval_ms;
+    /** Following paths keep objects this long for a replay; 0 (default) = t1 + t3 + 5 s. */
     uint32_t replay_window_ms;
-    uint32_t replay_max_objects; /**< At most this many per path, default 10000. */
-    uint32_t
-        replay_tolerance_ms; /**< Arrival times of the paths may differ this much, default 500. */
-    int interrogation_after_switch; /**< 1 (default): general interrogation after a switch-over. */
-    int prefer_first_path; /**< 1: path 1 leads again as soon as it is started; default 0. */
+    /** At most this many objects per path; default 10000, at least 1. */
+    uint32_t replay_max_objects;
+    /** Arrival times of the same object on two paths may differ this much; default 500. */
+    uint32_t replay_tolerance_ms;
+    /** 1 (default): general interrogation after a switch-over. */
+    int interrogation_after_switch;
+    /** 1: path 1 leads again as soon as it is started; default 0. */
+    int prefer_first_path;
 } iec104_path_options;
 
 /** @brief Fills @p options with the defaults. Does nothing for NULL. */
@@ -1146,9 +1148,18 @@ IEC104_API void iec104_path_options_init(iec104_path_options* options);
  * @param count   1..IEC104_MAX_PATHS.
  * @param options NULL = defaults (iec104_path_options_init()).
  * @return IEC104_OK (a path whose connect fails at once is retried later);
- *         IEC104_ERR_INVALID_ARGUMENT for NULL, a bad count or an empty host;
+ *         IEC104_ERR_INVALID_ARGUMENT for NULL, a bad count, an empty host or
+ *         if no name can be resolved. Names are resolved once, here; a
+ *         reconnect uses the address, so that iec104_client_poll() does not
+ *         wait for DNS. A name that cannot be resolved here is logged and
+ *         looked up again at each reconnect of its path (that lookup can
+ *         block the poll; numeric addresses avoid it); IEC104_ERR_OUT_OF_RANGE for port 0,
+ *         reconnect_interval_ms below 100 or replay_max_objects 0;
  *         IEC104_ERR_WRONG_STATE if a connection exists; the status of
  *         iec104_client_set_tls() if a TLS setting of a path is invalid.
+ *
+ * iec104_client_stop() and iec104_client_close() end all paths without a
+ * switch-over: stop reports one path callback with leading = 0, close none.
  */
 IEC104_API iec104_status iec104_client_connect_paths(iec104_client* client,
                                                      const iec104_path_config* paths, size_t count,
@@ -1267,14 +1278,16 @@ IEC104_API void iec104_config_init(iec104_config* config);
  * | event_buffer_size, overflow ("drop_oldest", "reject") | server; also for the groups |
  * | group | one redundancy group per line: addresses separated by blanks or commas, "*" = any |
  * | confirmation_timeout, termination_timeout, expect_termination | client (s) |
- * | path | one path per line: host:port, optionally followed by the TLS peer name and fingerprint
- * of this path ([v6]:port for IPv6) | | path_reconnect, path_replay_window, path_replay_tolerance |
- * path_options (s) | | path_replay_max, path_interrogation, path_prefer_first | path_options | |
- * tls | use_tls | | tls_ca, tls_certificate, tls_key, tls_crl | tls (files) | | tls_key_password,
- * tls_peer_name, tls_peer_fingerprint | tls | | tls_min_version, tls_max_version | tls ("1.2",
- * "1.3") | | tls_ciphers, tls_ciphersuites | tls (cipher_list, cipher_suites) | | tls_verify_peer,
- * tls_renegotiation, tls_session_resumption | tls | | tls_renewal_interval, tls_session_lifetime |
- * tls (s) |
+ * | path | one path per line: host:port [peer name [fingerprint]]; IPv6 as [addr]:port |
+ * | path_reconnect, path_replay_window, path_replay_tolerance | path_options (s) |
+ * | path_replay_max, path_interrogation, path_prefer_first | path_options |
+ * | tls | use_tls |
+ * | tls_ca, tls_certificate, tls_key, tls_crl | tls (files) |
+ * | tls_key_password, tls_peer_name, tls_peer_fingerprint | tls |
+ * | tls_min_version, tls_max_version | tls ("1.2", "1.3") |
+ * | tls_ciphers, tls_ciphersuites | tls (cipher_list, cipher_suites) |
+ * | tls_verify_peer, tls_renegotiation, tls_session_resumption | tls |
+ * | tls_renewal_interval, tls_session_lifetime | tls (s) |
  *
  * Relative file names are relative to the directory of the configuration file.
  *

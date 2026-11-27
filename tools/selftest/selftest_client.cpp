@@ -39,7 +39,8 @@
  * the client holds one path to each address instead; the stations must send
  * the same series (self-test servers with --broadcast). Steps: all paths
  * started, then the series while every --fault-every seconds the leading path
- * is disturbed (closed or silent, alternately or by --seed at random), and
+ * is disturbed (closed or silent, alternately; with --seed a random path with
+ * a random fault, so that following paths fail as well), and
  * the series must arrive without a gap; repetitions are allowed.
  *
  * Exit code: 0 = all steps passed, 1 = a step failed, 2 = usage error.
@@ -474,6 +475,7 @@ int run_paths(Client& c) {
     // The series while paths fail.
     std::srand(static_cast<unsigned>(c.opt.seed));
     unsigned long faults = 0;
+    unsigned long leading_faults = 0; // faults that hit the leading path (only those switch)
     unsigned long repeated = 0;
     const std::uint64_t fault_ms = c.opt.fault_every_s * 1000U;
     std::uint64_t next_fault = now_ms() + fault_ms;
@@ -496,10 +498,12 @@ int run_paths(Client& c) {
                        static_cast<std::uint32_t>(c.opt.paths.size()) +
                    1U;
         }
+        const bool hits_leading = path == iec104_client_leading_path(c.handle);
         if (path != 0U && iec104_client_disturb_path(c.handle, path,
                                                      silent ? IEC104_PATH_SILENT
                                                             : IEC104_PATH_CLOSE) == IEC104_OK) {
             ++faults;
+            leading_faults += hits_leading ? 1U : 0U;
             std::printf("fault: path %u %s\n", path, silent ? "silent" : "closed");
             std::fflush(stdout);
         }
@@ -508,8 +512,10 @@ int run_paths(Client& c) {
     step("series over path faults", n == static_cast<long>(c.opt.expect),
          n < 0 ? "gap" : std::to_string(n) + "/" + std::to_string(c.opt.expect) + ", in order");
     step("repetitions around a switch-over", true, std::to_string(repeated));
-    step("faults, switch-overs", fault_ms == 0U || (faults > 0U && c.switches > 0U),
-         std::to_string(faults) + " faults, " + std::to_string(c.switches) + " switch-overs");
+    step("faults, switch-overs",
+         fault_ms == 0U || (faults > 0U && (leading_faults == 0U || c.switches > 0U)),
+         std::to_string(faults) + " faults (" + std::to_string(leading_faults) +
+             " on the leading path), " + std::to_string(c.switches) + " switch-overs");
     for (std::uint32_t p = 1; p <= c.opt.paths.size(); ++p) {
         iec104_path_info i{};
         if (iec104_client_get_path_info(c.handle, p, &i) == IEC104_OK) {

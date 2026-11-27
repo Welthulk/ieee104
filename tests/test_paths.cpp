@@ -14,11 +14,14 @@
  */
 #include "iec104/iec104.h"
 
+#include <arpa/inet.h>
 #include <cstdio>
 #include <functional>
 #include <gtest/gtest.h>
 #include <memory>
 #include <string>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -252,10 +255,10 @@ TEST(Paths, SwitchOverOnClose) {
     ASSERT_EQ(f.app.switches.size(), 2U);
     EXPECT_EQ(f.app.switches[1].leading, other);
     EXPECT_EQ(f.app.switches[1].previous, leading);
-    // The end of initialization both stations sent is known already: suppressed.
+    // Nothing to replay: the end of initialization of a following station is not kept.
     EXPECT_EQ(f.app.reasons[1], "path " + std::to_string(other) + " leading: path " +
                                     std::to_string(leading) + " closed: closed locally" +
-                                    "; replayed 0, suppressed 1, dropped 0");
+                                    "; replayed 0, suppressed 0, dropped 0");
     EXPECT_TRUE(f.app.logged("warning " + std::to_string(other) + " path " + std::to_string(other) +
                              " leading: path " + std::to_string(leading) + " closed"));
     // General interrogation on the new path.
@@ -304,7 +307,7 @@ TEST(Paths, SilentPathReplay) {
     EXPECT_EQ(f.info(leading).last_close, IEC104_CLOSE_T1_TIMEOUT);
     ASSERT_EQ(f.app.switches.size(), 2U);
     EXPECT_EQ(f.app.switches[1].replayed, 3U);   // 2, 3, 4
-    EXPECT_EQ(f.app.switches[1].suppressed, 2U); // end of initialization and 1: delivered already
+    EXPECT_EQ(f.app.switches[1].suppressed, 1U); // 1 was delivered already
     ASSERT_GE(f.app.values.size(), 3U);
     EXPECT_EQ(f.app.values[0], 2.0);
     EXPECT_EQ(f.app.values[1], 3.0);
@@ -405,6 +408,8 @@ TEST(Paths, PreferFirstPath) {
 TEST(Paths, CloseEndsAllPaths) {
     Fixture f(2);
     f.start();
+    const std::size_t switches = f.app.switches.size();
+    const std::size_t lines = f.app.log.size();
     iec104_client_close(f.client);
     EXPECT_EQ(iec104_client_state(f.client), IEC104_LINK_CLOSED);
     ASSERT_TRUE(f.run_until([&] { return f.app.states.back() == IEC104_LINK_CLOSED; }));
@@ -415,6 +420,10 @@ TEST(Paths, CloseEndsAllPaths) {
         closed += s == IEC104_LINK_CLOSED ? 1 : 0;
     }
     EXPECT_EQ(closed, 1);
+    EXPECT_EQ(f.app.switches.size(), switches); // a close is no switch-over
+    for (std::size_t i = lines; i < f.app.log.size(); ++i) {
+        EXPECT_EQ(f.app.log[i].find("leading: "), std::string::npos) << f.app.log[i];
+    }
     EXPECT_EQ(iec104_client_leading_path(f.client), 0U);
     iec104_path_info i{};
     EXPECT_EQ(iec104_client_get_path_info(f.client, 1, &i), IEC104_ERR_WRONG_STATE);
@@ -449,6 +458,20 @@ TEST(Paths, Arguments) {
     EXPECT_EQ(o.interrogation_after_switch, 1);
     EXPECT_EQ(o.prefer_first_path, 0);
 
+    iec104_path_options bad = o;
+    bad.reconnect_interval_ms = 50;
+    EXPECT_EQ(iec104_client_connect_paths(c, p, 1, &bad), IEC104_ERR_OUT_OF_RANGE);
+    bad = o;
+    bad.replay_max_objects = 0;
+    EXPECT_EQ(iec104_client_connect_paths(c, p, 1, &bad), IEC104_ERR_OUT_OF_RANGE);
+    p[1] = p[0];
+    p[1].port = 0;
+    EXPECT_EQ(iec104_client_connect_paths(c, p, 2, nullptr), IEC104_ERR_OUT_OF_RANGE);
+    std::snprintf(p[1].host, sizeof p[1].host, "name.invalid");
+    p[1].port = 2404;
+    iec104_path_config unresolvable[1] = {p[1]};
+    EXPECT_EQ(iec104_client_connect_paths(c, unresolvable, 1, nullptr),
+              IEC104_ERR_INVALID_ARGUMENT);
     ASSERT_EQ(iec104_client_connect_paths(c, p, 1, nullptr), IEC104_OK); // refused port: retried
     EXPECT_EQ(iec104_client_connect(c, "127.0.0.1", 1), IEC104_ERR_WRONG_STATE);
     EXPECT_EQ(iec104_client_connect_paths(c, p, 1, nullptr), IEC104_ERR_WRONG_STATE);
@@ -518,4 +541,136 @@ TEST(Paths, ConfigFile) {
     iec104_config_init(&c);
     EXPECT_EQ(iec104_config_load(path.c_str(), &c, &line), IEC104_ERR_OUT_OF_RANGE);
     EXPECT_EQ(line, 5);
+}
+
+// Rule: iec104_client_stop() stops all paths without a switch-over: one path
+// callback with leading 0, no replay, no interrogation; start() again leads.
+TEST(Paths, StopWithoutSwitchOver) {
+    Fixture f(2);
+    f.start();
+    const std::size_t switches = f.app.switches.size();
+    const uint64_t requests = f.stations[0]->requests() + f.stations[1]->requests();
+    ASSERT_EQ(iec104_client_stop(f.client), IEC104_OK);
+    ASSERT_TRUE(f.run_until([&] { return iec104_client_state(f.client) == IEC104_LINK_STOPPED; }));
+    f.run_for(50);
+    ASSERT_EQ(f.app.switches.size(), switches + 1U);
+    EXPECT_EQ(f.app.switches.back().leading, 0U);
+    EXPECT_EQ(f.stations[0]->requests() + f.stations[1]->requests(), requests); // no interrogation
+    EXPECT_FALSE(f.app.logged("warning"));
+    ASSERT_EQ(iec104_client_start(f.client), IEC104_OK);
+    ASSERT_TRUE(f.all_started());
+}
+
+// Rule: a path whose connect or TLS handshake still runs is closed at once by
+// iec104_client_close(), reported as a local close (not after t0, not as TLS error).
+TEST(Paths, CloseWhileHandshaking) {
+    // A listening socket that never speaks TLS: the TCP connect completes, the handshake waits.
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(fd, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ASSERT_EQ(::bind(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof addr), 0);
+    ASSERT_EQ(::listen(fd, 4), 0);
+    socklen_t len = sizeof addr;
+    ASSERT_EQ(::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len), 0);
+    App app;
+    iec104_callbacks cb{};
+    cb.user = &app;
+    cb.on_state = App::on_state;
+    iec104_client* c = nullptr;
+    ASSERT_EQ(iec104_client_create(nullptr, &cb, &c), IEC104_OK);
+    iec104_client_set_log(c, IEC104_LOG_INFO, App::on_log, &app);
+    if (iec104_tls_available() != 0) {
+        iec104_tls_config t{};
+        iec104_tls_config_init(&t);
+        t.verify_peer = 0;
+        ASSERT_EQ(iec104_client_set_tls(c, &t), IEC104_OK);
+    }
+    iec104_path_config p{};
+    std::snprintf(p.host, sizeof p.host, "127.0.0.1");
+    p.port = ntohs(addr.sin_port);
+    ASSERT_EQ(iec104_client_connect_paths(c, &p, 1, nullptr), IEC104_OK);
+    for (int i = 0; i < 50; ++i) {
+        (void)iec104_client_poll(c, 1);
+    }
+    iec104_client_close(c);
+    for (int i = 0; i < 20 && (app.states.empty() || app.states.back() != IEC104_LINK_CLOSED);
+         ++i) {
+        (void)iec104_client_poll(c, 1);
+    }
+    ASSERT_FALSE(app.states.empty());
+    EXPECT_EQ(app.states.back(), IEC104_LINK_CLOSED);
+    EXPECT_TRUE(app.logged("path 1 closed: closed locally"));
+    EXPECT_FALSE(app.logged("handshake"));
+    iec104_client_destroy(c);
+    ::close(fd);
+}
+
+// Rule: a path whose name cannot be resolved does not keep the other paths
+// from connecting; it is logged and looked up again at each reconnect.
+TEST(Paths, UnresolvableNameDoesNotBlockOtherPaths) {
+    Station a;
+    App app;
+    iec104_callbacks cb{};
+    cb.user = &app;
+    cb.on_state = App::on_state;
+    iec104_client* c = nullptr;
+    ASSERT_EQ(iec104_client_create(nullptr, &cb, &c), IEC104_OK);
+    iec104_client_set_log(c, IEC104_LOG_INFO, App::on_log, &app);
+    iec104_path_config p[2]{};
+    std::snprintf(p[0].host, sizeof p[0].host, "127.0.0.1");
+    p[0].port = iec104_server_port(a.server);
+    std::snprintf(p[1].host, sizeof p[1].host, "name.invalid");
+    p[1].port = 2404;
+    iec104_path_options o{};
+    iec104_path_options_init(&o);
+    o.reconnect_interval_ms = 100;
+    ASSERT_EQ(iec104_client_connect_paths(c, p, 2, &o), IEC104_OK);
+    ASSERT_EQ(iec104_client_start(c), IEC104_OK);
+    for (int i = 0; i < 2000 && iec104_client_leading_path(c) != 1U; ++i) {
+        (void)iec104_server_poll(a.server, 0);
+        (void)iec104_client_poll(c, 1);
+    }
+    EXPECT_EQ(iec104_client_leading_path(c), 1U);
+    EXPECT_TRUE(app.logged("path 2: cannot resolve name.invalid"));
+    iec104_path_info i{};
+    ASSERT_EQ(iec104_client_get_path_info(c, 2, &i), IEC104_OK);
+    EXPECT_EQ(i.last_close, IEC104_CLOSE_CONNECT_FAILED);
+    iec104_client_destroy(c);
+}
+
+// Rule: the counters of the leading path survive stop() and close().
+TEST(Paths, StatsOfLeadingPathAfterClose) {
+    Fixture f(2);
+    f.start();
+    for (const auto& s : f.stations) {
+        s->update(5.0);
+    }
+    f.run_for(50);
+    iec104_link_stats before{};
+    ASSERT_EQ(iec104_client_get_stats(f.client, &before), IEC104_OK);
+    ASSERT_GT(before.i_frames_received, 0U);
+    iec104_client_close(f.client);
+    ASSERT_TRUE(f.run_until([&] { return f.app.states.back() == IEC104_LINK_CLOSED; }));
+    iec104_link_stats after{};
+    ASSERT_EQ(iec104_client_get_stats(f.client, &after), IEC104_OK);
+    EXPECT_GE(after.i_frames_received, before.i_frames_received);
+}
+
+// Rule: stop() while STARTDT is still under way: the paths are stopped as soon
+// as they are started, none becomes leading, nothing is delivered.
+TEST(Paths, StopWhileStartPending) {
+    Fixture f(2);
+    ASSERT_TRUE(f.run_until([&] {
+        return f.info(1).state == IEC104_LINK_STOPPED && f.info(2).state == IEC104_LINK_STOPPED;
+    }));
+    ASSERT_EQ(iec104_client_start(f.client), IEC104_OK); // STARTDT act sent, no answer yet
+    ASSERT_EQ(iec104_client_stop(f.client), IEC104_OK);
+    f.run_for(300);
+    EXPECT_EQ(iec104_client_leading_path(f.client), 0U);
+    EXPECT_TRUE(f.app.switches.empty());
+    EXPECT_EQ(f.info(1).state, IEC104_LINK_STOPPED);
+    EXPECT_EQ(f.info(2).state, IEC104_LINK_STOPPED);
+    EXPECT_EQ(iec104_client_state(f.client), IEC104_LINK_STOPPED);
 }

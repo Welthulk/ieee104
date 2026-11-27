@@ -131,6 +131,21 @@ iec104_status connect_tcp(const char* host, std::uint16_t port, Socket& out) noe
     return IEC104_OK;
 }
 
+iec104_status resolve_address(const char* host, std::string& out) {
+    AddrInfo ai;
+    if (host == nullptr || !resolve(host, 0, false, ai)) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    // The first address, as connect_tcp() takes it.
+    std::array<char, NI_MAXHOST> text{};
+    if (getnameinfo(ai.list->ai_addr, ai.list->ai_addrlen, text.data(), text.size(), nullptr, 0,
+                    NI_NUMERICHOST) != 0) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    out = text.data();
+    return IEC104_OK;
+}
+
 iec104_status finish_connect(const Socket& socket) noexcept {
     int error = 0;
     socklen_t len = sizeof error;

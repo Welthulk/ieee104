@@ -425,9 +425,10 @@ function showPaths(ps, se) {
   st.className = 'state ' + (ps.count >= 2 ? (ps.leading ? 'started' : 'closed') : '');
   const body = document.getElementById('paths');
   const k = JSON.stringify(ps.list);
-  if (ps.list.length && k !== pathsShown) {
+  if (k !== pathsShown) {
     pathsShown = k;
-    body.innerHTML = ps.list.map(p =>
+    body.innerHTML = !ps.list.length ? '<tr><td colspan="13" class="hint">Für Wegeredundanz beim Verbinden ' +
+      'Port von Weg 2 angeben (zum Ausprobieren: Reiter „Station“, Station B starten).</td></tr>' : ps.list.map(p =>
       `<tr class="${p.lead ? '' : (p.up ? '' : 'warn')}"><td class="num">${p.nr}</td><td>${esc(p.addr)}</td>` +
       `<td>${p.lead ? '<b>führend</b>' : p.up ? 'läuft mit' : '–'}</td>` +
       `<td title="${esc(p.close)}">${esc(p.state)}</td><td class="num">${p.connects}</td>` +

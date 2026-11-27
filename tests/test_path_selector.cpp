@@ -152,10 +152,10 @@ TEST(PathSelector, SilentFailureReplaysTheGap) {
     EXPECT_TRUE(t.sel.received(1, header(), value(100, 4.0F), 37000));
 }
 
-// Rule (E11): a value that returns to an earlier one (a-b-a) is matched with
-// the occurrence closest in time to the last delivery, so that the trailing
-// change is not lost and the earlier ones are not repeated.
-TEST(PathSelector, RepeatedValueMatchesClosestInTime) {
+// Rule (E11): a value that returns to an earlier one (a-b-a) seconds later is
+// matched only within the tolerance: the old occurrence is outside it, so the
+// trailing change is not lost and the earlier ones are not repeated.
+TEST(PathSelector, RepeatedValueMatchesWithinTolerance) {
     Two t;
     t.both(100, 1.0F, 1000);
     t.both(100, 2.0F, 2000);
@@ -310,4 +310,50 @@ TEST(PathSelector, OnlyMonitorObjectsAreBuffered) {
     EXPECT_FALSE(t.sel.received(1, header(45, 7), cmd, 100));
     EXPECT_EQ(t.sel.buffered(1), 0U);
     EXPECT_TRUE(t.sel.received(0, header(45, 7), cmd, 100));
+}
+
+// Rule (E11): when the application stops all paths there is no switch-over:
+// one AllLost, no replay, no interrogation; afterwards the first started path
+// leads again and interrogates.
+TEST(PathSelector, StopAllWithoutSwitchOver) {
+    Two t;
+    t.sel.received(1, header(), value(100, 1.0F), 1500);
+    t.out.clear();
+    t.sel.stop_all("stopped", t.out);
+    ASSERT_EQ(t.out.size(), 1U);
+    EXPECT_EQ(t.out[0].kind, PathActionKind::AllLost);
+    EXPECT_EQ(t.out[0].reason, "stopped");
+    EXPECT_EQ(t.sel.leading(), PathSelector::kNoPath);
+    EXPECT_FALSE(t.sel.is_started(0));
+    EXPECT_FALSE(t.sel.is_started(1));
+    EXPECT_EQ(t.sel.buffered(1), 0U);
+    t.out.clear();
+    t.sel.lost(0, "stop pending", 1600, t.out); // the links report it afterwards: nothing more
+    EXPECT_TRUE(t.out.empty());
+    t.sel.started(1, 2000, t.out);
+    EXPECT_EQ(t.sel.leading(), 1U);
+    EXPECT_EQ(count(t.out, PathActionKind::Interrogate), 1U);
+}
+
+// Rule (E11): if a value recurs within the tolerance (a, b, a), the replay
+// starts after the earliest counterpart, so b is not lost. Here path 1 is
+// 300 ms ahead: its first a is the a path 0 delivered at 1000.
+TEST(PathSelector, RecurringValueTakesEarliestCounterpart) {
+    Two t;
+    t.sel.received(1, header(), value(100, 1.0F), 700);  // a
+    t.sel.received(1, header(), value(100, 2.0F), 800);  // b
+    t.sel.received(0, header(), value(100, 1.0F), 1000); // a delivered (path 0 behind)
+    t.sel.received(1, header(), value(100, 1.0F), 1050); // a again
+    t.out.clear();
+    t.sel.lost(0, "closed by peer", 1060, t.out);
+    using V = std::vector<std::pair<std::uint32_t, float>>;
+    EXPECT_EQ(delivered(t.out), (V{{100, 2.0F}, {100, 1.0F}}));
+}
+
+// Rule: the end of initialization of a following station is not replayed.
+TEST(PathSelector, EndOfInitializationNotBuffered) {
+    Two t;
+    codec::InformationObject o{};
+    t.sel.received(1, header(70, 4), o, 1000);
+    EXPECT_EQ(t.sel.buffered(1), 0U);
 }

@@ -23,8 +23,8 @@
  * the new leading path received in that time are delivered afterwards
  * (replay). For every point the object last delivered is looked up in the
  * buffer of the new path (same value and quality, time tag ignored, received
- * within the tolerance); everything after it is replayed in the order of
- * arrival. Without such a counterpart everything from (time of the last
+ * within the tolerance; the earliest such object); everything after it is
+ * replayed in the order of arrival. Without such a counterpart everything from (time of the last
  * delivery - tolerance) is replayed; for a point never delivered, all of it.
  * Afterwards a general interrogation on the new path aligns what the replay
  * cannot (Interrogate action). Duplicates are possible around the failure,
@@ -115,6 +115,12 @@ class PathSelector {
      */
     bool received(std::size_t p, const codec::AsduHeader& header,
                   const codec::InformationObject& object, PathTime now);
+
+    /**
+     * @brief Every path stops at once (the application stops or closes): no
+     *        switch-over, no replay; AllLost with @p reason if a path was leading.
+     */
+    void stop_all(const std::string& reason, std::vector<PathAction>& out);
 
     /** @brief Drops buffered objects older than the window. */
     void tick(PathTime now);

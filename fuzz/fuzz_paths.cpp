@@ -22,9 +22,8 @@
  *   - received() returns true exactly for the leading path;
  *   - every Deliver action carries one monitor-direction object that decodes
  *     again; a Switched action names the path that leads afterwards;
- *   - a buffer never holds more than replay_max_objects objects;
- *   - an object received while leading is never delivered twice by a replay
- *     of the same switch-over (replay starts after what was delivered).
+ *   - a buffer never holds more than replay_max_objects objects, and the
+ *     leading path keeps no buffer.
  *
  * Build:  cmake --preset fuzz && cmake --build --preset fuzz
  * Run:    ./build/fuzz/fuzz_paths -max_total_time=300 fuzz/corpus_paths

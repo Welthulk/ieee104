@@ -58,6 +58,14 @@ iec104_status Link::start_tls_or_open(apci::TimeMs now) noexcept {
     return tls_context_->create_session(socket_, tls_);
 }
 
+void Link::close() noexcept {
+    conn_.close();
+    if (phase_ != Phase::Open && close_reason_ == LinkCloseReason::None) {
+        close_reason_ = LinkCloseReason::Protocol; // reported as a local close
+        protocol_reason_ = apci::CloseReason::LocalRequest;
+    }
+}
+
 short Link::poll_events() const noexcept {
     switch (phase_) {
     case Phase::Connecting:
@@ -117,7 +125,15 @@ void Link::service(short revents, apci::TimeMs now, LinkSink& sink) noexcept {
     // TLS: data that arrived with the end of the handshake is already
     // buffered inside the TLS session, and a renegotiation may need a
     // writable socket to go on reading.
-    // A silent link (test aid) reads nothing; only its timers run.
+    // A silent link (test aid) reads nothing; only its timers run. A socket
+    // error or hang-up cannot be left pending (poll() would report it again at
+    // once): the link ends as it would without the test aid.
+    if (silent_ && (revents & (POLLHUP | POLLERR)) != 0) {
+        finish((revents & POLLERR) != 0 ? LinkCloseReason::SocketError
+                                        : LinkCloseReason::PeerClosed,
+               sink);
+        return;
+    }
     const bool readable = (revents & (POLLIN | POLLHUP | POLLERR)) != 0;
     const bool tls_read = tls_ != nullptr && (just_opened || (revents & POLLOUT) != 0);
     if (!silent_ && (readable || tls_read)) {

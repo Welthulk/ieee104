@@ -196,6 +196,9 @@ iec104_status parse_client_path(const std::string& value, iec104_config& c) {
     if (st == IEC104_OK) {
         st = parse_small(address.substr(colon + 1U), 65535, p.port);
     }
+    if (st == IEC104_OK && p.port == 0U) {
+        st = IEC104_ERR_OUT_OF_RANGE;
+    }
     if (st == IEC104_OK && words.size() > 1U) {
         st = parse_text(words[1], p.tls_peer_name);
     }
@@ -216,7 +219,8 @@ iec104_status apply_path(const std::string& key, const std::string& value, iec10
         return parse_client_path(value, c);
     }
     if (key == "path_reconnect") {
-        return parse_seconds(value, o.reconnect_interval_ms);
+        const iec104_status st = parse_seconds(value, o.reconnect_interval_ms);
+        return st == IEC104_OK && o.reconnect_interval_ms < 100U ? IEC104_ERR_OUT_OF_RANGE : st;
     }
     if (key == "path_replay_window") {
         return parse_seconds(value, o.replay_window_ms);
@@ -225,7 +229,8 @@ iec104_status apply_path(const std::string& key, const std::string& value, iec10
         return parse_seconds(value, o.replay_tolerance_ms);
     }
     if (key == "path_replay_max") {
-        return parse_small(value, 1000000, o.replay_max_objects);
+        const iec104_status st = parse_small(value, 1000000, o.replay_max_objects);
+        return st == IEC104_OK && o.replay_max_objects == 0U ? IEC104_ERR_OUT_OF_RANGE : st;
     }
     if (key == "path_interrogation") {
         return parse_flag(value, o.interrogation_after_switch);

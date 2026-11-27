@@ -101,6 +101,16 @@ iec104_status accept_tcp(const Socket& listener, Socket& out) noexcept;
 iec104_status connect_tcp(const char* host, std::uint16_t port, Socket& out) noexcept;
 
 /**
+ * @brief Resolves @p host (name or address) to the numeric address connect_tcp() would use.
+ *
+ * Blocks for the name lookup. Used to resolve a name once, so that later
+ * connects (e.g. reconnects inside a poll round) do not wait for DNS.
+ *
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT if @p host is NULL or cannot be resolved.
+ */
+iec104_status resolve_address(const char* host, std::string& out);
+
+/**
  * @brief Result of a non-blocking connect once the socket is writable.
  * @return IEC104_OK if connected, IEC104_ERR_IO if the connect failed.
  */

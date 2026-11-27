@@ -32,6 +32,7 @@
 #include "session/command_table.hpp"
 #include "session/command_tracker.hpp"
 #include "session/path_selector.hpp"
+#include "transport/tcp.hpp"
 
 #include <algorithm>
 #include <array>
@@ -44,10 +45,11 @@ using namespace iec104;
 
 namespace {
 constexpr std::uint32_t kClientLinkId = 1;
-constexpr std::uint8_t kReadType = 102;      // C_RD_NA_1
-constexpr std::uint8_t kInterrogation = 100; // C_IC_NA_1
-constexpr std::uint8_t kClockSync = 103;     // C_CS_NA_1
-constexpr std::uint8_t kQoiStation = 20;     // general interrogation
+constexpr std::uint8_t kReadType = 102;        // C_RD_NA_1
+constexpr std::uint8_t kInterrogation = 100;   // C_IC_NA_1
+constexpr std::uint8_t kClockSync = 103;       // C_CS_NA_1
+constexpr std::uint8_t kQoiStation = 20;       // general interrogation
+constexpr std::uint32_t kMinReconnectMs = 100; // no reconnect storm
 
 // Copies @p text into a fixed C string field (truncated, always terminated).
 template <std::size_t N>
@@ -69,6 +71,7 @@ std::string text_of(const char (&field)[N]) { // NOLINT(*-avoid-c-arrays): field
 // One path of a client with several paths.
 struct PathSlot {
     iec104_path_config address{};
+    std::string numeric; // address resolved once (no DNS lookup inside the poll)
     std::shared_ptr<transport::TlsContext> tls; // NULL = plain TCP
     bool waiting{false};                        // no link; connect again at reconnect_at
     std::uint64_t reconnect_at{0};
@@ -239,9 +242,17 @@ struct iec104_client : api::CallbackSink {
         const bool important = state == apci::State::Started || state == apci::State::Stopped;
         logger().write(important ? IEC104_LOG_INFO : IEC104_LOG_DEBUG, id,
                        "path " + std::to_string(id) + " state " + iec104_link_state_string(c));
+        if (closing) {
+            return; // all paths end; nothing leads any more
+        }
         const std::size_t p = id - 1U;
         const std::uint64_t now = transport::monotonic_ms();
-        if (state == apci::State::Started) {
+        if (state == apci::State::Started && !want_started) {
+            // STARTDT was under way when the application stopped: stop this path too.
+            if (transport::Link* l = find(id)) {
+                (void)l->stop(now); // if refused now (TESTFR open), after_poll() tries again
+            }
+        } else if (state == apci::State::Started) {
             selector->started(p, now, actions);
             if (selector->leading() != p) {
                 logger().write(IEC104_LOG_INFO, id,
@@ -280,10 +291,8 @@ struct iec104_client : api::CallbackSink {
         const bool regular = closing || c == IEC104_CLOSE_LOCAL;
         logger().write(regular ? IEC104_LOG_INFO : IEC104_LOG_WARNING, id,
                        "path " + std::to_string(id) + " closed: " + iec104_close_reason_string(c));
-        for (const auto& l : links) {
-            if (l->id() == id) {
-                last_stats = stats_of(*l);
-            }
+        if (selector->leading() == p) {
+            save_leading_stats(); // counters of the connection the application used last
         }
         const std::uint64_t now = transport::monotonic_ms();
         PathSlot& slot = paths.at(p);
@@ -295,6 +304,13 @@ struct iec104_client : api::CallbackSink {
         }
         run_actions();
         report_logical();
+    }
+
+    // Keeps the counters of the leading path (get_stats() while none leads).
+    void save_leading_stats() {
+        if (const transport::Link* l = link()) {
+            last_stats = stats_of(*l);
+        }
     }
 
     // Carries out what the selector asked for.
@@ -434,9 +450,16 @@ struct iec104_client : api::CallbackSink {
         ++slot.connects;
         const std::string where =
             text_of(slot.address.host) + ":" + std::to_string(slot.address.port);
+        iec104_status st = IEC104_OK;
+        if (slot.numeric.empty()) {
+            // The name could not be resolved at connect time: try again (this one
+            // lookup may block the poll; numeric addresses avoid it).
+            st = transport::resolve_address(text_of(slot.address.host).c_str(), slot.numeric);
+        }
         transport::Socket s;
-        iec104_status st =
-            transport::connect_tcp(text_of(slot.address.host).c_str(), slot.address.port, s);
+        if (st == IEC104_OK) {
+            st = transport::connect_tcp(slot.numeric.c_str(), slot.address.port, s);
+        }
         auto link = std::make_unique<transport::Link>();
         if (st == IEC104_OK) {
             st = link->init_connecting(id, config, std::move(s), now, slot.tls);
@@ -468,6 +491,15 @@ struct iec104_client : api::CallbackSink {
         for (std::size_t p = 0; p < paths.size(); ++p) {
             if (paths[p].waiting && now >= paths[p].reconnect_at) {
                 open_path(p, now);
+            }
+        }
+        if (!want_started) {
+            // Stopped by the application: a STOPDT that could not be sent at once
+            // (TESTFR open) is sent now.
+            for (const auto& l : links) {
+                if (!l->closed() && l->state() == apci::State::Started) {
+                    (void)l->stop(now);
+                }
             }
         }
         selector->tick(now);
@@ -634,6 +666,49 @@ struct iec104_client : api::CallbackSink {
     }
 };
 
+namespace {
+
+// Checks one path, resolves its name and builds its TLS context (connect_paths()).
+iec104_status make_slot(iec104_client& client, const iec104_path_config& a, std::size_t p,
+                        PathSlot& slot) {
+    if (a.host[0] == '\0' ||
+        std::find(std::begin(a.host), std::end(a.host), '\0') == std::end(a.host)) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    if (a.port == 0U) {
+        return IEC104_ERR_OUT_OF_RANGE;
+    }
+    slot.address = a;
+    // Names are resolved once here: a reconnect inside iec104_client_poll()
+    // must not wait for DNS while the leading path needs service.
+    const std::string host = text_of(slot.address.host);
+    if (transport::resolve_address(host.c_str(), slot.numeric) != IEC104_OK) {
+        // The other paths must not wait for this one: it is tried again at each reconnect.
+        slot.numeric.clear();
+        client.logger().write(IEC104_LOG_ERROR, static_cast<std::uint32_t>(p + 1U),
+                              "path " + std::to_string(p + 1U) + ": cannot resolve " + host +
+                                  ", trying again at each reconnect");
+    }
+    slot.tls = client.tls;
+    if (!client.tls || !client.tls_config) {
+        return IEC104_OK;
+    }
+    // Own TLS context per path: its own session cache (a session of station A
+    // is never offered to station B) and, if given, its own expected peer.
+    iec104_tls_config t = *client.tls_config;
+    const std::string peer = text_of(slot.address.tls_peer_name);
+    const std::string fingerprint = text_of(slot.address.tls_peer_fingerprint);
+    if (!peer.empty()) {
+        put(t.peer_name, peer);
+    }
+    if (!fingerprint.empty()) {
+        put(t.peer_fingerprint, fingerprint);
+    }
+    return api::make_tls_context(transport::TlsRole::Client, &t, client.logger(), slot.tls);
+}
+
+} // namespace
+
 extern "C" {
 
 iec104_status iec104_client_create(const iec104_link_config* config,
@@ -720,12 +795,17 @@ iec104_status iec104_client_stop(iec104_client* client) {
         if (client->closing) {
             return IEC104_ERR_WRONG_STATE;
         }
+        // Deliberate: no switch-over to a path that is about to stop as well.
         client->want_started = false;
+        client->save_leading_stats();
+        client->selector->stop_all("stopped by the application", client->actions);
+        client->run_actions();
         for (const auto& l : client->links) {
             if (!l->closed() && l->state() == apci::State::Started) {
                 (void)l->stop(now);
             }
         }
+        client->report_logical();
         return IEC104_OK;
     }
     transport::Link* link = client->link();
@@ -861,6 +941,11 @@ void iec104_client_close(iec104_client* client) {
     }
     if (client->multi()) {
         // All paths; CLOSED is reported once the last one is closed (next poll).
+        // No switch-over and no path callback: the application ends it.
+        std::vector<session::PathAction> ignored;
+        client->save_leading_stats();
+        client->selector->stop_all("closed by the application", ignored);
+        client->actions.clear();
         client->closing = true;
         for (const auto& l : client->links) {
             l->close();
@@ -888,9 +973,9 @@ iec104_status iec104_client_get_stats(const iec104_client* client, iec104_link_s
     if (client == nullptr || out == nullptr) {
         return IEC104_ERR_INVALID_ARGUMENT;
     }
-    // With paths: the leading one, else any connected one.
+    // With paths: the leading one; while none leads, the last one that led.
     const transport::Link* l = client->link();
-    if (l == nullptr && !client->links.empty()) {
+    if (l == nullptr && !client->multi() && !client->links.empty()) {
         l = client->links.front().get();
     }
     if (l != nullptr) {
@@ -952,34 +1037,19 @@ iec104_status iec104_client_connect_paths(iec104_client* client, const iec104_pa
     if (options != nullptr) {
         o = *options;
     }
+    if (o.reconnect_interval_ms < kMinReconnectMs || o.replay_max_objects == 0U) {
+        return IEC104_ERR_OUT_OF_RANGE;
+    }
     std::vector<PathSlot> slots(count);
     for (std::size_t p = 0; p < count; ++p) {
-        const iec104_path_config& a = paths[p];
-        if (a.host[0] == '\0' ||
-            std::find(std::begin(a.host), std::end(a.host), '\0') == std::end(a.host)) {
-            return IEC104_ERR_INVALID_ARGUMENT;
+        const iec104_status st = make_slot(*client, paths[p], p, slots[p]);
+        if (st != IEC104_OK) {
+            return st;
         }
-        slots[p].address = a;
-        slots[p].address.host[sizeof a.host - 1U] = '\0';
-        slots[p].address.tls_peer_name[sizeof a.tls_peer_name - 1U] = '\0';
-        slots[p].address.tls_peer_fingerprint[sizeof a.tls_peer_fingerprint - 1U] = '\0';
-        slots[p].tls = client->tls;
-        const bool own_peer = a.tls_peer_name[0] != '\0' || a.tls_peer_fingerprint[0] != '\0';
-        if (client->tls && client->tls_config && own_peer) {
-            // TLS settings of the client with the expected peer of this path.
-            iec104_tls_config t = *client->tls_config;
-            if (a.tls_peer_name[0] != '\0') {
-                put(t.peer_name, text_of(slots[p].address.tls_peer_name));
-            }
-            if (a.tls_peer_fingerprint[0] != '\0') {
-                put(t.peer_fingerprint, text_of(slots[p].address.tls_peer_fingerprint));
-            }
-            const iec104_status st = api::make_tls_context(transport::TlsRole::Client, &t,
-                                                           client->logger(), slots[p].tls);
-            if (st != IEC104_OK) {
-                return st;
-            }
-        }
+    }
+    if (std::all_of(slots.begin(), slots.end(),
+                    [](const PathSlot& x) { return x.numeric.empty(); })) {
+        return IEC104_ERR_INVALID_ARGUMENT; // no name resolves: most likely a typing error
     }
     session::PathSettings settings{};
     settings.replay_window_ms = o.replay_window_ms != 0U ? o.replay_window_ms

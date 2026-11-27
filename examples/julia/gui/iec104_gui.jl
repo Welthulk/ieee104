@@ -236,7 +236,11 @@ function cb_client_state(::Ptr{Cvoid}, ::UInt32, state::Cint, reason::Cint)::Cvo
     note("Leitstelle: " * state_text(state) *
          (state == IEC104.LINK_CLOSED ? " – " * close_hint(reason) : "");
          kind = state == IEC104.LINK_CLOSED && reason != 1 ? "warning" : "event")
-    state == IEC104.LINK_CLOSED && (GUI.auto_step = 0)
+    if state == IEC104.LINK_CLOSED
+        GUI.auto_step = 0
+        PATHS.count = 1   # a client with paths has none after its close
+        PATHS.auto = false
+    end
     return nothing
 end
 
@@ -473,6 +477,9 @@ function gui_client_connect(p)
     end
     PATHS.auto = false
     PATHS.switches = 0
+    PATHS.ever_led = false
+    PATHS.series_switches = 0
+    PATHS.count = 1   # until connect_paths succeeded
     cfg = LinkConfig()
     for (k, f) in (("t0", :t0_ms), ("t1", :t1_ms), ("t2", :t2_ms), ("t3", :t3_ms))
         haskey(p, k) && !isempty(p[k]) && setfield!(cfg, f, UInt32(round(p_num(p, k, 0) * 1000)))
@@ -718,7 +725,18 @@ function gui_server_listen(p)
     end
     note("Station" * (two ? " A" : "") * ": lauscht auf $(GUI_ADDRESS[]):$(server_port(GUI.server)), " *
          "gemeinsame Adresse $(GUI.server_station)")
-    two && station_b_start(port_b)
+    if two
+        try
+            station_b_start(port_b)
+        catch e
+            # All or nothing: without station B, station A does not stay half started.
+            server_destroy(GUI.server)
+            GUI.server = C_NULL
+            empty!(GUI.connections)
+            msg = e isa Iec104Error ? e.msg : sprint(showerror, e)
+            throw(ArgumentError("Station B (Port $port_b): $msg – Station A wieder beendet"))
+        end
+    end
 end
 
 function gui_server_point(p)

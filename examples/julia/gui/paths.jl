@@ -20,6 +20,7 @@ using Random
 mutable struct PathTest
     count::Int                   # paths of the test bench: 1 = one connection
     switches::Int                # switch-overs since connecting
+    ever_led::Bool               # some path has led since connecting
     # Station B: second test station with the same points (path 2 inside the GUI)
     server_b::Ptr{Cvoid}
     connections_b::Dict{UInt32,Cint}
@@ -42,10 +43,12 @@ mutable struct PathTest
     series_seen::BitSet
     series_dup::Int
     series_max::Int
+    series_base::Int             # numbers up to here were sent before the last reset
+    series_switches::Int         # switch-overs before the last reset
 end
 
-const PATHS = PathTest(1, 0, C_NULL, Dict(), "ab", false, false, 5.0, 15.0, 0, Xoshiro(0), 0.0, 0,
-                       false, 9000, 200, 0.0, 0, BitSet(), 0, 0)
+const PATHS = PathTest(1, 0, false, C_NULL, Dict(), "ab", false, false, 5.0, 15.0, 0, Xoshiro(0), 0.0, 0,
+                       false, 9000, 200, 0.0, 0, BitSet(), 0, 0, 0, 0)
 const PATH_RECONNECT_MS = 2000   # the GUI shows a lost path coming back soon
 const FAULT_TEXT = Dict(:close => "getrennt", :silent => "stumm geschaltet", :restore => "freigegeben")
 
@@ -56,10 +59,17 @@ function cb_path(::Ptr{Cvoid}, e::Ptr{PathSwitch})::Cvoid
     s = unsafe_load(e)
     reason = unsafe_string(s.reason)
     if s.leading == 0
-        note("Leitstelle: kein Weg mehr gestartet – $reason. Die Library verbindet weiter.";
-             kind = "warning")
-    elseif s.previous == 0 && PATHS.switches == 0
-        note("Leitstelle: Weg $(s.leading) ist führend (erster gestarteter Weg); der andere Weg läuft mit")
+        if occursin("stopped by the application", reason)
+            note("Leitstelle: Datenübertragung auf allen Wegen angehalten (STOPDT); kein Weg führt")
+        else
+            note("Leitstelle: kein Weg mehr gestartet – $reason. Die Library verbindet weiter.";
+                 kind = "warning")
+        end
+    elseif s.previous == 0
+        note("Leitstelle: Weg $(s.leading) ist führend" *
+             (PATHS.ever_led ? " (wieder ein Weg gestartet)" : " (erster gestarteter Weg)") *
+             "; die anderen Wege laufen mit")
+        PATHS.ever_led = true
     else
         PATHS.switches += s.previous != 0 ? 1 : 0
         note("Leitstelle: Umschaltung auf Weg $(s.leading)" *
@@ -77,6 +87,7 @@ end
 function series_seen(ioa, cause, value)
     (ioa == PATHS.series_ioa && cause == 3 && isinteger(value) && value >= 1) || return
     n = Int(value)
+    n > PATHS.series_base || return   # sent before the last reset
     if n in PATHS.series_seen
         PATHS.series_dup += 1
     else
@@ -211,6 +222,7 @@ function gui_series(p)
             end
             GUI.points[UInt32(ioa)] = o
         end
+        PATHS.series_sent = 0   # a new series starts at 1
         series_reset()
         PATHS.series_ioa = UInt32(ioa)
         PATHS.series_ms = ms
@@ -230,18 +242,20 @@ function gui_series(p)
     end
 end
 
+"Counters to 0; the numbers go on, so that numbers still on the way are not miscounted."
 function series_reset()
-    PATHS.series_sent = 0
+    PATHS.series_base = PATHS.series_sent
     empty!(PATHS.series_seen)
     PATHS.series_dup = 0
-    PATHS.series_max = 0
-    PATHS.switches = 0
+    PATHS.series_max = PATHS.series_sent
+    PATHS.series_switches = PATHS.switches
 end
 
-series_missing() = PATHS.series_max - length(PATHS.series_seen)
-series_summary() = "gesendet $(PATHS.series_sent), zugestellt $(length(PATHS.series_seen)), " *
+series_sent() = PATHS.series_sent - PATHS.series_base
+series_missing() = PATHS.series_max - PATHS.series_base - length(PATHS.series_seen)
+series_summary() = "gesendet $(series_sent()), zugestellt $(length(PATHS.series_seen)), " *
                    "fehlend $(series_missing()), doppelt $(PATHS.series_dup), " *
-                   "Umschaltungen $(PATHS.switches)"
+                   "Umschaltungen $(max(0, PATHS.switches - PATHS.series_switches))"
 
 # --- Poll (called by the poll task of the GUI) ----------------------------------------------
 
@@ -290,12 +304,19 @@ end
 # --- State for the page ------------------------------------------------------------------------
 
 function paths_json(io)
-    print(io, ",\"paths\":{\"count\":", PATHS.count, ",\"leading\":",
-          GUI.client == C_NULL || PATHS.count < 2 ? 0 : client_leading_path(GUI.client),
-          ",\"switches\":", PATHS.switches, ",\"list\":[")
+    infos = PathInfo[]
     if GUI.client != C_NULL && PATHS.count >= 2
-        for nr in 1:PATHS.count
-            i = client_path_info(GUI.client, nr)
+        try
+            infos = [client_path_info(GUI.client, nr) for nr in 1:PATHS.count]
+        catch e
+            e isa Iec104Error || rethrow()   # client without paths (closed): no table
+        end
+    end
+    print(io, ",\"paths\":{\"count\":", isempty(infos) ? 1 : PATHS.count, ",\"leading\":",
+          isempty(infos) ? 0 : client_leading_path(GUI.client),
+          ",\"switches\":", PATHS.switches, ",\"list\":[")
+    begin
+        for (nr, i) in enumerate(infos)
             nr > 1 && print(io, ',')
             print(io, "{\"nr\":", nr)
             jfield(io, "addr", IEC104.text(i.host) * ":" * string(i.port))
@@ -310,7 +331,7 @@ function paths_json(io)
     end
     print(io, "],\"auto\":", PATHS.auto, ",\"seed\":", PATHS.seed, ",\"faults\":", PATHS.faults,
           "},\"series\":{\"on\":", PATHS.series_on, ",\"ioa\":", PATHS.series_ioa, ",\"ms\":",
-          PATHS.series_ms, ",\"sent\":", PATHS.series_sent, ",\"delivered\":",
+          PATHS.series_ms, ",\"sent\":", series_sent(), ",\"delivered\":",
           length(PATHS.series_seen), ",\"missing\":", series_missing(), ",\"dup\":", PATHS.series_dup,
           ",\"pending\":", PATHS.series_sent - PATHS.series_max, '}')
 end

@@ -123,8 +123,13 @@ class Link {
     iec104_status start(apci::TimeMs now) noexcept { return conn_.start(now); }
     /** @brief STOPDT act (client). */
     iec104_status stop(apci::TimeMs now) noexcept { return conn_.stop(now); }
-    /** @brief Closes locally; reported as closed on the next service(). */
-    void close() noexcept { conn_.close(); }
+    /**
+     * @brief Closes locally; reported as closed on the next service().
+     *
+     * Also while the TCP connect or the TLS handshake still runs: the link
+     * then ends at once instead of waiting for the connect or t0.
+     */
+    void close() noexcept;
 
     /**
      * @brief Test aid: a silent link neither reads nor writes any more.
