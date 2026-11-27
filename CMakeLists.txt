@@ -86,6 +86,7 @@ add_library(iec104_objects OBJECT
     src/codec/type_table.cpp
     src/session/command_table.cpp
     src/session/command_tracker.cpp
+    src/session/path_selector.cpp
     src/session/process_image.cpp
     src/session/redundancy_group.cpp
     src/session/server_session.cpp
@@ -180,6 +181,7 @@ if(IEC104_BUILD_TESTS)
         tests/test_cp56time2a.cpp
         tests/test_elements.cpp
         tests/test_operation.cpp
+        tests/test_path_selector.cpp
         tests/test_interop_list.cpp
         tests/test_redundancy.cpp
         tests/test_session.cpp

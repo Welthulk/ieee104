@@ -1,6 +1,6 @@
 # TASK-012: Wegeredundanz der Leitstelle
 
-Status: in Arbeit; Entscheidungen D1–D7 am 27.11.2026 wie empfohlen bestätigt · Module: `src/session`, `src/api`, `src/transport`, `include`, `tools/selftest`, `examples/julia`, Doku · Zielversion 0.10.0
+Status: in Arbeit; Entscheidungen D1–D7 am 27.11.2026 wie empfohlen bestätigt · Module: `src/session`, `src/api`, `src/transport`, `include`, `tools/selftest`, `examples/julia`, Doku · Zielversion 1.0.0
 
 ## 1. Ziel
 
@@ -209,7 +209,8 @@ Konfigurationsdatei: `path = host:port` (mehrfach), `path_reconnect`, `path_repl
 - [ ] Test-GUI nach Abschnitt 10; Seitentest in gjs und WebKit; Selbsttest der GUI grün.
 - [ ] Doku nach Abschnitt 11; Doxygen ohne Warnung; Interoperabilitätsliste aktuell.
 - [ ] `debug`, `asan` grün, `clang` ohne Befunde; unabhängige Prüfung.
-- [ ] Lieferung 0.10.0.
+- [ ] Version 1.0.0: SONAME wird `libiec104.so.1` (CMake SOVERSION = Hauptversion); Namen nachziehen in `examples/julia/IEC104.jl`, `tools/make_package.sh`, `packaging/*`, `tests/gui/*.sh`, `tools/gui_screenshot.sh`, README, `docs/06`, `docs/07`, CLAUDE.md.
+- [ ] Lieferung 1.0.0.
 
 ## 13. Reihenfolge
 
