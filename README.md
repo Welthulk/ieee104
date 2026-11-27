@@ -4,7 +4,7 @@
 
 Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
 
-Stand: 27.11.2026, Version 1.0.0, Linux x86-64.
+Stand: 27.11.2026, Version 1.0.1, Linux x86-64.
 
 ## Sofort nutzen, ohne zu bauen
 
@@ -20,7 +20,7 @@ Läuft auf AlmaLinux/RHEL 9, Ubuntu ab 22.04, Debian 12 und unter WSL2 (glibc ab
 Alles auf einmal unter WSL oder Linux ausprobieren: `bash tools/wsl_ausprobieren.sh` (aus einem Windows-Checkout z. B. `bash /mnt/c/<pfad>/tools/wsl_ausprobieren.sh`). Das Skript holt das Repo nach `~/src/iec104`, prüft die Voraussetzungen und nennt fehlende Pakete, testet die fertige Library, baut aus den Quellen und lässt alle Tests laufen; `--ohne-bauen` lässt den letzten Teil weg.
 
 ```bash
-cd dist/iec104-1.0.0-linux-x86_64
+cd dist/iec104-1.0.1-linux-x86_64
 gcc -Iinclude meine_app.c lib/libiec104.so.1 -Wl,-rpath,'$ORIGIN/lib' -o meine_app   # C
 julia julia/server.jl 2404 &                                                       # Julia: Station
 julia julia/client.jl 127.0.0.1 2404                                               # Julia: Leitstelle
@@ -36,6 +36,12 @@ Reiter „Prüfstand“ mit Teststation als Gegenstelle: Befehle mit Laufzeiten 
 | Reiter „Mithören“ (Mitschnitt mit tcpdump oder Wireshark) | Reiter „Station und lib60870“ (Teststation) |
 | --- | --- |
 | ![Mithören](docs/bilder/test_gui_mithoeren.png) | ![Teststation](docs/bilder/test_gui_station.png) |
+
+### Zwei Wege (Wegeredundanz)
+
+![Prüfstand mit zwei Wegen zu Station A und B: Weg 1 getrennt, Weg 2 stumm geschaltet, Reihe ohne fehlende Werte](docs/bilder/test_gui_wege.png)
+
+Die Leitstelle hält zwei Wege zu zwei Stationen mit demselben Prozess. Verwendet wird nur der führende Weg; fällt er aus, übernimmt der andere und liefert nach, was in der Zwischenzeit kam. Hier wurde Weg 1 getrennt (sofort umgeschaltet) und danach Weg 2 stumm geschaltet (umgeschaltet nach t3 + t1, 15 Werte nachgeliefert). Die Reihenprüfung zeigt: 66 gesendet, 66 zugestellt, 0 fehlend. Ablauf zum Nachmachen: `docs/07_Julia.md`, Abschnitt 7.6; Verfahren: `docs/06_Anleitung.md`, „Zwei Wege“.
 
 Bilder neu erzeugen: `tools/gui_screenshot.sh build/shared/libiec104.so.1`.
 

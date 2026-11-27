@@ -252,9 +252,9 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
   </div>
   <div class="row">
     <label>Datenpunkt<select id="ptype" onchange="ranges()"></select></label>
-    <label>IOA<input id="pioa" class="m" value="100"></label>
+    <label title="Informationsobjektadresse: Nummer des Datenpunkts in der Station">IOA (Adresse des Punkts)<input id="pioa" class="m" value="100" oninput="pioaTouched = true"></label>
     <label>Wert <span id="prange" class="hint"></span><input id="pvalue" class="s" value="0"></label>
-    <label>&nbsp;<button class="main" onclick="act('server/point', {type: v('ptype'), ioa: v('pioa'), value: v('pvalue')})">Anlegen / senden</button></label>
+    <label>&nbsp;<button class="main" onclick="createPoint()">Anlegen / senden</button></label>
   </div>
   <div class="scroll"><table>
     <thead><tr><th>IOA</th><th>Typ</th><th>Wert</th><th></th></tr></thead>
@@ -589,6 +589,20 @@ function saveText(text, name, ext = 'txt') {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);   // the download needs the URL a moment longer
 }
+// IOA of a new station point: the next free one after the last created (from 100),
+// filled in automatically until the user types an own one.
+let pioaTouched = false, lastPointIoa = 0;
+function suggestIoa(points) {
+  const used = new Set(points.map(p => p.ioa));
+  let n = lastPointIoa ? lastPointIoa + 1 : 100;
+  while (used.has(n)) n++;
+  return n;
+}
+async function createPoint() {
+  const ioa = Number(v('pioa'));
+  await act('server/point', {type: v('ptype'), ioa: v('pioa'), value: v('pvalue')});
+  if (!document.getElementById('err').textContent) { lastPointIoa = ioa; pioaTouched = false; }
+}
 function sendPoint(ioa, type, delta) {
   const input = document.getElementById('pv' + ioa);
   const value = delta === undefined ? input.value : String(Number(input.value) + delta);
@@ -757,6 +771,8 @@ async function update() {
       `<td><button onclick="sendPoint(${p.ioa}, ${p.type})">Senden</button> ` +
       `<button onclick="sendPoint(${p.ioa}, ${p.type}, 1)">+1</button></td></tr>`).join('');
   }
+  const pioa = document.getElementById('pioa');
+  if (!pioaTouched && document.activeElement !== pioa) pioa.value = suggestIoa(s.server.points);
   const acc = document.getElementById('accept');
   if (document.activeElement !== acc) acc.checked = s.server.accept;
   document.getElementById('conns').textContent =

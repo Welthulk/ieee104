@@ -13,6 +13,8 @@
 #   test_gui_station.png     Reiter „Station und lib60870“ derselben Sitzung
 #   test_gui_mithoeren.png   Reiter „Mithören“ nach Auswertung eines Beispiel-Mitschnitts
 #                            (eigene Sitzung, damit nur mitgehörte Rahmen zu sehen sind)
+#   test_gui_wege.png        Reiter „Prüfstand“ mit zwei Wegen zu Station A und B: Reihe,
+#                            Weg 1 getrennt, Weg 2 stumm, Umschaltungen mit Nachlauf
 # Die GUI läuft auf 127.0.0.1 (freier Port) mit eigenem Home-Ordner (leere Werteliste,
 # die echte bleibt unberührt). Gerendert wird mit WebKitGTK (tools/gui_screenshot.js).
 # Braucht julia, curl, gjs, WebKitGTK 4.0 und ein Display (DISPLAY).
@@ -55,8 +57,8 @@ start_gui() {
 }
 api() { curl -sS --max-time 5 -H 'X-IEC104-GUI: 1' "http://127.0.0.1:$PORT/api/$1" > /dev/null; }
 q() { printf '%s' "$1" | sed 's/ /%20/g'; }
-shot() { # Reiter, Datei
-    gjs "$ROOT/tools/gui_screenshot.js" "http://localhost:$PORT/#$1" "$OUT/$2" 1500 4000 2>&1 |
+shot() { # Reiter, Datei, [JavaScript vor dem Bild]
+    gjs "$ROOT/tools/gui_screenshot.js" "http://localhost:$PORT/#$1" "$OUT/$2" 1500 4000 "${3:-}" 2>&1 |
         grep -v '^libEGL'
 }
 mkdir -p "$OUT"
@@ -105,3 +107,27 @@ start_gui
 api "listen/start?path=$WORK/home/iec104.pcap&port=2404&image=1"
 sleep 1.5
 shot mithoeren test_gui_mithoeren.png
+stop_gui
+
+# --- Sitzung 3: zwei Wege (Station A und B), Reihe, ein Weg getrennt, einer stumm ----------
+start_gui
+api 'server/listen?port=0&station=1&port_b=0'
+PORTS="$(curl -sS -H 'X-IEC104-GUI: 1' "http://127.0.0.1:$PORT/api/state" |
+         grep -o '"port":[0-9]*,"station":1,"accept":[a-z]*,"port_b":[0-9]*')"
+PA="$(echo "$PORTS" | sed 's/^"port":\([0-9]*\).*/\1/')"
+PB="$(echo "$PORTS" | sed 's/.*"port_b":\([0-9]*\)$/\1/')"
+api 'server/point?type=13&ioa=2001&value=230.4'
+api 'server/point?type=1&ioa=1001&value=1'
+# Kurze Timer: ein stummer Weg fällt nach t3 + t1 = 3 s auf.
+api "client/connect?host=127.0.0.1&port=$PA&port2=$PB&station=1&auto=1&t1=2&t2=1&t3=1"
+sleep 2
+api 'series?do=start&ioa=9000&ms=200'
+sleep 3
+api 'client/path?nr=1&fault=close'      # sofort bemerkt: Weg 2 übernimmt
+sleep 4
+api 'client/path?nr=2&fault=silent'     # erst nach t3 + t1: Weg 1 übernimmt mit Nachlauf
+sleep 6
+api 'series?do=stop'
+sleep 1
+# Unter Telegramme nur die Ereignisse (Umschaltungen, Störungen), keine Rahmen.
+shot pruef test_gui_wege.png "document.getElementById('showframes').checked = false; renderLog();"

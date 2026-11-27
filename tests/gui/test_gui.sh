@@ -292,10 +292,10 @@ if [ -n "$LIB60870" ]; then
     act 'peer/start?prog=simple_client'
     wait_state 20 "simple_client: Verbindung, STARTDT, Generalabfrage" "$S" \
         '"text":"lib60870: Connected!"' '"text":"lib60870: Received STARTDT_CON"' \
-        '"text":"Station: Verbindung [0-9]+ Datenübertragung läuft"' \
-        '"text":"Station: Generalabfrage \(Typ 100, Ursache 6\) von Verbindung [0-9]+"' \
+        '"text":"Station( A)?: Verbindung [0-9]+ Datenübertragung läuft"' \
+        '"text":"Station( A)?: Generalabfrage \(Typ 100, Ursache 6\) von Verbindung [0-9]+"' \
         '"text":"lib60870: RECVD ASDU type: M_ME_NC_1\(13\)' \
-        '"text":"Station: Testbefehl mit Zeitmarke \(Typ 107'
+        '"text":"Station( A)?: Testbefehl mit Zeitmarke \(Typ 107'
     wait_state 15 "simple_client endet von selbst" "$S" '"peer":\{[^}]*"running":false' \
         '"text":"lib60870: simple_client beendet, Rückgabe 0"'
 
@@ -305,7 +305,7 @@ if [ -n "$LIB60870" ]; then
     wait_state 15 "cs104_client_async: STARTDT, Generalabfrage" "$S" \
         '"peer":\{[^}]*"running":true,"program":"cs104_client_async"' \
         '"text":"lib60870: Received STARTDT_CON"' \
-        '"text":"Station: Generalabfrage \(Typ 100, Ursache 6\) von Verbindung [0-9]+"'
+        '"text":"Station( A)?: Generalabfrage \(Typ 100, Ursache 6\) von Verbindung [0-9]+"'
     act 'peer/stop'
     wait_state 8 "cs104_client_async beendet" "$S" '"peer":\{[^}]*"running":false' \
         '"text":"lib60870: cs104_client_async beendet, '

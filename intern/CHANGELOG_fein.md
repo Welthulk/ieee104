@@ -1,5 +1,14 @@
 # Änderungen – ausführlich (nur intern, nicht im öffentlichen Repo)
 
+## 1.0.1 (27.11.2026)
+
+| Bereich | Änderung |
+| --- | --- |
+| Doku | Bild test_gui_wege.png (Sitzung 3 in tools/gui_screenshot.sh, nur Ereignisse per Seitenskript); README-Abschnitt „Zwei Wege“; docs/07 7.6 als Tabelle Tun/Sehen (Nutzer verstand „Reihe starten, dann trennen“ nicht) |
+| Test-GUI | Ereignisse der ersten Station „Station A“, solange Station B läuft |
+| Test-GUI | Teststation: IOA-Feld schlägt die nächste freie IOA nach der zuletzt angelegten vor (ab 100), bis man selbst tippt; Beschriftung „IOA (Adresse des Punkts)“ (Wunsch des Nutzers); Seitentest prüft den Vorschlag |
+| Hinweis | Meldung „Kein lib60870-Ordner angegeben“ beim Nutzer kam von meinem Startbefehl ohne dritten Parameter, nicht von 1.0.0; Paket mit Ordner: 27/27 |
+
 ## 1.0.0 (27.11.2026)
 
 | Bereich | Änderung |

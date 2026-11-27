@@ -356,13 +356,16 @@ function cb_command_result(::Ptr{Cvoid}, station::UInt16, cmd::Ptr{Object}, resu
     return nothing
 end
 
+"Name of the first test station in events: \"Station A\" while station B runs."
+station_name() = PATHS.server_b != C_NULL ? "Station A" : "Station"
+
 function cb_server_state(::Ptr{Cvoid}, conn::UInt32, state::Cint, reason::Cint)::Cvoid
     if state == IEC104.LINK_CLOSED
         delete!(GUI.connections, conn)
-        note("Station: Verbindung $conn getrennt – " * close_hint(reason))
+        note(station_name() * ": Verbindung $conn getrennt – " * close_hint(reason))
     else
         GUI.connections[conn] = state
-        note("Station: Verbindung $conn " * state_text(state))
+        note(station_name() * ": Verbindung $conn " * state_text(state))
     end
     return nothing
 end
@@ -371,7 +374,7 @@ function cb_server_command(::Ptr{Cvoid}, conn::UInt32, info::Ptr{AsduInfo}, cmd:
     i = unsafe_load(info)
     c = unsafe_load(cmd)
     what = i.type == 103 ? "Uhrzeit" : "Befehl Typ $(i.type) IOA $(c.ioa) $(value_text(c))"   # "Select" is part of the value text
-    note("Station: $what von Verbindung $conn: " * (GUI.accept_commands ? "angenommen" : "abgelehnt"))
+    note(station_name() * ": $what von Verbindung $conn: " * (GUI.accept_commands ? "angenommen" : "abgelehnt"))
     return Cint(GUI.accept_commands ? 1 : 0)
 end
 
@@ -384,7 +387,7 @@ function cb_server_asdu(::Ptr{Cvoid}, conn::UInt32, asdu::Ptr{UInt8}, len::Csize
     type = unsafe_load(asdu, 1)
     what = get(REQUESTS, Int(type), nothing)
     what === nothing && return nothing
-    note("Station: $what (Typ $type, Ursache $(unsafe_load(asdu, 3) & 0x3f)) von Verbindung $conn")
+    note(station_name() * ": $what (Typ $type, Ursache $(unsafe_load(asdu, 3) & 0x3f)) von Verbindung $conn")
     return nothing
 end
 

@@ -1,5 +1,11 @@
 # Änderungen
 
+## 1.0.1 (27.11.2026)
+
+- Bild und Schritt-für-Schritt-Anleitung „Zwei Wege“ in README und `docs/07_Julia.md`.
+- Test-GUI: Meldungen der ersten Station heißen „Station A“, sobald Station B läuft.
+- Teststation: die IOA eines neuen Datenpunkts wird vorgeschlagen (nächste freie), eigene Eingabe gilt.
+
 ## 1.0.0 (27.11.2026)
 
 - Wegeredundanz: Eine Leitstelle hält bis zu vier Wege zu Stationen mit demselben Prozess. Fällt der führende Weg aus, übernimmt ein anderer ohne Verlust von Meldungen (`iec104_client_connect_paths()`, `docs/06_Anleitung.md`).

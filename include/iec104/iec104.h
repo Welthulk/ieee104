@@ -63,7 +63,7 @@ extern "C" {
 /** @brief Minor version of this header. Compatible additions increment it. */
 #define IEC104_VERSION_MINOR 0
 /** @brief Patch version of this header. Fixes without API change increment it. */
-#define IEC104_VERSION_PATCH 0
+#define IEC104_VERSION_PATCH 1
 
 /**
  * @brief Default TCP port of an IEC 60870-5-104 connection without TLS.

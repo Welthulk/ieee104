@@ -9,7 +9,7 @@ Julia ruft die C-Schnittstelle direkt mit `ccall` auf. Es gibt kein Paket zu ins
 Binärpaket `iec104-<version>-linux-x86_64.zip` entpacken, dann:
 
 ```bash
-cd iec104-1.0.0-linux-x86_64
+cd iec104-1.0.1-linux-x86_64
 julia julia/server.jl 2404 &             # Station 1, Messwert IOA 100, steigt jede Sekunde
 julia julia/client.jl 127.0.0.1 2404     # Generalabfrage, danach drei spontane Werte
 ```
@@ -340,13 +340,21 @@ Nur dort mithören, wo es erlaubt ist.
 
 ### 7.6 Zwei Wege
 
-Ausprobieren ohne zweite echte Station:
+Zwei Wege heißt: Die Leitstelle ist mit zwei Stationen verbunden, die denselben Prozess melden (z. B. zwei Vorrechner einer Anlage). Sie verwendet die Meldungen nur eines Wegs, des **führenden**; der andere **läuft mit**. Fällt der führende Weg aus, übernimmt der andere, ohne dass Meldungen fehlen. Die GUI spielt beide Stationen selbst (Station A und Station B), deshalb braucht man zum Ausprobieren kein Gerät.
 
-1. Reiter „Station“: Port 2404, **Port Station B** 2405, „Starten“. Station B hat dieselben Datenpunkte; eine Wertänderung geht an beide („Wertänderung an“ = beide; „nur A“/„nur B“ erzeugt absichtlich eine Abweichung).
-2. Reiter „Prüfstand“: Port 2404, **Weg 2: Port** 2405, „Verbinden“. Für schnelles Umschalten bei „stumm“ unter „Timer …“ t1 = 2 und t3 = 1 eintragen.
-3. Bereich „Wege und Reihenprüfung“: Tabelle der Wege; je Weg „trennen“, „stumm“, „freigeben“.
-4. „Reihe starten“: beide Stationen senden IOA 9000 = 1, 2, 3 … Die Zeile darunter zeigt gesendet, zugestellt, fehlend, doppelt; **fehlend muss 0 bleiben**.
-5. „zufällig stören“: alle von–bis Sekunden wird ein Weg getrennt oder stumm geschaltet, nie beide zugleich (abschaltbar). Der Startwert steht im Protokoll; mit demselben Startwert wiederholt sich der Lauf.
+Damit man sieht, dass beim Umschalten nichts fehlt, gibt es die **Reihe**: Beide Stationen senden auf IOA 9000 die Zahlen 1, 2, 3, … (alle 200 ms eine). Die Leitstelle zählt, welche Zahlen bei ihr ankommen. Fehlt eine, steht unter „fehlend“ eine Zahl größer 0.
+
+| Nr | Tun | Sehen |
+| --- | --- | --- |
+| 1 | Reiter „Station und lib60870“: Port `2404`, Port Station B `2405`, „Starten“ | Kopfzeile „Port 2404 und 2405 (B), Station 1“ |
+| 2 | Reiter „Prüfstand“: Port `2404`; „Weg 2: Port“ `2405`; „Timer, Fenster, Befehle, TLS“ aufklappen, t1 = `2`, t3 = `1`; „Verbinden“ | Bereich „Wege und Reihenprüfung“: zwei Zeilen, beide „Datenübertragung läuft“; Weg 1 „führend“, Weg 2 „läuft mit“ |
+| 3 | im selben Bereich „Reihe starten“ | Zeile rechts daneben: „läuft: gesendet …, zugestellt …, fehlend 0“; die Zahlen steigen |
+| 4 | in der Zeile von Weg 1 „trennen“ | sofort: Weg 2 „führend“, oben rechts „1 Umschaltungen“; nach 2 s ist Weg 1 wieder da und „läuft mit“; fehlend bleibt 0 |
+| 5 | in der Zeile von Weg 2 (jetzt führend) „stumm“ | etwa 3 s passiert nichts (der Weg schweigt, die Library merkt es erst über t3 und t1), dann führt Weg 1; Spalte „nachgeliefert“ von Weg 1 steigt; fehlend bleibt 0 |
+| 6 | „Anhalten“ | „angehalten: gesendet N, zugestellt N, fehlend 0“ |
+| 7 | optional „zufällig stören“ einschalten, eine Minute warten, wieder ausschalten | unter Telegramme „Störung 1 (zufällig, Startwert …)“ usw.; fehlend bleibt 0, doppelt darf größer 0 sein |
+
+Unter „Telegramme und Ereignisse“ den Haken „Rahmen“ entfernen: dann stehen dort nur die Ereignisse, u. a. jede Umschaltung mit Grund.
 
 | Spalte | Bedeutung |
 | --- | --- |
@@ -356,4 +364,6 @@ Ausprobieren ohne zweite echte Station:
 | nachgeliefert, unterdrückt | bei Umschaltungen auf diesen Weg aus dem Puffer zugestellt bzw. schon bekannt |
 | verloren | aus dem Puffer gefallen (Fenster zu kurz); muss 0 sein |
 
-Unter „Telegramme“ stehen die Rahmen mit „Leitstelle Weg 1“/„Weg 2“ und jede Umschaltung mit Grund. Verfahren: `docs/06_Anleitung.md`, Abschnitt 6, „Zwei Wege“.
+Unter „Telegramme“ stehen die Rahmen mit „Leitstelle Weg 1“/„Weg 2“ und jede Umschaltung mit Grund.
+
+![Reiter Prüfstand mit zwei Wegen: Weg 1 getrennt, Weg 2 stumm; Reihe ohne fehlende Werte; Umschaltungen unter Telegramme (nur Ereignisse)](bilder/test_gui_wege.png) Verfahren: `docs/06_Anleitung.md`, Abschnitt 6, „Zwei Wege“.

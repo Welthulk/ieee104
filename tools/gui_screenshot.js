@@ -7,13 +7,15 @@
 // offscreen window and writes the whole page as PNG. Console messages of the
 // page (JavaScript errors) go to stdout. Started by tools/gui_screenshot.sh.
 //
-//   gjs tools/gui_screenshot.js URL OUT.png [WIDTH] [WAIT_MS]
+//   gjs tools/gui_screenshot.js URL OUT.png [WIDTH] [WAIT_MS] [SCRIPT]
+//
+// SCRIPT: JavaScript run in the page before the snapshot (e.g. to set a filter).
 imports.gi.versions.Gtk = '3.0';
 imports.gi.versions.WebKit2 = '4.0';
 const {Gtk, WebKit2, GLib} = imports.gi;
 const System = imports.system;
 
-const [url, out, width = '1500', wait = '4000'] = ARGV;
+const [url, out, width = '1500', wait = '4000', script = ''] = ARGV;
 Gtk.init(null);
 const win = new Gtk.OffscreenWindow();
 const view = new WebKit2.WebView();
@@ -25,6 +27,8 @@ let rc = 1;
 view.connect('load-changed', (v, event) => {
     if (event !== WebKit2.LoadEvent.FINISHED) return;
     GLib.timeout_add(GLib.PRIORITY_DEFAULT, Number(wait), () => {
+        if (script) view.run_javascript(script, null, null);
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, script ? 500 : 0, () => {
         view.get_snapshot(WebKit2.SnapshotRegion.FULL_DOCUMENT, WebKit2.SnapshotOptions.NONE, null,
             (src, res) => {
                 try {
@@ -37,6 +41,8 @@ view.connect('load-changed', (v, event) => {
                 }
                 Gtk.main_quit();
             });
+        return false;
+        });
         return false;
     });
 });

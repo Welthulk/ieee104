@@ -117,6 +117,7 @@ async function main() {
   await api.act('server/point', {type: 13, ioa: 100, value: 4.5});
   await api.act('server/point', {type: 1, ioa: 1001, value: 0});
   await tick('Station');
+  const suggested = String(els['pioa'].value);   // next free IOA after 100 (1001 also used)
   const sport = (els['sstate'].textContent.match(/Port (\d+)/) || [])[1];
   const sportb = (els['sstate'].textContent.match(/und (\d+) \(B\)/) || [])[1];
   print('Station: ' + els['sstate'].textContent);
@@ -160,6 +161,7 @@ async function main() {
   const expect = (ok, what) => { if (!ok) errors.push('erwartet: ' + what); };
   expect(/^Port \d+ und \d+ \(B\), Station 1$/.test(els['sstate'].textContent), 'Station A und B laufen');
   expect(twoPaths, 'zwei Wege, einer führend');
+  expect(suggested === '101', 'nächste freie IOA vorgeschlagen (101), erhalten ' + suggested);
   expect(/Umschaltungen$/.test(els['pathstate'].textContent) && !/ 0 Umschaltungen$/.test(els['pathstate'].textContent),
          'Umschaltung nach dem Trennen');
   expect(/^läuft, Startwert 7, \d+ Störungen$/.test(autoText), 'zufällige Störungen mit Startwert');
