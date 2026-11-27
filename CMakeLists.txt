@@ -182,6 +182,7 @@ if(IEC104_BUILD_TESTS)
         tests/test_elements.cpp
         tests/test_operation.cpp
         tests/test_path_selector.cpp
+        tests/test_paths.cpp
         tests/test_interop_list.cpp
         tests/test_redundancy.cpp
         tests/test_session.cpp

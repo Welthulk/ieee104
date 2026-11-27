@@ -126,6 +126,17 @@ class Link {
     /** @brief Closes locally; reported as closed on the next service(). */
     void close() noexcept { conn_.close(); }
 
+    /**
+     * @brief Test aid: a silent link neither reads nor writes any more.
+     *
+     * The socket stays open and the timers keep running, so the state
+     * machine sees what a broken network path looks like: no answers, no
+     * acknowledgements, and finally t1. Used to test path redundancy.
+     */
+    void set_silent(bool silent) noexcept { silent_ = silent; }
+    /** @brief True while the link is silent (see set_silent()). */
+    [[nodiscard]] bool silent() const noexcept { return silent_; }
+
     /** @brief Earliest time service() must run even without socket activity. */
     [[nodiscard]] apci::TimeMs next_deadline() const noexcept;
 
@@ -183,6 +194,7 @@ class Link {
     LinkCloseReason close_reason_{LinkCloseReason::None};
     apci::CloseReason protocol_reason_{apci::CloseReason::None};
     bool reported_closed_{false};
+    bool silent_{false}; // test aid, see set_silent()
     LinkSink* trace_sink_{nullptr};
 
     // Bytes taken from the state machine but not yet accepted by the socket.

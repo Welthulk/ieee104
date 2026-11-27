@@ -22,6 +22,7 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -157,6 +158,84 @@ iec104_status parse_group(const std::string& value, iec104_config& c) {
     return IEC104_OK;
 }
 
+/**
+ * @brief "path = host:port [peer_name [fingerprint]]": appends a path of a client.
+ *
+ * IPv6 addresses are written in brackets: "[2001:db8::1]:2404".
+ */
+iec104_status parse_client_path(const std::string& value, iec104_config& c) {
+    if (c.path_count >= IEC104_MAX_PATHS) {
+        return IEC104_ERR_OUT_OF_RANGE;
+    }
+    std::vector<std::string> words;
+    std::size_t pos = 0;
+    while (pos < value.size()) {
+        const std::size_t end = value.find_first_of(" \t", pos);
+        std::string w = value.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        pos = end == std::string::npos ? value.size() : end + 1U;
+        if (!w.empty()) {
+            words.push_back(std::move(w));
+        }
+    }
+    if (words.empty() || words.size() > 3U) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    const std::string& address = words[0];
+    const std::size_t colon = address.rfind(':');
+    if (colon == std::string::npos || colon == 0U) {
+        return IEC104_ERR_INVALID_ARGUMENT;
+    }
+    std::string host = address.substr(0, colon);
+    if (host.size() > 2U && host.front() == '[' && host.back() == ']') {
+        host = host.substr(1, host.size() - 2U);
+    } else if (host.find(':') != std::string::npos) {
+        return IEC104_ERR_INVALID_ARGUMENT; // IPv6 without brackets
+    }
+    iec104_path_config p{};
+    iec104_status st = parse_text(host, p.host);
+    if (st == IEC104_OK) {
+        st = parse_small(address.substr(colon + 1U), 65535, p.port);
+    }
+    if (st == IEC104_OK && words.size() > 1U) {
+        st = parse_text(words[1], p.tls_peer_name);
+    }
+    if (st == IEC104_OK && words.size() > 2U) {
+        st = parse_text(words[2], p.tls_peer_fingerprint);
+    }
+    if (st != IEC104_OK) {
+        return st;
+    }
+    c.paths[c.path_count++] = p;
+    return IEC104_OK;
+}
+
+/** @brief Applies one key of a client with paths ("path..."). */
+iec104_status apply_path(const std::string& key, const std::string& value, iec104_config& c) {
+    iec104_path_options& o = c.path_options;
+    if (key == "path") {
+        return parse_client_path(value, c);
+    }
+    if (key == "path_reconnect") {
+        return parse_seconds(value, o.reconnect_interval_ms);
+    }
+    if (key == "path_replay_window") {
+        return parse_seconds(value, o.replay_window_ms);
+    }
+    if (key == "path_replay_tolerance") {
+        return parse_seconds(value, o.replay_tolerance_ms);
+    }
+    if (key == "path_replay_max") {
+        return parse_small(value, 1000000, o.replay_max_objects);
+    }
+    if (key == "path_interrogation") {
+        return parse_flag(value, o.interrogation_after_switch);
+    }
+    if (key == "path_prefer_first") {
+        return parse_flag(value, o.prefer_first_path);
+    }
+    return IEC104_ERR_INVALID_ARGUMENT;
+}
+
 /** @brief Applies one TLS key ("tls_..."); IEC104_ERR_INVALID_ARGUMENT for an unknown key. */
 iec104_status apply_tls(const std::string& key, const std::string& value, const std::string& base,
                         iec104_tls_config& t) {
@@ -261,6 +340,9 @@ iec104_status apply(const std::string& key, const std::string& value, const std:
     if (key.compare(0, 4, "tls_") == 0) {
         return apply_tls(key, value, base, c.tls);
     }
+    if (key.compare(0, 4, "path") == 0) {
+        return apply_path(key, value, c);
+    }
     if (key == "host") {
         return parse_text(value, c.host);
     }
@@ -319,6 +401,7 @@ void iec104_config_init(iec104_config* config) {
     iec104_server_options_init(&config->server);
     iec104_client_options_init(&config->client);
     iec104_tls_config_init(&config->tls);
+    iec104_path_options_init(&config->path_options);
     config->port = IEC104_DEFAULT_PORT;
 }
 

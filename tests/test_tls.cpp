@@ -303,6 +303,37 @@ TEST_F(Tls, PeerName) {
     EXPECT_TRUE(cli_.has(IEC104_SECURITY_CERTIFICATE_REJECTED, "mismatch")) << cli_.text();
 }
 
+// Paths: the expected peer name can differ per path; a path without its own
+// name uses the one of the client settings. Here the client expects
+// "other.test", path 1 "localhost": only path 1 gets through.
+TEST_F(Tls, PeerNamePerPath) {
+    const iec104_tls_config s = tls_with("server");
+    start_server(&s);
+    const iec104_callbacks cb = cli_.callbacks();
+    ASSERT_EQ(iec104_client_create(nullptr, &cb, &client_), IEC104_OK);
+    iec104_tls_config c = tls_with("client");
+    put(c.peer_name, "other.test");
+    ASSERT_EQ(iec104_client_set_tls(client_, &c), IEC104_OK);
+    iec104_path_config paths[2]{};
+    for (iec104_path_config& p : paths) {
+        put(p.host, "127.0.0.1");
+        p.port = iec104_server_port(server_);
+    }
+    put(paths[0].tls_peer_name, "localhost");
+    ASSERT_EQ(iec104_client_connect_paths(client_, paths, 2, nullptr), IEC104_OK);
+    ASSERT_EQ(iec104_client_start(client_), IEC104_OK);
+    ASSERT_TRUE(run_until([&] { return iec104_client_leading_path(client_) == 1U; }))
+        << cli_.text();
+    iec104_path_info i{};
+    ASSERT_TRUE(run_until([&] {
+        return iec104_client_get_path_info(client_, 2, &i) == IEC104_OK &&
+               i.last_close == IEC104_CLOSE_TLS;
+    })) << cli_.text();
+    EXPECT_TRUE(cli_.has(IEC104_SECURITY_CERTIFICATE_REJECTED, "mismatch")) << cli_.text();
+    iec104_tls_info info{};
+    EXPECT_EQ(iec104_client_get_tls_info(client_, &info), IEC104_OK); // of the leading path
+}
+
 // Pinning: the peer certificate must have the configured fingerprint (any
 // notation of the hex value).
 TEST_F(Tls, PeerFingerprint) {

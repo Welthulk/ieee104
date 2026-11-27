@@ -67,6 +67,9 @@ short Link::poll_events() const noexcept {
     case Phase::Open:
         break;
     }
+    if (silent_) {
+        return 0; // test aid: nothing is read or written
+    }
     const bool tls_wants_write = tls_ != nullptr && (tls_->poll_events() & POLLOUT) != 0;
     return static_cast<short>(POLLIN | (pending_fill_ > 0U || tls_wants_write ? POLLOUT : 0));
 }
@@ -114,8 +117,10 @@ void Link::service(short revents, apci::TimeMs now, LinkSink& sink) noexcept {
     // TLS: data that arrived with the end of the handshake is already
     // buffered inside the TLS session, and a renegotiation may need a
     // writable socket to go on reading.
+    // A silent link (test aid) reads nothing; only its timers run.
     const bool readable = (revents & (POLLIN | POLLHUP | POLLERR)) != 0;
-    if (readable || (tls_ != nullptr && (just_opened || (revents & POLLOUT) != 0))) {
+    const bool tls_read = tls_ != nullptr && (just_opened || (revents & POLLOUT) != 0);
+    if (!silent_ && (readable || tls_read)) {
         read_input(now, sink);
         if (reported_closed_) {
             return;
@@ -278,6 +283,9 @@ void Link::dispatch_events(LinkSink& sink) noexcept {
 }
 
 void Link::flush_output() noexcept {
+    if (silent_) {
+        return; // test aid: the output stays in the state machine
+    }
     pending_fill_ +=
         conn_.take_output(pending_.data() + pending_fill_, pending_.size() - pending_fill_);
     std::size_t written = 0;

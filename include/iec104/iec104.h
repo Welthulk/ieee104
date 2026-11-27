@@ -1075,6 +1075,152 @@ IEC104_API iec104_status iec104_client_get_tls_info(const iec104_client* client,
                                                     iec104_tls_info* out);
 
 /* ------------------------------------------------------------------------- */
+/* Client with several paths (path redundancy)                               */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * A client can hold up to IEC104_MAX_PATHS connections ("paths") to
+ * stations that carry the same process, e.g. two front ends of one
+ * substation (docs/05_Normfragen_und_Festlegungen.md, E11 and E12). All
+ * paths are connected and started; the application sees one logical
+ * connection (id 1):
+ *
+ * - Only the leading path is delivered (on_asdu, on_object). The first path
+ *   that reaches STARTED leads.
+ * - If the leading path leaves STARTED (closed, t1, TLS error, ...), the next
+ *   started path takes over at once. What it received in the time the
+ *   failure needed to be detected is delivered afterwards (replay), then a
+ *   general interrogation runs on it. There is no switch back unless
+ *   prefer_first_path is set.
+ * - Lost paths are connected again every reconnect_interval_ms, without end.
+ * - Commands, reads and interrogations go over the leading path; a command
+ *   open at a switch-over ends with IEC104_COMMAND_CONNECTION_LOST and is not
+ *   repeated. Clock synchronization goes to all started paths.
+ * - on_state reports the logical state with connection id 1: STARTED while a
+ *   path leads, CONNECTING (or STOPPED, ...) while none does, CLOSED only
+ *   after iec104_client_close().
+ * - Every switch-over is logged and reported via iec104_client_set_path_callback().
+ *   The frame trace of the log uses the path number as connection id.
+ */
+
+/** @brief Most paths of one client. */
+#define IEC104_MAX_PATHS 4
+
+/** @brief Address of one path. */
+typedef struct iec104_path_config {
+    char host[256]; /**< Name or address of the station. */
+    uint16_t port;  /**< TCP port, e.g. IEC104_DEFAULT_PORT. */
+    /** TLS: expected peer name of this path, "" = as in iec104_tls_config. */
+    char tls_peer_name[256];
+    /** TLS: expected peer fingerprint of this path, "" = as in iec104_tls_config. */
+    char tls_peer_fingerprint[128];
+} iec104_path_config;
+
+/** @brief Behaviour of a client with several paths. */
+typedef struct iec104_path_options {
+    uint32_t
+        reconnect_interval_ms; /**< Wait before a lost path is connected again, default 5000. */
+    /** Objects of following paths are kept this long for the replay; 0 (default) = t1 + t3 + 5 s.
+     */
+    uint32_t replay_window_ms;
+    uint32_t replay_max_objects; /**< At most this many per path, default 10000. */
+    uint32_t
+        replay_tolerance_ms; /**< Arrival times of the paths may differ this much, default 500. */
+    int interrogation_after_switch; /**< 1 (default): general interrogation after a switch-over. */
+    int prefer_first_path; /**< 1: path 1 leads again as soon as it is started; default 0. */
+} iec104_path_options;
+
+/** @brief Fills @p options with the defaults. Does nothing for NULL. */
+IEC104_API void iec104_path_options_init(iec104_path_options* options);
+
+/**
+ * @brief Starts connecting all paths; completion of each is logged, the
+ *        logical state is reported via on_state (id 1).
+ *
+ * Call iec104_client_start() once: every path is started as soon as it is
+ * connected, now and after each reconnect. TLS (iec104_client_set_tls())
+ * must be set before.
+ *
+ * @param client  The client, without connection.
+ * @param paths   @p count addresses.
+ * @param count   1..IEC104_MAX_PATHS.
+ * @param options NULL = defaults (iec104_path_options_init()).
+ * @return IEC104_OK (a path whose connect fails at once is retried later);
+ *         IEC104_ERR_INVALID_ARGUMENT for NULL, a bad count or an empty host;
+ *         IEC104_ERR_WRONG_STATE if a connection exists; the status of
+ *         iec104_client_set_tls() if a TLS setting of a path is invalid.
+ */
+IEC104_API iec104_status iec104_client_connect_paths(iec104_client* client,
+                                                     const iec104_path_config* paths, size_t count,
+                                                     const iec104_path_options* options);
+
+/** @brief The leading path, 1..count; 0 if none leads or the client has no paths. */
+IEC104_API uint32_t iec104_client_leading_path(const iec104_client* client);
+
+/** @brief State and counters of one path. */
+typedef struct iec104_path_info {
+    char host[256];                 /**< As configured. */
+    uint16_t port;                  /**< As configured. */
+    iec104_link_state state;        /**< CLOSED while waiting for the reconnect. */
+    iec104_close_reason last_close; /**< Why the path was closed last, NONE if never. */
+    int leading;                    /**< 1 if this path is delivered. */
+    int silent;                     /**< 1 while silenced with iec104_client_disturb_path(). */
+    uint64_t connects;              /**< Connect attempts. */
+    uint64_t became_leading;        /**< Times this path became leading. */
+    uint64_t followed;              /**< Objects received while following. */
+    uint64_t replayed;              /**< Objects delivered afterwards at a switch-over. */
+    uint64_t suppressed;            /**< Buffered objects not delivered (already known). */
+    uint64_t dropped;               /**< Objects dropped from the buffer (window or size). */
+    uint32_t buffered;              /**< Objects kept for a replay now. */
+    iec104_link_stats stats;        /**< Counters of the current connection (zero without). */
+} iec104_path_info;
+
+/**
+ * @brief State and counters of path @p path (1..count).
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL or an unknown path;
+ *         IEC104_ERR_WRONG_STATE if the client has no paths.
+ */
+IEC104_API iec104_status iec104_client_get_path_info(const iec104_client* client, uint32_t path,
+                                                     iec104_path_info* out);
+
+/** @brief A switch-over of the leading path. */
+typedef struct iec104_path_switch {
+    uint32_t leading;    /**< New leading path; 0 = no path is started any more. */
+    uint32_t previous;   /**< Former leading path, 0 if none. */
+    uint32_t replayed;   /**< Objects delivered afterwards from the new path. */
+    uint32_t suppressed; /**< Buffered objects not delivered (already known). */
+    uint32_t dropped;    /**< Objects lost from the buffer (window or size too small). */
+    const char* reason;  /**< e.g. "path 1 closed: t1 timeout"; valid only during the call. */
+} iec104_path_switch;
+
+/**
+ * @brief Called from inside iec104_client_poll() at every switch-over, before
+ *        the replayed objects are delivered.
+ */
+typedef void (*iec104_path_fn)(void* user, const iec104_path_switch* event);
+
+/** @brief Sets the path callback (NULL = off). */
+IEC104_API void iec104_client_set_path_callback(iec104_client* client, iec104_path_fn fn,
+                                                void* user);
+
+/** @brief Faults for tests, see iec104_client_disturb_path(). */
+/* NOLINTNEXTLINE(cppcoreguidelines-use-enum-class) */
+typedef enum iec104_path_fault {
+    IEC104_PATH_CLOSE = 0,  /**< Close the connection; it is connected again later. */
+    IEC104_PATH_SILENT = 1, /**< Neither read nor write; the timers end it (t1). */
+    IEC104_PATH_RESTORE = 2 /**< End SILENT; connect a closed path now. */
+} iec104_path_fault;
+
+/**
+ * @brief Test aid: disturbs one path as a network fault would.
+ * @return IEC104_OK; IEC104_ERR_INVALID_ARGUMENT for NULL, an unknown path or
+ *         fault; IEC104_ERR_WRONG_STATE if the client has no paths or (CLOSE,
+ *         SILENT) the path has no connection.
+ */
+IEC104_API iec104_status iec104_client_disturb_path(iec104_client* client, uint32_t path,
+                                                    iec104_path_fault fault);
+
+/* ------------------------------------------------------------------------- */
 /* Configuration file                                                        */
 /* ------------------------------------------------------------------------- */
 
@@ -1093,6 +1239,10 @@ typedef struct iec104_config {
     /** Redundancy groups of a server, for iec104_server_add_group(). */
     iec104_group_config groups[IEC104_CONFIG_MAX_GROUPS];
     uint32_t group_count; /**< Used entries of @p groups. */
+    /** Paths of a client, for iec104_client_connect_paths(). */
+    iec104_path_config paths[IEC104_MAX_PATHS];
+    uint32_t path_count;              /**< Used entries of @p paths. */
+    iec104_path_options path_options; /**< Behaviour of a client with paths. */
 } iec104_config;
 
 /** @brief Defaults of all parts (standard values, host "", port 2404). Does nothing for NULL. */
@@ -1115,13 +1265,14 @@ IEC104_API void iec104_config_init(iec104_config* config);
  * | event_buffer_size, overflow ("drop_oldest", "reject") | server; also for the groups |
  * | group | one redundancy group per line: addresses separated by blanks or commas, "*" = any |
  * | confirmation_timeout, termination_timeout, expect_termination | client (s) |
- * | tls | use_tls |
- * | tls_ca, tls_certificate, tls_key, tls_crl | tls (files) |
- * | tls_key_password, tls_peer_name, tls_peer_fingerprint | tls |
- * | tls_min_version, tls_max_version | tls ("1.2", "1.3") |
- * | tls_ciphers, tls_ciphersuites | tls (cipher_list, cipher_suites) |
- * | tls_verify_peer, tls_renegotiation, tls_session_resumption | tls |
- * | tls_renewal_interval, tls_session_lifetime | tls (s) |
+ * | path | one path per line: host:port, optionally followed by the TLS peer name and fingerprint
+ * of this path ([v6]:port for IPv6) | | path_reconnect, path_replay_window, path_replay_tolerance |
+ * path_options (s) | | path_replay_max, path_interrogation, path_prefer_first | path_options | |
+ * tls | use_tls | | tls_ca, tls_certificate, tls_key, tls_crl | tls (files) | | tls_key_password,
+ * tls_peer_name, tls_peer_fingerprint | tls | | tls_min_version, tls_max_version | tls ("1.2",
+ * "1.3") | | tls_ciphers, tls_ciphersuites | tls (cipher_list, cipher_suites) | | tls_verify_peer,
+ * tls_renegotiation, tls_session_resumption | tls | | tls_renewal_interval, tls_session_lifetime |
+ * tls (s) |
  *
  * Relative file names are relative to the directory of the configuration file.
  *
