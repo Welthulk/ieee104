@@ -1,0 +1,16 @@
+<!--
+SPDX-FileCopyrightText: 2026 SOPTIM AG
+SPDX-License-Identifier: LicenseRef-Proprietary
+Author: Udo Schmitz (SOPTIM AG)
+All rights reserved by SOPTIM AG.
+
+Logo of the IEC 60870-5-104 library: the start octet 68h of every APDU as a
+square wave (0110 1000), its bits as dots, and "104".
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none" stroke-linecap="round" stroke-linejoin="round">
+<defs><linearGradient id="gc" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e2f44"/><stop offset="1" stop-color="#2c4f7a"/></linearGradient></defs>
+<rect x="16" y="16" width="480" height="480" rx="104" fill="url(#gc)"/>
+<path d="M 76 196 L 121 196 L 121 110 L 166 110 L 211 110 L 211 196 L 256 196 L 256 110 L 301 110 L 301 196 L 346 196 L 391 196 L 436 196" stroke="#53c1f0" stroke-width="16"/>
+<circle cx="98.5" cy="236" r="4.5" stroke="#ffffff" stroke-opacity="0.4" stroke-width="3"/><circle cx="143.5" cy="236" r="6" fill="#6ed39a"/><circle cx="188.5" cy="236" r="6" fill="#6ed39a"/><circle cx="233.5" cy="236" r="4.5" stroke="#ffffff" stroke-opacity="0.4" stroke-width="3"/><circle cx="278.5" cy="236" r="6" fill="#6ed39a"/><circle cx="323.5" cy="236" r="4.5" stroke="#ffffff" stroke-opacity="0.4" stroke-width="3"/><circle cx="368.5" cy="236" r="4.5" stroke="#ffffff" stroke-opacity="0.4" stroke-width="3"/><circle cx="413.5" cy="236" r="4.5" stroke="#ffffff" stroke-opacity="0.4" stroke-width="3"/>
+<g stroke="#ffffff" stroke-width="30"><path d="M 130.1 321.0 L 168.1 282 L 168.1 432"/><rect x="218" y="282" width="76" height="150" rx="38.0"/><path d="M 368.2 432 L 368.2 282 L 315.0 387.0 L 392.5 387.0"/></g>
+</svg>

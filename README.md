@@ -1,5 +1,7 @@
 # IEC 60870-5-104 Library
 
+<p align="center"><img src="docs/bilder/logo_schriftzug.svg" alt="iec104 – IEC 60870-5-104 Library" width="560"></p>
+
 Client (steuernde Station) und Server (gesteuerte Station) für IEC 60870-5-104, optional über TLS nach IEC 62351-3. Kern C++17, Schnittstelle C (`include/iec104/iec104.h`).
 
 Stand: 26.11.2026, Version 0.9.3, Linux x86-64.

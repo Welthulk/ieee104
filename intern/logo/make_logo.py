@@ -7,6 +7,7 @@
 # make_logo.py - draws the logo drafts as SVG (lines and shapes only, no fonts in
 # the marks): logo_<k>.svg (icon), schriftzug_<k>.svg (icon with word mark) and
 # sheet.svg (overview with small sizes). Run in this folder: python3 make_logo.py
+# The chosen variant for the documentation: python3 make_logo.py --final c ../../docs/bilder
 import math, sys
 
 NAVY, NAVY2 = "#1e2f44", "#2c4f7a"
@@ -125,7 +126,7 @@ def wordmark(x, base, cap, color, accent, stroke):
 
 def lockup(key):
     icon = VARIANTS[key]().split("\n", 1)[1].rsplit("</svg>", 1)[0]
-    s = head(1180, 340)
+    s = head(1080, 340)   # 30 margin left, the subtitle ends near 1030
     s += (f'<svg x="30" y="30" width="280" height="280" viewBox="0 0 512 512" fill="none" '
           f'stroke-linecap="round" stroke-linejoin="round">{icon}</svg>\n')
     wm, _ = wordmark(372, 212, 132, DARK, BLUE, 24)
@@ -136,7 +137,26 @@ def lockup(key):
 
 VARIANTS = {"a": variant_a, "b": variant_b, "c": variant_c}
 
+SPDX = """<!--
+SPDX-FileCopyrightText: 2026 SOPTIM AG
+SPDX-License-Identifier: LicenseRef-Proprietary
+Author: Udo Schmitz (SOPTIM AG)
+All rights reserved by SOPTIM AG.
+
+Logo of the IEC 60870-5-104 library: the start octet 68h of every APDU as a
+square wave (0110 1000), its bits as dots, and "104".
+-->
+"""
+
+def final(key, folder):
+    """Writes the chosen variant as docs images: logo.svg and logo_schriftzug.svg."""
+    open(f"{folder}/logo.svg", "w").write(SPDX + VARIANTS[key]())
+    open(f"{folder}/logo_schriftzug.svg", "w").write(SPDX + lockup(key))
+
 if __name__ == "__main__":
+    if len(sys.argv) == 4 and sys.argv[1] == "--final":   # python3 make_logo.py --final c ../../docs/bilder
+        final(sys.argv[2], sys.argv[3])
+        sys.exit(0)
     for k, f in VARIANTS.items():
         open(f"logo_{k}.svg", "w").write(f())
         open(f"schriftzug_{k}.svg", "w").write(lockup(k))
@@ -146,7 +166,7 @@ if __name__ == "__main__":
         body = f().split("\n", 1)[1].rsplit("</svg>", 1)[0]
         sheet += f'<svg x="{40 + i * 560}" y="30" width="512" height="512" viewBox="0 0 512 512" {inner}>{body}</svg>\n'
         lk = lockup(k).split("\n", 1)[1].rsplit("</svg>", 1)[0]
-        sheet += f'<svg x="{40 + i * 560}" y="580" width="520" height="150" viewBox="0 0 1180 340" {inner}>{lk}</svg>\n'
+        sheet += f'<svg x="{40 + i * 560}" y="580" width="520" height="150" viewBox="0 0 1080 340" {inner}>{lk}</svg>\n'
         # small sizes: does it still read at 64 and 32 px?
         sheet += f'<svg x="{40 + i * 560}" y="780" width="64" height="64" viewBox="0 0 512 512" {inner}>{body}</svg>\n'
         sheet += f'<svg x="{130 + i * 560}" y="796" width="32" height="32" viewBox="0 0 512 512" {inner}>{body}</svg>\n'

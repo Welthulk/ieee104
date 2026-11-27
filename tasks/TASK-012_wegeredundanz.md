@@ -1,6 +1,6 @@
 # TASK-012: Wegeredundanz der Leitstelle
 
-Status: Analyse fertig, wartet auf Freigabe der Entscheidungen in Abschnitt 6 (27.11.2026) · Module: `src/session`, `src/api`, `src/transport`, `include`, `tools/selftest`, `examples/julia`, Doku · Zielversion 0.10.0
+Status: in Arbeit; Entscheidungen D1–D7 am 27.11.2026 wie empfohlen bestätigt · Module: `src/session`, `src/api`, `src/transport`, `include`, `tools/selftest`, `examples/julia`, Doku · Zielversion 0.10.0
 
 ## 1. Ziel
 
@@ -100,7 +100,7 @@ Empfehlung: **V3**. Gleiche Linie wie auf der Stationsseite (N7): doppelt mögli
 | R10 | Client mit einem Weg (`iec104_client_connect`) verhält sich unverändert |
 | R11 | Testhilfe: einen Weg trennen oder stumm schalten und wieder freigeben |
 
-## 6. Entscheidungen (zu bestätigen)
+## 6. Entscheidungen (bestätigt am 27.11.2026, jeweils wie empfohlen)
 
 | Nr. | Frage | Empfehlung |
 | --- | --- | --- |
@@ -112,7 +112,7 @@ Empfehlung: **V3**. Gleiche Linie wie auf der Stationsseite (N7): doppelt mögli
 | D6 | Beide Wege weg | weiter versuchen, Zustand „verbinde“; Ende nur durch `iec104_client_close` |
 | D7 | Anzahl Wege | Schnittstelle bis 4, getestet mit 2 und 3 |
 
-Klärung mit dem Betreiber der PAs (ändert nur Parameter, nicht das Verfahren):
+Fragen an den Betreiber der PAs. Laut Auftraggeber keine Vorbedingung: Die Library bietet das Verfahren an, Anpassungen sind später möglich. Die Fragen ändern nur Parameter, nicht das Verfahren:
 
 | Nr. | Frage | Folge |
 | --- | --- | --- |
