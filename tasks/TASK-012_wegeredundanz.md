@@ -200,17 +200,17 @@ Konfigurationsdatei: `path = host:port` (mehrfach), `path_reconnect`, `path_repl
 
 ## 12. Definition of Done
 
-- [ ] Entscheidungen D1–D7 bestätigt und in `docs/05` festgehalten.
-- [ ] Selector mit Unit-Tests; Fuzzer `fuzz_paths` 10 min ohne Befund.
-- [ ] TCP-Tests: Reihe von 1000 Werten mit mindestens 10 Störungen (Trennen und stumm): kein Wert fehlt, Reihenfolge stimmt, Doppelte nur innerhalb der Toleranz.
-- [ ] Befehl beim Umschalten endet mit `CONNECTION_LOST`, nichts wird wiederholt.
-- [ ] Client mit einem Weg: alle bisherigen Tests unverändert grün.
-- [ ] Selbsttest-Programme und `SelfTest.PathRedundancy`.
-- [ ] Test-GUI nach Abschnitt 10; Seitentest in gjs und WebKit; Selbsttest der GUI grün.
-- [ ] Doku nach Abschnitt 11; Doxygen ohne Warnung; Interoperabilitätsliste aktuell.
-- [ ] `debug`, `asan` grün, `clang` ohne Befunde; unabhängige Prüfung.
-- [ ] Version 1.0.0: SONAME wird `libiec104.so.1` (CMake SOVERSION = Hauptversion); Namen nachziehen in `examples/julia/IEC104.jl`, `tools/make_package.sh`, `packaging/*`, `tests/gui/*.sh`, `tools/gui_screenshot.sh`, README, `docs/06`, `docs/07`, CLAUDE.md.
-- [ ] Lieferung 1.0.0.
+- [x] Entscheidungen D1–D7 bestätigt und in `docs/05` festgehalten.
+- [x] Selector mit Unit-Tests; Fuzzer `fuzz_paths` 10 min ohne Befund.
+- [x] TCP-Tests: Reihe von 1000 Werten mit mindestens 10 Störungen (Trennen und stumm): kein Wert fehlt, Reihenfolge stimmt, Doppelte nur innerhalb der Toleranz. (Selbsttest-Client: 1000/1000, 13 Störungen, 7 Umschaltungen.)
+- [x] Befehl beim Umschalten endet mit `CONNECTION_LOST`, nichts wird wiederholt.
+- [x] Client mit einem Weg: alle bisherigen Tests unverändert grün.
+- [x] Selbsttest-Programme und `SelfTest.PathRedundancy`.
+- [x] Test-GUI nach Abschnitt 10; Seitentest in gjs und WebKit; Selbsttest der GUI grün.
+- [x] Doku nach Abschnitt 11; Doxygen ohne Warnung; Interoperabilitätsliste aktuell.
+- [x] `debug`, `asan` grün, `clang` ohne Befunde; unabhängige Prüfung (zwei Runden: 26 Befunde behoben, Nachprüfung 5 weitere behoben).
+- [x] Version 1.0.0: SONAME wird `libiec104.so.1` (CMake SOVERSION = Hauptversion); Namen nachziehen in `examples/julia/IEC104.jl`, `tools/make_package.sh`, `packaging/*`, `tests/gui/*.sh`, `tools/gui_screenshot.sh`, README, `docs/06`, `docs/07`, CLAUDE.md.
+- [x] Lieferung 1.0.0 (Paket gebaut, siehe dist/).
 
 ## 13. Reihenfolge
 
