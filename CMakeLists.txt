@@ -260,6 +260,10 @@ if(IEC104_BUILD_SELFTEST AND NOT IEC104_BUILD_FUZZERS)
                     $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>
                     --switchover)
         set_tests_properties(SelfTest.SwitchOver PROPERTIES TIMEOUT 90)
+        add_test(NAME SelfTest.PathRedundancy
+            COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_paths.sh
+                    $<TARGET_FILE:iec104_selftest_server> $<TARGET_FILE:iec104_selftest_client>)
+        set_tests_properties(SelfTest.PathRedundancy PROPERTIES TIMEOUT 120)
         if(IEC104_TLS)
             add_test(NAME SelfTest.ServerAndClientOverTls
                 COMMAND ${PROJECT_SOURCE_DIR}/tools/selftest/run_selftest.sh
@@ -291,6 +295,12 @@ if(IEC104_BUILD_FUZZERS)
     target_link_libraries(fuzz_apci PRIVATE iec104_objects)
     target_link_options(fuzz_apci PRIVATE -fsanitize=fuzzer)
     iec104_set_warnings(fuzz_apci FALSE)
+
+    add_executable(fuzz_paths fuzz/fuzz_paths.cpp)
+    target_include_directories(fuzz_paths PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(fuzz_paths PRIVATE iec104_objects)
+    target_link_options(fuzz_paths PRIVATE -fsanitize=fuzzer)
+    iec104_set_warnings(fuzz_paths FALSE)
 endif()
 
 # ---------------------------------------------------------------------------

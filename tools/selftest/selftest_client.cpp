@@ -11,6 +11,7 @@
  * Example:
  *   iec104_selftest_client --host 127.0.0.1 --port 2404 --idle 25
  *   iec104_selftest_client --host 10.0.0.5 --foreign --ca 7 --idle 60
+ *   iec104_selftest_client --path 127.0.0.1:2404 --path 127.0.0.1:2405 --fault-every 4
  *
  * Every step is reported with ok / FAILED:
  *
@@ -34,10 +35,18 @@
  *                                the series continues          (periodic allowed)
  *   idle period, STOPDT          yes                           yes
  *
+ * With --path (two or more, docs/05_Normfragen_und_Festlegungen.md, E11)
+ * the client holds one path to each address instead; the stations must send
+ * the same series (self-test servers with --broadcast). Steps: all paths
+ * started, then the series while every --fault-every seconds the leading path
+ * is disturbed (closed or silent, alternately or by --seed at random), and
+ * the series must arrive without a gap; repetitions are allowed.
+ *
  * Exit code: 0 = all steps passed, 1 = a step failed, 2 = usage error.
  */
 #include "selftest_common.hpp"
 
+#include <cstdlib>
 #include <ctime>
 #include <functional>
 #include <vector>
@@ -54,6 +63,9 @@ struct Options {
     bool foreign{false};
     bool switchover{false}; // second connection as standby, switch in the middle of the series
     std::uint32_t series_ioa{selftest::kMeasurementIoa}; // IOA of the series (--series-ioa)
+    std::vector<iec104_path_config> paths;               // --path, several: path redundancy
+    unsigned long fault_every_s{0};                      // --fault-every
+    unsigned long seed{0};                               // --seed, 0 = alternate
 };
 
 /** @brief One received object with the parts of its ASDU the checks need. */
@@ -77,7 +89,8 @@ struct Client {
     iec104_link_state state{IEC104_LINK_CONNECTING};
     iec104_close_reason close_reason{IEC104_CLOSE_NONE};
     std::vector<Received> received;
-    Client* other{nullptr}; // the other connection of a switch-over test, polled as well
+    Client* other{nullptr};    // the other connection of a switch-over test, polled as well
+    unsigned long switches{0}; // switch-overs of the leading path (--path)
 };
 
 std::uint64_t now_ms() {
@@ -329,7 +342,13 @@ void print_help() {
                 "  --switchover     open a second connection as standby and switch to it\n"
                 "                   while the series runs (server with --broadcast)\n"
                 "  --series-ioa N   IOA of the series for --switchover (default 100); with\n"
-                "                   --foreign any start value, spontaneous or periodic\n");
+                "                   --foreign any start value, spontaneous or periodic\n"
+                "  --path HOST:PORT one path of a client with path redundancy; give it two\n"
+                "                   to four times (servers with --broadcast)\n"
+                "  --fault-every S  with --path: disturb the leading path every S seconds\n"
+                "                   (default 0 = never)\n"
+                "  --seed N         with --fault-every: random faults and paths from seed N\n"
+                "                   (default 0 = close and silence the leading path in turn)\n");
     selftest::print_common_help();
 }
 
@@ -359,6 +378,158 @@ iec104_status create_handle(Client& c) {
         c.handle = nullptr;
     }
     return st;
+}
+
+void on_path(void* user, const iec104_path_switch* e) {
+    auto* c = static_cast<Client*>(user);
+    if (e->previous != 0U) {
+        ++c->switches;
+    }
+    std::printf("path switch: %s\n", e->reason);
+    std::fflush(stdout);
+}
+
+/** @brief "host:port" or "[v6]:port" -> path; false if malformed. */
+bool parse_path(const char* text, iec104_path_config& out) {
+    const std::string t = text != nullptr ? text : "";
+    const std::size_t colon = t.rfind(':');
+    if (colon == std::string::npos || colon == 0U || colon + 1U >= t.size()) {
+        return false;
+    }
+    std::string host = t.substr(0, colon);
+    if (host.size() > 2U && host.front() == '[' && host.back() == ']') {
+        host = host.substr(1, host.size() - 2U);
+    }
+    if (host.size() >= sizeof out.host) {
+        return false;
+    }
+    out = iec104_path_config{};
+    std::snprintf(out.host, sizeof out.host, "%s", host.c_str());
+    out.port = static_cast<std::uint16_t>(
+        selftest::parse_number("--path", t.substr(colon + 1U).c_str(), 65535));
+    return true;
+}
+
+/**
+ * @brief Values of the series received over all paths, merged.
+ * @param repeated Receives the number of repetitions (value not above the last one).
+ * @return Length of the gap-free series 0..n-1, or -1 if a value is missing.
+ */
+long path_series(const Client& c, unsigned long& repeated) {
+    repeated = 0;
+    long next = 0;
+    for (const double v : series(c)) {
+        if (v < static_cast<double>(next)) {
+            ++repeated;
+        } else if (v == static_cast<double>(next)) {
+            ++next;
+        } else {
+            return -1; // gap
+        }
+    }
+    return next;
+}
+
+/** @brief The path-redundancy test (--path). @return exit code. */
+int run_paths(Client& c) {
+    if (create_handle(c) != IEC104_OK) {
+        return 2;
+    }
+    iec104_client_set_path_callback(c.handle, on_path, &c);
+    iec104_path_options options{};
+    iec104_path_options_init(&options);
+    options.reconnect_interval_ms = 1000;
+    std::printf("iec104_selftest_client: %zu paths, fault every %lu s%s\n", c.opt.paths.size(),
+                c.opt.fault_every_s, c.opt.seed != 0U ? ", random" : "");
+    bool passed = true;
+    auto step = [&](const char* label, bool ok, const std::string& detail = "") {
+        std::string text = ok ? (detail.empty() ? "ok" : detail) : "FAILED";
+        if (!ok && !detail.empty()) {
+            text += " (" + detail + ")";
+        }
+        selftest::report_line(label, text);
+        passed = passed && ok;
+        std::fflush(stdout);
+        return ok;
+    };
+    const std::uint64_t step_ms = c.opt.timeout_s * 1000U;
+    auto all_started = [&] {
+        for (std::uint32_t p = 1; p <= c.opt.paths.size(); ++p) {
+            iec104_path_info i{};
+            if (iec104_client_get_path_info(c.handle, p, &i) != IEC104_OK ||
+                i.state != IEC104_LINK_STARTED) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const iec104_status st =
+        iec104_client_connect_paths(c.handle, c.opt.paths.data(), c.opt.paths.size(), &options);
+    bool ok = st == IEC104_OK && iec104_client_start(c.handle) == IEC104_OK &&
+              wait_for(c, step_ms, all_started);
+    step("all paths started", ok,
+         st != IEC104_OK ? iec104_status_string(st)
+                         : "leading path " + std::to_string(iec104_client_leading_path(c.handle)));
+
+    // The series while paths fail.
+    std::srand(static_cast<unsigned>(c.opt.seed));
+    unsigned long faults = 0;
+    unsigned long repeated = 0;
+    const std::uint64_t fault_ms = c.opt.fault_every_s * 1000U;
+    std::uint64_t next_fault = now_ms() + fault_ms;
+    const std::uint64_t end = now_ms() + step_ms + (c.opt.expect * 50U);
+    while (ok && now_ms() < end) {
+        const long n = path_series(c, repeated);
+        if (n < 0 || n >= static_cast<long>(c.opt.expect)) {
+            break;
+        }
+        (void)iec104_client_poll(c.handle, 10);
+        if (fault_ms == 0U || now_ms() < next_fault) {
+            continue;
+        }
+        next_fault = now_ms() + fault_ms;
+        std::uint32_t path = iec104_client_leading_path(c.handle);
+        bool silent = faults % 2U == 1U;
+        if (c.opt.seed != 0U) {
+            silent = std::rand() % 2 == 1; // NOLINT(cert-msc30-c,cert-msc50-cpp): test pattern
+            path = static_cast<std::uint32_t>(std::rand()) % // NOLINT(cert-msc30-c,cert-msc50-cpp)
+                       static_cast<std::uint32_t>(c.opt.paths.size()) +
+                   1U;
+        }
+        if (path != 0U && iec104_client_disturb_path(c.handle, path,
+                                                     silent ? IEC104_PATH_SILENT
+                                                            : IEC104_PATH_CLOSE) == IEC104_OK) {
+            ++faults;
+            std::printf("fault: path %u %s\n", path, silent ? "silent" : "closed");
+            std::fflush(stdout);
+        }
+    }
+    const long n = path_series(c, repeated);
+    step("series over path faults", n == static_cast<long>(c.opt.expect),
+         n < 0 ? "gap" : std::to_string(n) + "/" + std::to_string(c.opt.expect) + ", in order");
+    step("repetitions around a switch-over", true, std::to_string(repeated));
+    step("faults, switch-overs", fault_ms == 0U || (faults > 0U && c.switches > 0U),
+         std::to_string(faults) + " faults, " + std::to_string(c.switches) + " switch-overs");
+    for (std::uint32_t p = 1; p <= c.opt.paths.size(); ++p) {
+        iec104_path_info i{};
+        if (iec104_client_get_path_info(c.handle, p, &i) == IEC104_OK) {
+            std::printf("path %u: %s:%u %s, connects %llu, leading %llu times, replayed %llu, "
+                        "suppressed %llu, dropped %llu\n",
+                        p, i.host, i.port, iec104_link_state_string(i.state),
+                        static_cast<unsigned long long>(i.connects),
+                        static_cast<unsigned long long>(i.became_leading),
+                        static_cast<unsigned long long>(i.replayed),
+                        static_cast<unsigned long long>(i.suppressed),
+                        static_cast<unsigned long long>(i.dropped));
+        }
+    }
+    iec104_client_close(c.handle);
+    (void)wait_for(c, 2000, [&] {
+        return iec104_client_state(c.handle) == IEC104_LINK_CLOSED && c.state == IEC104_LINK_CLOSED;
+    });
+    iec104_client_destroy(c.handle);
+    std::printf("result: %s\n", passed ? "PASSED" : "FAILED");
+    return passed ? 0 : 1;
 }
 
 } // namespace
@@ -391,6 +562,17 @@ int main(int argc, char** argv) {
         } else if (arg == "--series-ioa") {
             c.opt.series_ioa = static_cast<std::uint32_t>(
                 selftest::parse_number("--series-ioa", value(), 16777215));
+        } else if (arg == "--path") {
+            iec104_path_config p{};
+            if (!parse_path(value(), p) || c.opt.paths.size() >= IEC104_MAX_PATHS) {
+                std::fprintf(stderr, "--path: HOST:PORT, at most %d times\n", IEC104_MAX_PATHS);
+                return 2;
+            }
+            c.opt.paths.push_back(p);
+        } else if (arg == "--fault-every") {
+            c.opt.fault_every_s = selftest::parse_number("--fault-every", value(), 3600);
+        } else if (arg == "--seed") {
+            c.opt.seed = selftest::parse_number("--seed", value(), 1000000);
         } else if (arg == "--help" || arg == "-h") {
             print_help();
             return 0;
@@ -398,6 +580,13 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "unknown option %s (see --help)\n", arg.c_str());
             return 2;
         }
+    }
+    if (c.opt.paths.size() == 1U) {
+        std::fprintf(stderr, "--path: give at least two paths\n");
+        return 2;
+    }
+    if (!c.opt.paths.empty()) {
+        return run_paths(c);
     }
 
     iec104_status st = create_handle(c);

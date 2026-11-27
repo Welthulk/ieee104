@@ -32,6 +32,7 @@ tools/make_package.sh      # Weitergabe-Zip nach dist/ (vorher committen)
 ./build/fuzz/fuzz_codec -max_total_time=300 fuzz/corpus
 ./build/fuzz/fuzz_apci  -max_total_time=300 fuzz/corpus_apci
 ./build/fuzz/fuzz_session -max_total_time=300 fuzz/corpus_session
+./build/fuzz/fuzz_paths -max_total_time=300 fuzz/corpus_paths
 ```
 
 Fuzz-Dauer: 5 min bei jeder Änderung am Codec, 10 min zum Abschluss einer Aufgabe, 24 h vor einer Auslieferung.
