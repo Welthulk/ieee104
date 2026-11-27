@@ -1,8 +1,8 @@
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 821b871..b99a35a 100644
+index 821b871..0eaa4b4 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,5 +1,11 @@
+@@ -1,5 +1,12 @@
  # Änderungen
  
 +## 1.0.1 (27.11.2026)
@@ -10,6 +10,7 @@ index 821b871..b99a35a 100644
 +- Bild und Schritt-für-Schritt-Anleitung „Zwei Wege“ in README und `docs/07_Julia.md`.
 +- Test-GUI: Meldungen der ersten Station heißen „Station A“, sobald Station B läuft.
 +- Teststation: die IOA eines neuen Datenpunkts wird vorgeschlagen (nächste freie), eigene Eingabe gilt.
++- `gui.sh` findet lib60870 auch ohne Angabe, wenn es neben dem Paket oder dem Quellordner liegt.
 +
  ## 1.0.0 (27.11.2026)
  
@@ -124,9 +125,18 @@ index dfcaf0e..34ae936 100644
  Erzeugt mit `iec104_interop_list`. Gliederung und Bezeichnungen nach öffentlichen Wiedergaben der Checkliste (docs/02_Technik_und_Quellen.md, [ORA]); die Angaben stammen aus dem Code der Library. Eigene Parameter: `iec104_interop_list --config datei.conf`, zum Abgleich mit der Liste einer Gegenstelle `--format csv`.
  
 diff --git a/docs/12_Manueller_Test_GUI.md b/docs/12_Manueller_Test_GUI.md
-index aa531dd..66b27f7 100644
+index aa531dd..6f69158 100644
 --- a/docs/12_Manueller_Test_GUI.md
 +++ b/docs/12_Manueller_Test_GUI.md
+@@ -18,7 +18,7 @@ Alle Befehle in diesem Dokument tippt man in ein **Terminal**: unter Linux ein T
+ | V4 | Terminal | `bash gui.sh 8080 127.0.0.1` | Die GUI läuft, solange das Fenster offen ist; Startzeile „IEC 104 Test-GUI (Library …): http://localhost:8080“. Beenden mit Strg+C |
+ | V5 | Browser | `http://localhost:8080` öffnen; war die Seite schon offen, einmal F5 | Erreicht der Windows-Browser die GUI nicht: in V4 `bash gui.sh 8080 0.0.0.0` und die angezeigte Adresse öffnen |
+ 
+-Für Block G (fremde Leitstelle lib60870) muss lib60870 gebaut vorliegen; dann in V4: `bash gui.sh 8080 127.0.0.1 <ordner>/lib60870-C`. Ohne diesen Ordner entfällt Block G.
++Für Block G (fremde Leitstelle lib60870) muss lib60870 gebaut vorliegen. `gui.sh` findet es selbst unter `lib60870/lib60870-C` neben dem Paketordner oder neben dem Quellordner (dort legt es `tools/wsl_ausprobieren.sh --mit-lib60870` ab); sonst in V4 den Ordner angeben: `bash gui.sh 8080 127.0.0.1 <ordner>/lib60870-C`. Beim Start steht „Gegenstelle lib60870: …“ oder „Ohne lib60870“. Ohne lib60870 entfällt Block G, der Selbsttest zeigt Schritt 27 als übersprungen.
+ 
+ Aufbau der Seite: oben die Reiter „Prüfstand (Leitstelle)“, „Mithören“, „Station und lib60870“, „Selbsttest“; darunter immer der Bereich **„Telegramme und Ereignisse“**. Dort steht jede Meldung und jeder Rahmen mit einer Erklärung in einem Satz – bei Fragen zuerst dort nachsehen.
+ 
 @@ -39,7 +39,7 @@ Aufbau der Seite: oben die Reiter „Prüfstand (Leitstelle)“, „Mithören“
  | Nr | Tun | Erwartet | Erklärung | ✓ |
  | --- | --- | --- | --- | --- |
@@ -33611,7 +33621,7 @@ index 8021b5f..ebc20a0 100644
  end
  
 diff --git a/examples/julia/gui/index.html b/examples/julia/gui/index.html
-index 2fd3b4d..9066582 100644
+index 2fd3b4d..5272cd6 100644
 --- a/examples/julia/gui/index.html
 +++ b/examples/julia/gui/index.html
 @@ -252,9 +252,9 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
@@ -33626,7 +33636,17 @@ index 2fd3b4d..9066582 100644
    </div>
    <div class="scroll"><table>
      <thead><tr><th>IOA</th><th>Typ</th><th>Wert</th><th></th></tr></thead>
-@@ -589,6 +589,20 @@ function saveText(text, name, ext = 'txt') {
+@@ -287,7 +287,8 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
+   </div>
+   <div id="peeroff" class="hint" hidden>
+     <span id="pmissing">Kein lib60870-Ordner angegeben.</span> Der Ordner wird beim Start der GUI festgelegt:
+-    <code>bash gui.sh 8080 127.0.0.1 /pfad/zu/lib60870-C</code> oder Umgebungsvariable
++    <code>bash gui.sh 8080 127.0.0.1 /pfad/zu/lib60870-C</code> (ohne Angabe sucht <code>gui.sh</code>
++    <code>lib60870/lib60870-C</code> neben dem Paket und neben dem Quellordner) oder Umgebungsvariable
+     <code>IEC104_LIB60870=/pfad/zu/lib60870-C</code>. Erwartet werden die gebauten Beispiele unter
+     <code>build/examples/</code> (<code>simple_client</code>, <code>cs104_client_async</code>,
+     <code>cs104_client_no_threads</code>).
+@@ -589,6 +590,20 @@ function saveText(text, name, ext = 'txt') {
    a.click();
    setTimeout(() => URL.revokeObjectURL(a.href), 2000);   // the download needs the URL a moment longer
  }
@@ -33647,7 +33667,7 @@ index 2fd3b4d..9066582 100644
  function sendPoint(ioa, type, delta) {
    const input = document.getElementById('pv' + ioa);
    const value = delta === undefined ? input.value : String(Number(input.value) + delta);
-@@ -757,6 +771,8 @@ async function update() {
+@@ -757,6 +772,8 @@ async function update() {
        `<td><button onclick="sendPoint(${p.ioa}, ${p.type})">Senden</button> ` +
        `<button onclick="sendPoint(${p.ioa}, ${p.type}, 1)">+1</button></td></tr>`).join('');
    }
@@ -33669,6 +33689,62 @@ index c6a1aeb..05810d5 100644
  
  /**
   * @brief Default TCP port of an IEC 60870-5-104 connection without TLS.
+diff --git a/packaging/README-binary.md b/packaging/README-binary.md
+index 4d7122d..78de698 100644
+--- a/packaging/README-binary.md
++++ b/packaging/README-binary.md
+@@ -18,7 +18,7 @@ Geteilte Library für Linux x86-64 (Release, mit TLS).
+ bash pruefen.sh        # alles bereit?
+ bash gui.sh            # Test-GUI, dann http://localhost:8080 im Browser
+ bash gui.sh 8080 0.0.0.0   # WSL: wenn Windows localhost nicht erreicht; angezeigte Adresse öffnen
+-bash gui.sh 8080 127.0.0.1 ~/src/lib60870/lib60870-C   # dazu lib60870 als fremde Leitstelle gegen die Station der GUI
++bash gui.sh 8080 127.0.0.1 ~/src/lib60870/lib60870-C   # dazu lib60870 als fremde Leitstelle (ohne Angabe sucht gui.sh lib60870/lib60870-C neben dem Paket und neben dem Quellordner)
+ bash beispiel.sh       # Station und Leitstelle in Julia gegeneinander
+ ```
+ 
+diff --git a/packaging/gui.sh b/packaging/gui.sh
+index 5750026..f79bba9 100755
+--- a/packaging/gui.sh
++++ b/packaging/gui.sh
+@@ -12,8 +12,10 @@
+ #             "bash gui.sh 8080 0.0.0.0" und die angezeigte Adresse öffnen.
+ #             Achtung: die GUI hat keine Anmeldung und kann Befehle senden.
+ #   lib60870  Ordner lib60870-C mit gebauten Beispielen (build/examples), sonst
+-#             Umgebungsvariable IEC104_LIB60870; dann kann die GUI deren
+-#             Leitstellen-Beispiele gegen ihre Station starten.
++#             Umgebungsvariable IEC104_LIB60870, sonst wird gesucht: lib60870/lib60870-C
++#             neben dem Paketordner und neben dem Quellordner, in dem das Paket unter
++#             dist/ liegt (dorthin legt es tools/wsl_ausprobieren.sh --mit-lib60870).
++#             Dann kann die GUI deren Leitstellen-Beispiele gegen ihre Station starten.
+ # Beenden mit Strg-C. Der erste Start nach einer Julia-Installation dauert
+ # länger (Julia übersetzt einmalig).
+ 
+@@ -24,6 +26,14 @@ if [ -n "$LIB60870" ]; then
+     LIB60870="$DIR"
+ fi
+ cd "$(dirname "$0")" || exit 1
++if [ -z "$LIB60870" ]; then
++    for c in ../lib60870/lib60870-C ../../../lib60870/lib60870-C; do
++        if [ -d "$c/build/examples" ]; then
++            LIB60870="$(cd "$c" && pwd)"
++            break
++        fi
++    done
++fi
+ PORT="${1:-8080}"
+ ADDR="${2:-127.0.0.1}"
+ command -v julia > /dev/null 2>&1 || { echo "Julia fehlt (bash pruefen.sh)"; exit 1; }
+@@ -34,5 +44,9 @@ else
+     echo "Test-GUI startet auf $ADDR. Im Browser öffnen: http://${IP:-<adresse dieses Rechners>}:$PORT"
+ fi
+ echo "Bereit ist sie, sobald die Zeile \"IEC 104 Test-GUI ...\" erscheint (Strg-C beendet)."
+-[ -n "$LIB60870" ] && echo "Gegenstelle lib60870: $LIB60870"
++if [ -n "$LIB60870" ]; then
++    echo "Gegenstelle lib60870: $LIB60870"
++else
++    echo "Ohne lib60870 (Ordner als dritten Parameter angeben, siehe Kopf von gui.sh)."
++fi
+ exec julia --startup-file=no julia/gui/iec104_gui.jl "$PORT" "$ADDR" ${LIB60870:+"$LIB60870"}
 diff --git a/tests/gui/test_gui.sh b/tests/gui/test_gui.sh
 index efde3cc..d72fea6 100755
 --- a/tests/gui/test_gui.sh
