@@ -181,6 +181,9 @@ act "client/connect?host=127.0.0.1&port=$SPORT&station=1&auto=1&term=1"
 wait_state 10 "Verbinden mit STARTDT und Generalabfrage" 0 '"client":\{"state":"started"' \
     '\{"st":1,"ioa":100,"ty":13,"c":20,"neg":false,"v":"Wert 42.5","tt":"","u":"[0-9:]*","n":\[0,0,0,1,0,0,0,0,0\]\}' \
     '"kind":"frame","text":"Leitstelle → I [^"]*C_IC_NA_1[^"]*","explain":"Leitstelle fordert alle Werte an","dir":"out","f":"I","ty":100,"c":6,"io":\[0\]'
+act_rejected 'client/path?nr=1&fault=close' 'nur mit zwei Wegen'   # one connection: no paths
+act_rejected 'client/auto?on=1' 'nur mit zwei Wegen'
+act_rejected 'series?do=start&ms=5' 'Takt 20'
 act 'server/point?type=13&ioa=100&value=43'
 act 'client/read?ioa=100'
 wait_state 10 "spontan und gelesen gezählt" 0 \

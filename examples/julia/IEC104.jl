@@ -22,6 +22,8 @@ export client_create, client_connect, client_start, client_stop, client_poll,
        client_counter_interrogation, client_clock_sync, client_send_command,
        client_select_execute, client_read, client_set_tls, client_set_log, server_set_log,
        server_connection_count, time_now, settext!
+export PathOptions, PathInfo, PathSwitch, client_connect_paths, client_leading_path,
+       client_path_info, client_set_path_callback, client_disturb_path, text
 
 const LIB = let packaged = normpath(joinpath(@__DIR__, "..", "lib", "libiec104.so.0"))
     get(ENV, "IEC104_LIB", isfile(packaged) ? packaged : "libiec104.so.0")
@@ -38,6 +40,9 @@ const COT_ACTIVATION_CON = 0x07
 const COT_ACTIVATION_TERMINATION = 0x0a
 const COT_INTERROGATED_STATION = 0x14
 const DEFAULT_PORT = 2404
+const PATH_CLOSE = Cint(0)     # iec104_path_fault
+const PATH_SILENT = Cint(1)
+const PATH_RESTORE = Cint(2)
 
 # --- Types: same field order and widths as in iec104.h -------------------
 
@@ -145,9 +150,85 @@ function settext!(c::TlsConfig, field::Symbol, text::AbstractString)
     return c
 end
 
+"Address of one path (iec104_path_config)."
+struct PathConfig
+    host::NTuple{256,UInt8}
+    port::UInt16
+    tls_peer_name::NTuple{256,UInt8}
+    tls_peer_fingerprint::NTuple{128,UInt8}
+end
+fixed(text::AbstractString, N) = (b = codeunits(text);
+    length(b) < N || throw(ArgumentError("text too long: $text"));
+    ntuple(i -> i <= length(b) ? b[i] : 0x00, N))
+PathConfig(host::AbstractString, port::Integer; peer_name = "", peer_fingerprint = "") =
+    PathConfig(fixed(host, 256), UInt16(port), fixed(peer_name, 256), fixed(peer_fingerprint, 128))
+
+"Behaviour of a client with paths (iec104_path_options); mutable, so fields can be changed."
+mutable struct PathOptions
+    reconnect_interval_ms::UInt32
+    replay_window_ms::UInt32        # 0 = t1 + t3 + 5 s
+    replay_max_objects::UInt32
+    replay_tolerance_ms::UInt32
+    interrogation_after_switch::Cint
+    prefer_first_path::Cint
+    PathOptions() = (o = new(); ccall((:iec104_path_options_init, LIB), Cvoid, (Ref{PathOptions},), o); o)
+end
+
+"Counters of a connection (iec104_link_stats)."
+struct LinkStats
+    i_frames_sent::UInt64
+    i_frames_received::UInt64
+    s_frames_sent::UInt64
+    s_frames_received::UInt64
+    u_frames_sent::UInt64
+    u_frames_received::UInt64
+    bytes_sent::UInt64
+    bytes_received::UInt64
+    requests::UInt64
+    commands_accepted::UInt64
+    commands_rejected::UInt64
+    commands_discarded::UInt64
+    negative_answers::UInt64
+    send_queue::UInt32
+end
+
+"State and counters of one path (iec104_path_info)."
+struct PathInfo
+    host::NTuple{256,UInt8}
+    port::UInt16
+    state::Cint
+    last_close::Cint
+    leading::Cint
+    silent::Cint
+    connects::UInt64
+    became_leading::UInt64
+    followed::UInt64
+    replayed::UInt64
+    suppressed::UInt64
+    dropped::UInt64
+    buffered::UInt32
+    stats::LinkStats
+end
+
+"A switch-over, as passed to the path callback (iec104_path_switch)."
+struct PathSwitch
+    leading::UInt32     # 0 = no path started any more
+    previous::UInt32
+    replayed::UInt32
+    suppressed::UInt32
+    dropped::UInt32
+    reason::Cstring     # valid only during the callback
+end
+
+"Text of a fixed C string field, e.g. text(info.host)."
+text(t::NTuple{N,UInt8}) where {N} = String(UInt8[b for b in Iterators.takewhile(!=(0x00), t)])
+
 # Sizes must match the C header (checked once when the module is loaded).
 @assert sizeof(LinkConfig) == 32 && sizeof(IecTime) == 14 && sizeof(Object) == 40 &&
-        sizeof(AsduInfo) == 8 && sizeof(Callbacks) == 56 && sizeof(TlsConfig) == 3352
+        sizeof(AsduInfo) == 8 && sizeof(Callbacks) == 56 && sizeof(TlsConfig) == 3352 &&
+        sizeof(PathConfig) == 642 && sizeof(PathOptions) == 24 && sizeof(LinkStats) == 112 &&
+        sizeof(PathInfo) == 448 && sizeof(PathSwitch) == 32 && fieldoffset(PathInfo, 7) == 280 &&
+        fieldoffset(PathInfo, 14) == 336
 
 # --- Status ----------------------------------------------------------------
 
@@ -265,6 +346,37 @@ end
 client_set_log(c, level::Integer, fn::Ptr{Cvoid}, user::Ptr{Cvoid}) =
     ccall((:iec104_client_set_log, LIB), Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}, Ptr{Cvoid}),
           c, level, fn, user)
+
+# --- Client with several paths (path redundancy, docs/06) ---------------------------
+
+"""
+    client_connect_paths(c, [("10.0.0.1", 2404), ("10.0.0.2", 2404)]; options = PathOptions())
+
+Connects all paths; afterwards client_start(c) once. The application sees
+one logical connection (id 1); only the leading path is delivered.
+"""
+function client_connect_paths(c, paths; options::PathOptions = PathOptions())
+    cfg = [p isa PathConfig ? p : PathConfig(p[1], p[2]) for p in paths]
+    check(ccall((:iec104_client_connect_paths, LIB), Cint,
+                (Ptr{Cvoid}, Ptr{PathConfig}, Csize_t, Ref{PathOptions}), c, cfg, length(cfg), options))
+end
+"Leading path 1..n, 0 = none."
+client_leading_path(c) = Int(ccall((:iec104_client_leading_path, LIB), UInt32, (Ptr{Cvoid},), c))
+"State and counters of path @p nr (1..n)."
+function client_path_info(c, nr::Integer)
+    out = Ref{PathInfo}()
+    check(ccall((:iec104_client_get_path_info, LIB), Cint, (Ptr{Cvoid}, UInt32, Ref{PathInfo}),
+                c, nr, out))
+    return out[]
+end
+"Path callback: @p fn from @cfunction with (Ptr{Cvoid}, Ptr{PathSwitch}) -> Cvoid."
+client_set_path_callback(c, fn::Ptr{Cvoid}, user::Ptr{Cvoid}) =
+    ccall((:iec104_client_set_path_callback, LIB), Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
+          c, fn, user)
+"Test aid: :close, :silent or :restore path @p nr."
+client_disturb_path(c, nr::Integer, fault::Symbol) =
+    check(ccall((:iec104_client_disturb_path, LIB), Cint, (Ptr{Cvoid}, UInt32, Cint), c, nr,
+                Dict(:close => PATH_CLOSE, :silent => PATH_SILENT, :restore => PATH_RESTORE)[fault]))
 
 # --- Decoding (e.g. frames of a capture) -------------------------------------------
 

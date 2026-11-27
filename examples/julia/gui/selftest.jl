@@ -39,17 +39,20 @@ mutable struct SelfTest
     client::Ptr{Cvoid}
     server::Ptr{Cvoid}
     port::Int
+    pclient::Ptr{Cvoid}         # controlling station with two paths (path redundancy)
+    server_b::Ptr{Cvoid}        # station B: same points as the station, path 2
     accept::Bool                # answer of the station to commands
     client_state::Cint
     events::Vector{Any}         # NamedTuples stored by the callbacks
     frames::Vector{Tuple{Float64,String,String,String}}   # time, side and direction, summary, meaning
 end
 
-const ST = SelfTest(false, 0.0, 0.0, Step[], C_NULL, C_NULL, 0, true, IEC104.LINK_CLOSED, [], [])
+const ST = SelfTest(false, 0.0, 0.0, Step[], C_NULL, C_NULL, 0, C_NULL, C_NULL, true,
+                    IEC104.LINK_CLOSED, [], [])
 const ST_FRAMES_MAX = 5000
 const ST_CLIENT_CONN = Ref(0)   # connection number of the test client at the station
 const ST_T3_S = 3            # short t3 of the controlling station: the idle test comes quickly
-const ST_STEPS = 22          # without the optional lib60870 step
+const ST_STEPS = 26          # without the optional lib60870 step
 const CMD_TERMINATED = 1     # iec104_command_result: confirmed and terminated
 const CMD_REJECTED = 3       # negative answer
 
@@ -76,6 +79,13 @@ end
 function st_command_result(::Ptr{Cvoid}, ::UInt16, cmd::Ptr{Object}, result::Cint)::Cvoid
     c = unsafe_load(cmd)
     st_event((kind = :result, type = Int(c.type), ioa = Int(c.ioa), result = Int(result)))
+end
+
+function st_path(::Ptr{Cvoid}, e::Ptr{PathSwitch})::Cvoid
+    s = unsafe_load(e)
+    st_event((kind = :switch, leading = Int(s.leading), previous = Int(s.previous),
+              replayed = Int(s.replayed), suppressed = Int(s.suppressed), dropped = Int(s.dropped),
+              reason = unsafe_string(s.reason)))
 end
 
 function st_server_state(::Ptr{Cvoid}, conn::UInt32, state::Cint, reason::Cint)::Cvoid
@@ -106,7 +116,8 @@ function st_log(side::String, level::Cint, conn::UInt32, message::Cstring)
             sent = startswith(m, "sent ")
             (sent || startswith(m, "received ")) || return nothing
             summary, meaning = Frames.describe(Frames.parse_hex(m[(sent ? 6 : 10):end]))
-            who = side == "L" ? "Leitstelle" : "Station($conn)"
+            who = side == "L" ? "Leitstelle" : side == "W" ? "Leitstelle Weg $conn" :
+                  side == "B" ? "Station B($conn)" : "Station($conn)"
             length(ST.frames) < ST_FRAMES_MAX &&
                 push!(ST.frames, (time(), who * (sent ? " →" : " ←"), summary, meaning))
         end
@@ -118,6 +129,10 @@ st_log_client(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid 
     st_log("L", level, conn, message)
 st_log_server(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid =
     st_log("S", level, conn, message)
+st_log_paths(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid =
+    st_log("W", level, conn, message)
+st_log_server_b(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid =
+    st_log("B", level, conn, message)
 
 # --- Helpers for the steps -----------------------------------------------------------------
 
@@ -206,17 +221,21 @@ function selftest_start(p)
 end
 
 function selftest_cleanup()
-    c, s = ST.client, ST.server
-    ST.client = C_NULL   # the poll task must not use the handles any more
-    ST.server = C_NULL
+    c, s, pc, sb = ST.client, ST.server, ST.pclient, ST.server_b
+    ST.client = ST.pclient = C_NULL   # the poll task must not use the handles any more
+    ST.server = ST.server_b = C_NULL
     c != C_NULL && client_destroy(c)
+    pc != C_NULL && client_destroy(pc)
     s != C_NULL && server_destroy(s)
+    sb != C_NULL && server_destroy(sb)
 end
 
 "Called by the poll task of the GUI."
 function selftest_poll()
     ST.client != C_NULL && client_poll(ST.client, 0)
+    ST.pclient != C_NULL && client_poll(ST.pclient, 0)
     ST.server != C_NULL && server_poll(ST.server, 0)
+    ST.server_b != C_NULL && server_poll(ST.server_b, 0)
     return nothing
 end
 
@@ -518,7 +537,108 @@ function selftest_steps()
         "keine Fehler; $(length(warnings)) erwartete Warnungen (negative Antworten)"
     end
 
+    selftest_paths()
     selftest_lib60870()
+end
+
+"Both paths of the path test are started and one leads."
+st_paths_up() = ST.pclient != C_NULL && client_leading_path(ST.pclient) != 0 &&
+                all(nr -> client_path_info(ST.pclient, nr).state == IEC104.LINK_STARTED, 1:2)
+
+"Path redundancy (docs/05, E11, E12): a controlling station with two paths to the station and station B."
+function selftest_paths()
+    m = length(ST.events)
+    run_step("Zwei Wege: Umschalten bei Trennen",
+             "Station B mit denselben Daten starten; eine Leitstelle mit zwei Wegen (zur Station und zu " *
+             "Station B); dann den führenden Weg trennen",
+             "beide Wege gestartet, einer führend; nach dem Trennen führt sofort der andere, der logische " *
+             "Zustand bleibt „Datenübertragung läuft“, danach Generalabfrage auf dem neuen Weg") do
+        cb = Callbacks(ST;
+            on_state = @cfunction(st_server_state, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cint)),
+            on_command = @cfunction(st_server_command, Cint, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})))
+        ST.server_b = server_create(LinkConfig(), cb)
+        server_set_log(ST.server_b, 4, @cfunction(st_log_server_b, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
+        for (ioa, t, v, groups) in ST_POINTS
+            server_add_point(ST.server_b, 1, st_object(t, ioa, v), groups)
+        end
+        server_listen(ST.server_b, 0; address = "127.0.0.1")
+        cfg = LinkConfig()
+        cfg.t1_ms, cfg.t2_ms, cfg.t3_ms = 2000, 1000, 1000   # a silent path is noticed after 3 s
+        ccb = Callbacks(ST;
+            on_state = @cfunction(st_client_state, Cvoid, (Ptr{Cvoid}, UInt32, Cint, Cint)),
+            on_object = @cfunction(st_client_object, Cvoid, (Ptr{Cvoid}, UInt32, Ptr{AsduInfo}, Ptr{Object})),
+            on_command_result = @cfunction(st_command_result, Cvoid, (Ptr{Cvoid}, UInt16, Ptr{Object}, Cint)))
+        ST.pclient = client_create(cfg, ccb)
+        client_set_log(ST.pclient, 4, @cfunction(st_log_paths, Cvoid, (Ptr{Cvoid}, Cint, UInt32, Cstring)), C_NULL)
+        client_set_path_callback(ST.pclient, @cfunction(st_path, Cvoid, (Ptr{Cvoid}, Ptr{PathSwitch})), C_NULL)
+        o = PathOptions()
+        o.reconnect_interval_ms = 1000
+        client_connect_paths(ST.pclient, [("127.0.0.1", ST.port), ("127.0.0.1", server_port(ST.server_b))];
+                             options = o)
+        client_start(ST.pclient)
+        wait_until(st_paths_up, 5.0) || fail("nicht beide Wege gestartet")
+        first = client_leading_path(ST.pclient)
+        m2 = length(ST.events)
+        client_disturb_path(ST.pclient, first, :close)
+        e = expect(m2, "Umschaltung", 3.0; kind = :switch, previous = first)
+        e.leading == 3 - first || fail("führend nach dem Trennen: Weg $(e.leading)")
+        isempty(seen(m2; kind = :cstate)) || fail("logischer Zustand hat sich geändert")
+        "Weg $first führend, getrennt → Weg $(e.leading) führend; Zustand unverändert"
+    end || return
+
+    m = length(ST.events)
+    run_step("Zwei Wege: Umschalten bei stummem Weg",
+             "Der führende Weg schweigt (Testhilfe „stumm“); währenddessen ändert sich ein Wert dreimal",
+             "Umschaltung nach t3 + t1 (3 s); die drei Werte, die nur der andere Weg erhalten hat, werden " *
+             "nachgeliefert, in der Reihenfolge des Empfangs") do
+        wait_until(st_paths_up, 5.0) || fail("getrennter Weg kam nicht wieder")
+        lead = client_leading_path(ST.pclient)
+        client_disturb_path(ST.pclient, lead, :silent)
+        for v in (31.0, 32.0, 33.0)
+            for s in (ST.server, ST.server_b)
+                server_update(s, 1, st_object(13, 106, v))
+            end
+            sleep(0.1)
+        end
+        e = expect(m, "Umschaltung", 8.0; kind = :switch, previous = lead)
+        vals = [x.value for x in seen(m; kind = :object, ioa = 106, cause = 3)]
+        vals == [31.0, 32.0, 33.0] || fail("zugestellt: $(vals), erwartet 31, 32, 33")
+        "Weg $lead stumm → Weg $(e.leading) nach $(seconds(time() - ST.steps[end].t_start)); " *
+        "nachgeliefert $(e.replayed), unterdrückt $(e.suppressed); Werte 31, 32, 33"
+    end || return
+
+    m = length(ST.events)
+    run_step("Zwei Wege: Befehl beim Umschalten",
+             "Ein Befehl ist unterwegs, als der führende Weg getrennt wird",
+             "der Befehl endet mit „Verbindung verloren“ und wird nicht wiederholt (docs/05, E12)") do
+        wait_until(st_paths_up, 5.0) || fail("Wege nicht beide gestartet")
+        lead = client_leading_path(ST.pclient)
+        client_send_command(ST.pclient, 1, st_object(45, 6001, 1.0))
+        client_disturb_path(ST.pclient, lead, :close)   # before the next poll: no answer yet
+        e = expect(m, "Ergebnis des Befehls", 3.0; kind = :result, ioa = 6001)
+        e.result == 6 || fail("Ergebnis: $(result_text(e.result))")
+        sleep(0.5)
+        n = length(seen(m; kind = :command, ioa = 6001))
+        n <= 1 || fail("Befehl $n-mal an einer Station angekommen")
+        "Ergebnis „$(result_text(e.result))“; an den Stationen $(n)-mal angekommen"
+    end || return
+
+    m = length(ST.events)
+    run_step("Zwei Wege: beide Wege weg",
+             "Beide Wege werden zugleich getrennt; die Library verbindet selbst neu",
+             "logischer Zustand „verbinde …“, Meldung „kein Weg“; nach dem Wiederverbinden wieder " *
+             "„Datenübertragung läuft“ mit Generalabfrage") do
+        wait_until(st_paths_up, 5.0) || fail("Wege nicht beide gestartet")
+        client_disturb_path(ST.pclient, 1, :close)
+        client_disturb_path(ST.pclient, 2, :close)
+        expect(m, "Meldung „kein Weg“", 3.0; kind = :switch, leading = 0)
+        expect(m, "Zustand „verbinde“", 3.0; kind = :cstate, state = Int(IEC104.LINK_CONNECTING))
+        expect(m, "wieder gestartet", 6.0; kind = :cstate, state = Int(IEC104.LINK_STARTED))
+        expect(m, "Generalabfrage danach", 3.0; kind = :object, cause = 20)
+        client_close(ST.pclient)
+        expect(m, "Schließen", 3.0; kind = :cstate, state = Int(IEC104.LINK_CLOSED))
+        "kein Weg → verbinde → beide wieder da, Generalabfrage; danach geschlossen"
+    end
 end
 
 "Optional: lib60870 (simple_client) as independent controlling station against the test station."

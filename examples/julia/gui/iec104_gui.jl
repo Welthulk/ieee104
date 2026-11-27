@@ -295,6 +295,7 @@ function cb_client_object(::Ptr{Cvoid}, ::UInt32, info::Ptr{AsduInfo}, obj::Ptr{
     i = unsafe_load(info)
     o = unsafe_load(obj)
     t = Int(o.type)
+    series_seen(o.ioa, i.cause, o.value)
     (1 <= t <= 44 || is_command(t)) || return nothing   # answers to interrogations: in the log only
     image_update(i.common_address, o, i.cause, i.negative != 0)
     if t <= 44
@@ -393,9 +394,13 @@ function log_entry(side::String, level::Cint, conn::UInt32, message::Cstring)
     try
         m = unsafe_string(message)
         if level <= 1
-            # A close is reported in German by the state callback, with a hint.
+            # A close is reported in German by the state callback, with a hint;
+            # switch-overs and faults by the path callback and the actions.
             startswith(m, "closed: ") && return nothing
-            note("Library $conn: " * m; kind = level == 0 ? "error" : "warning")
+            side == "L" && (occursin(" leading: ", m) || startswith(m, "all paths lost") ||
+                            occursin(" disturbed: ", m)) && return nothing
+            note((side == "B" ? "Library (Station B) " : "Library ") * "$conn: " * m;
+                 kind = level == 0 ? "error" : "warning")
         elseif level == 4
             sent = startswith(m, "sent ")
             (sent || startswith(m, "received ")) || return nothing
@@ -403,7 +408,9 @@ function log_entry(side::String, level::Cint, conn::UInt32, message::Cstring)
             b = Frames.parse_hex(hex)
             summary, meaning = Frames.describe(b)
             d = Frames.details(b)
-            who = side == "L" ? "Leitstelle" : "Station($conn)"
+            who = side == "L" ? (PATHS.count >= 2 ? "Leitstelle Weg $conn" : "Leitstelle") :
+                  side == "B" ? "Station B($conn)" :
+                  PATHS.server_b != C_NULL ? "Station A($conn)" : "Station($conn)"
             add_log("frame", who * (sent ? " → " : " ← ") * summary, meaning;
                     dir = sent ? "out" : "in", format = d.format, type = d.type, cause = d.cause,
                     ioas = d.ioas, hex = hex, objects = d.objects)
@@ -416,6 +423,8 @@ cb_log_client(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid 
     log_entry("L", level, conn, message)
 cb_log_server(::Ptr{Cvoid}, level::Cint, conn::UInt32, message::Cstring)::Cvoid =
     log_entry("S", level, conn, message)
+
+include(joinpath(@__DIR__, "paths.jl"))   # two paths, station B, random faults, series check
 
 # --- Actions ---------------------------------------------------------------------
 
@@ -444,6 +453,9 @@ function gui_client_connect(p)
     station = p_int(p, "station", 1)
     1 <= port <= 65535 || throw(ArgumentError("Port 1…65535"))
     1 <= station <= 65534 || throw(ArgumentError("Station (CA) 1…65534"))
+    two = !isempty(strip(p_str(p, "port2")))   # path 2 given: path redundancy
+    port2 = p_int(p, "port2", 0)
+    two && !(1 <= port2 <= 65535) && throw(ArgumentError("Port Weg 2: 1…65535"))
     for k in ("k", "w")
         1 <= p_int(p, k, 8) <= 32767 || throw(ArgumentError("$k 1…32767"))
     end
@@ -459,6 +471,8 @@ function gui_client_connect(p)
         GUI.client_state != IEC104.LINK_CLOSED && note("Leitstelle: alte Verbindung getrennt")
         GUI.client_state = IEC104.LINK_CLOSED
     end
+    PATHS.auto = false
+    PATHS.switches = 0
     cfg = LinkConfig()
     for (k, f) in (("t0", :t0_ms), ("t1", :t1_ms), ("t2", :t2_ms), ("t3", :t3_ms))
         haskey(p, k) && !isempty(p[k]) && setfield!(cfg, f, UInt32(round(p_num(p, k, 0) * 1000)))
@@ -486,10 +500,21 @@ function gui_client_connect(p)
     end
     GUI.station = UInt16(station)
     host = isempty(p_str(p, "host")) ? "127.0.0.1" : p_str(p, "host")
-    IEC104.client_connect(GUI.client, host, port)
+    host2 = isempty(p_str(p, "host2")) ? host : p_str(p, "host2")
+    if two
+        client_set_path_callback(GUI.client, @cfunction(cb_path, Cvoid, (Ptr{Cvoid}, Ptr{PathSwitch})), C_NULL)
+        o = PathOptions()
+        o.reconnect_interval_ms = PATH_RECONNECT_MS
+        client_connect_paths(GUI.client, [(host, port), (host2, port2)]; options = o)
+        PATHS.count = 2
+    else
+        IEC104.client_connect(GUI.client, host, port)
+        PATHS.count = 1
+    end
     GUI.client_state = IEC104.LINK_CONNECTING
     GUI.auto_step = get(p, "auto", "0") == "1" ? 1 : 0
-    note("Leitstelle: verbinde mit $host:$port, Station $(GUI.station)" *
+    note("Leitstelle: verbinde mit $host:$port" * (two ? " und $host2:$port2 (zwei Wege)" : "") *
+         ", Station $(GUI.station)" *
          (get(p, "tls", "") == "1" ? " (TLS)" : "") *
          (GUI.auto_step == 1 ? ", danach STARTDT und Generalabfrage" : ""))
 end
@@ -659,6 +684,11 @@ function gui_server_listen(p)
     port = p_int(p, "port", 2404)
     1 <= station <= 65534 || throw(ArgumentError("Station (CA) 1…65534"))
     0 <= port <= 65535 || throw(ArgumentError("Port 0…65535 (0 = frei wählen)"))
+    two = !isempty(strip(p_str(p, "port_b")))   # station B for path 2
+    port_b = p_int(p, "port_b", 0)
+    two && !(0 <= port_b <= 65535) && throw(ArgumentError("Port Station B: 0…65535"))
+    two && port_b == port != 0 && throw(ArgumentError("Station B braucht einen anderen Port als Station A"))
+    station_b_stop()
     GUI.server != C_NULL && (server_destroy(GUI.server); GUI.server = C_NULL)
     empty!(GUI.connections)
     cb = Callbacks(GUI;
@@ -686,8 +716,9 @@ function gui_server_listen(p)
         GUI.server = C_NULL
         rethrow()
     end
-    note("Station: lauscht auf $(GUI_ADDRESS[]):$(server_port(GUI.server)), " *
+    note("Station" * (two ? " A" : "") * ": lauscht auf $(GUI_ADDRESS[]):$(server_port(GUI.server)), " *
          "gemeinsame Adresse $(GUI.server_station)")
+    two && station_b_start(port_b)
 end
 
 function gui_server_point(p)
@@ -700,12 +731,21 @@ function gui_server_point(p)
         throw(ArgumentError("Wert $(o.value) passt nicht zu Typ $(o.type) – erlaubt: $(range_text(o.type))"))
     if GUI.server != C_NULL
         if old !== nothing
-            check(server_update(GUI.server, GUI.server_station, o))   # spontaneous
+            targets = stations_for_update()
+            isempty(targets) && throw(ArgumentError("Wertänderung geht an keine laufende Station (Einstellung „an“)"))
+            for (s, _) in targets
+                check(server_update(s, GUI.server_station, o))   # spontaneous
+            end
+            PATHS.server_b != C_NULL && PATHS.divert != "ab" &&
+                note("Station: IOA $(o.ioa) = $(o.value) nur an Station $(join(last.(targets), " und ")) " *
+                     "– absichtliche Abweichung der Wege"; kind = "warning")
             any(==(IEC104.LINK_STARTED), values(GUI.connections)) ||
                 note("Station: IOA $(o.ioa) = $(o.value) gespeichert; keine Leitstelle mit STARTDT, " *
                      "nichts gesendet (kommt mit der nächsten Generalabfrage)")
         else
-            server_add_point(GUI.server, GUI.server_station, o)
+            for (s, _) in stations_for_update(true)
+                server_add_point(s, GUI.server_station, o)
+            end
             note("Station: Datenpunkt IOA $(o.ioa) Typ $(o.type) angelegt")
         end
     end
@@ -962,7 +1002,12 @@ const ACTIONS = Dict{String,Function}(
     "/api/list/take" => gui_list_take,
     "/api/list/clear" => p -> (empty!(GUI.list); list_save()),
     "/api/server/listen" => gui_server_listen,
-    "/api/server/stop" => p -> (GUI.server != C_NULL && server_destroy(GUI.server); GUI.server = C_NULL;
+    "/api/client/path" => gui_client_path,
+    "/api/client/auto" => gui_client_auto,
+    "/api/series" => gui_series,
+    "/api/server/divert" => p -> (to = p_str(p, "to"); to in ("ab", "a", "b") ||
+                                  throw(ArgumentError("an: ab, a oder b")); PATHS.divert = to),
+    "/api/server/stop" => p -> (station_b_stop(); GUI.server != C_NULL && server_destroy(GUI.server); GUI.server = C_NULL;
                                 empty!(GUI.connections); note("Station: beendet")),
     "/api/server/point" => gui_server_point,
     "/api/server/accept" => p -> (GUI.accept_commands = get(p, "on", "1") == "1"),
@@ -1007,6 +1052,7 @@ function state_json(p)
     print(io, ",\"text\":")
     jstr(io, GUI.client == C_NULL ? "nicht verbunden" : state_text(GUI.client_state))
     print(io, ",\"station\":", GUI.station, '}')
+    paths_json(io)
     # Process image: changed points only, all after a clear (epoch) or on the first request.
     epoch = q_int(p, "pe", 0)
     pv = epoch == GUI.image_epoch ? q_int(p, "pv", 0) : 0
@@ -1059,7 +1105,9 @@ function state_json(p)
     end
     print(io, ",\"server\":{\"running\":", GUI.server != C_NULL, ",\"port\":",
           GUI.server == C_NULL ? 0 : server_port(GUI.server), ",\"station\":", GUI.server_station,
-          ",\"accept\":", GUI.accept_commands, ",\"connections\":[")
+          ",\"accept\":", GUI.accept_commands)
+    station_b_json(io)
+    print(io, ",\"connections\":[")
     for (n, (id, st)) in enumerate(sort!(collect(GUI.connections)))
         n > 1 && print(io, ',')
         print(io, "{\"id\":", id, ",\"state\":")
@@ -1167,7 +1215,8 @@ const ACTION_NAMES = Dict(
     "/api/listen/start" => "Mithören",
     "/api/server/listen" => "Station starten", "/api/server/point" => "Datenpunkt",
     "/api/peer/start" => "Gegenstelle starten", "/api/peer/stop" => "Gegenstelle beenden",
-    "/api/selftest/start" => "Selbsttest")
+    "/api/selftest/start" => "Selbsttest", "/api/client/path" => "Weg stören",
+    "/api/client/auto" => "Zufällige Störungen", "/api/series" => "Reihenprüfung")
 
 "Error message with a hint what to do."
 function error_text(e, path, p)
@@ -1302,6 +1351,13 @@ function main(port = 8080, address = "127.0.0.1", lib60870 = "")
                  kind = "warning")
         end
         GUI.server != C_NULL && server_poll(GUI.server, 0)
+        try
+            path_poll()
+        catch e
+            PATHS.auto = PATHS.series_on = false
+            note("Wege/Reihenprüfung angehalten: " * error_text(e, "/api/client", Dict{String,String}());
+                 kind = "warning")
+        end
         selftest_poll()
         try
             listen_poll()

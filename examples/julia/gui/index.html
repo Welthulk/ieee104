@@ -74,6 +74,12 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
     <label>&nbsp;<button onclick="act('client/stop')">STOPDT</button></label>
     <label>&nbsp;<button onclick="act('client/close')">Trennen</button></label>
   </div>
+  <div class="row">
+    <label>Weg 2: Adresse<input id="host2" class="m" placeholder="wie Weg 1"></label>
+    <label>Port<input id="port2" class="s" placeholder="–"></label>
+    <span class="hint">leer = eine Verbindung; mit Port = zwei Wege zu Stationen mit demselben Prozess
+      (Wegeredundanz, siehe „Wege und Reihenprüfung“)</span>
+  </div>
   <div class="row"><label style="flex-direction: row; gap: 4px"><input id="auto" type="checkbox" checked>
     nach dem Verbinden STARTDT und Generalabfrage</label></div>
   <details><summary>Timer, Fenster, Befehle, TLS</summary>
@@ -175,6 +181,38 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
     <tbody id="image"></tbody></table></div>
 </section>
 
+<section class="tab wide" data-tab="pruef">
+  <h2>Wege und Reihenprüfung <span id="pathstate" class="state">ein Weg</span></h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Weg</th><th>Adresse</th><th>Rolle</th><th>Zustand</th><th>Verbindungen</th>
+      <th>führend</th><th>empfangen</th><th>mitgelaufen</th><th>im Puffer</th><th>nachgeliefert</th>
+      <th>unterdrückt</th><th>verloren</th><th></th></tr></thead>
+    <tbody id="paths"><tr><td colspan="13" class="hint">Für Wegeredundanz beim Verbinden Port von Weg 2
+      angeben (zum Ausprobieren: Reiter „Station“, Station B starten).</td></tr></tbody>
+  </table></div>
+  <div class="row">
+    <label style="flex-direction: row; gap: 4px"><input id="fauto" type="checkbox" onchange="faultAuto()">
+      zufällig stören</label>
+    <label>alle … s<input id="fmin" class="s" value="5"></label>
+    <label>bis s<input id="fmax" class="s" value="15"></label>
+    <label>Startwert<input id="fseed" class="s" placeholder="zufällig"></label>
+    <label>beide zugleich<input id="fboth" type="checkbox"></label>
+    <span id="fstate" class="hint"></span>
+  </div>
+  <div class="row">
+    <label>Reihe IOA<input id="sioa" class="m" value="9000"></label>
+    <label>Takt ms<input id="sms" class="s" value="200"></label>
+    <label>&nbsp;<button class="main" onclick="act('series', {do: 'start', ioa: v('sioa'), ms: v('sms')})">Reihe starten</button></label>
+    <label>&nbsp;<button onclick="act('series', {do: 'stop'})">Anhalten</button></label>
+    <label>&nbsp;<button onclick="act('series', {do: 'reset'})">Zähler auf 0</button></label>
+    <span id="series" class="hint"></span>
+  </div>
+  <p class="hint">Führend ist der Weg, dessen Meldungen die Leitstelle verwendet; der andere läuft mit und
+    puffert. „trennen“ beendet die Verbindung (sofort bemerkt), „stumm“ lässt den Weg schweigen wie eine
+    unterbrochene Leitung (bemerkt erst nach t3 + t1). Ein verlorener Weg verbindet sich nach 2 s neu.
+    Die Reihe zeigt, ob dabei Werte fehlen: Beide Stationen senden 1, 2, 3 …; „fehlend“ muss 0 bleiben.</p>
+</section>
+
 <section class="tab wide" data-tab="mithoeren" hidden>
   <h2>Mithören: Verkehr zwischen Leitstelle und Station aus einem Mitschnitt <span id="lstate" class="state">aus</span></h2>
   <div class="row">
@@ -207,7 +245,8 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
   <div class="row">
     <label>Port<input id="sport" class="s" value="2404"></label>
     <label>Station (CA)<input id="sstation" class="s" value="1"></label>
-    <label>&nbsp;<button class="main" onclick="act('server/listen', {port: v('sport'), station: v('sstation')})">Starten</button></label>
+    <label>Port Station B<input id="sportb" class="s" placeholder="–"></label>
+    <label>&nbsp;<button class="main" onclick="act('server/listen', {port: v('sport'), station: v('sstation'), port_b: v('sportb')})">Starten</button></label>
     <label>&nbsp;<button onclick="act('server/stop')">Beenden</button></label>
     <label>Befehle annehmen<input id="accept" type="checkbox" checked onchange="act('server/accept', {on: this.checked ? 1 : 0})"></label>
   </div>
@@ -221,7 +260,15 @@ Test GUI of the IEC 104 library; served by iec104_gui.jl.
     <thead><tr><th>IOA</th><th>Typ</th><th>Wert</th><th></th></tr></thead>
     <tbody id="points"></tbody>
   </table></div>
+  <div class="row">
+    <label>Wertänderung an<select id="divert" onchange="act('server/divert', {to: v('divert')})">
+      <option value="ab">beide Stationen</option><option value="a">nur Station A</option>
+      <option value="b">nur Station B</option></select></label>
+  </div>
   <p>Verbindungen: <span id="conns">keine</span></p>
+  <p class="hint">Mit Port Station B startet eine zweite Station mit denselben Datenpunkten (Weg 2 des
+    Prüfstands, z. B. Port 2404 und 2405). „nur A“/„nur B“ erzeugt absichtlich eine Abweichung zwischen den
+    Wegen; die Generalabfrage nach einer Umschaltung gleicht sie aus.</p>
 </section>
 
 <section class="tab" data-tab="station" hidden>
@@ -355,10 +402,47 @@ function tab(name) {
 }
 const checked = id => document.getElementById(id).checked ? 1 : 0;
 function connect() {
-  const p = {host: v('host'), port: v('port'), station: v('station'), tls: checked('tls'),
+  const p = {host: v('host'), port: v('port'), host2: v('host2'), port2: v('port2'),
+             station: v('station'), tls: checked('tls'),
              tolerant: checked('tolerant'), auto: checked('auto'), term: checked('term')};
   for (const k of ['t0', 't1', 't2', 't3', 'k', 'w', 'ca', 'cert', 'key', 'peer', 'conf_to', 'term_to']) p[k] = v(k);
   act('client/connect', p);
+}
+function faultAuto() {
+  act('client/auto', {on: checked('fauto'), min: v('fmin'), max: v('fmax'), seed: v('fseed'),
+                      both: checked('fboth')});
+}
+function pathButtons(p) {
+  return `<button onclick="act('client/path', {nr: ${p.nr}, fault: 'close'})">trennen</button> ` +
+         `<button onclick="act('client/path', {nr: ${p.nr}, fault: 'silent'})">stumm</button> ` +
+         `<button onclick="act('client/path', {nr: ${p.nr}, fault: 'restore'})">freigeben</button>`;
+}
+let pathsShown = '';
+function showPaths(ps, se) {
+  const st = document.getElementById('pathstate');
+  st.textContent = ps.count < 2 ? 'ein Weg' :
+    (ps.leading ? 'Weg ' + ps.leading + ' führend' : 'kein Weg gestartet') + ', ' + ps.switches + ' Umschaltungen';
+  st.className = 'state ' + (ps.count >= 2 ? (ps.leading ? 'started' : 'closed') : '');
+  const body = document.getElementById('paths');
+  const k = JSON.stringify(ps.list);
+  if (ps.list.length && k !== pathsShown) {
+    pathsShown = k;
+    body.innerHTML = ps.list.map(p =>
+      `<tr class="${p.lead ? '' : (p.up ? '' : 'warn')}"><td class="num">${p.nr}</td><td>${esc(p.addr)}</td>` +
+      `<td>${p.lead ? '<b>führend</b>' : p.up ? 'läuft mit' : '–'}</td>` +
+      `<td title="${esc(p.close)}">${esc(p.state)}</td><td class="num">${p.connects}</td>` +
+      `<td class="num">${p.led}×</td><td class="num">${p.rx}</td><td class="num">${p.followed}</td>` +
+      `<td class="num">${p.buffered}</td><td class="num">${p.replayed}</td><td class="num">${p.suppressed}</td>` +
+      `<td class="num${p.dropped ? ' neg' : ''}">${p.dropped}</td><td>${pathButtons(p)}</td></tr>`).join('');
+  }
+  const fa = document.getElementById('fauto');
+  if (document.activeElement !== fa) fa.checked = ps.auto;
+  document.getElementById('fstate').textContent =
+    ps.auto ? `läuft, Startwert ${ps.seed}, ${ps.faults} Störungen` : (ps.seed ? `zuletzt Startwert ${ps.seed}` : '');
+  const sv = document.getElementById('series');
+  sv.textContent = se.sent || se.on ? `${se.on ? 'läuft' : 'angehalten'}: gesendet ${se.sent}, ` +
+    `zugestellt ${se.delivered}, fehlend ${se.missing}, doppelt ${se.dup}, unterwegs ${se.pending}` : '';
+  sv.className = se.missing ? 'neg' : 'hint';
 }
 function listenStart(live) {
   act('listen/start', {path: v('lpath'), port: v('lport'), live, image: checked('limage')});
@@ -657,7 +741,10 @@ async function update() {
   showList(s);
   if (s.cmds !== undefined) { cmds = s.cmds; cv = s.cv || 0; renderCmds(); }
   const ss = document.getElementById('sstate');
-  ss.textContent = s.server.running ? 'Port ' + s.server.port + ', Station ' + s.server.station : 'aus';
+  ss.textContent = s.server.running ? 'Port ' + s.server.port + (s.server.port_b ? ' und ' + s.server.port_b + ' (B)' : '') +
+    ', Station ' + s.server.station : 'aus';
+  const dv = document.getElementById('divert');
+  if (document.activeElement !== dv) dv.value = s.server.divert;
   ss.className = 'state ' + (s.server.running ? 'started' : '');
   const pts = document.getElementById('points');
   const ptsKey = JSON.stringify(s.server.points);
@@ -672,7 +759,9 @@ async function update() {
   const acc = document.getElementById('accept');
   if (document.activeElement !== acc) acc.checked = s.server.accept;
   document.getElementById('conns').textContent =
-    s.server.connections.map(c => c.id + ': ' + c.state).join(', ') || 'keine';
+    (s.server.connections.map(c => (s.server.port_b ? 'A' : '') + c.id + ': ' + c.state)
+      .concat(s.server.connections_b.map(c => 'B' + c.id + ': ' + c.state))).join(', ') || 'keine';
+  showPaths(s.paths, s.series);
   showPeer(s.peer);
   showSelftest(s.selftest);
   showListen(s.listen);

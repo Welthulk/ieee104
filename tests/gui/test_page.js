@@ -99,7 +99,7 @@ for (const n of handlerNames) {
 
 let api;
 try {
-  api = new Function(script + '\n;return {refresh, act, connect, sendCommand, listAdd, listEdit, pickCommand, tab, drawLog, drawImage, renderCmds, logText, saveImage, copyText, copyReport, saveReport, sendPoint};')();
+  api = new Function(script + '\n;return {refresh, act, connect, sendCommand, listAdd, listEdit, pickCommand, tab, drawLog, drawImage, renderCmds, logText, saveImage, copyText, copyReport, saveReport, sendPoint, faultAuto};')();
 } catch (e) { err('Laden', e); }
 const sleep = ms => new Promise(r => GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => { r(); return false; }));
 async function tick(where) {
@@ -113,24 +113,37 @@ async function main() {
   if (!api) return;
   await sleep(800);   // the page's own first refresh
   await tick('Start');
-  await api.act('server/listen', {port: '0', station: '1'}); runTimers();
+  await api.act('server/listen', {port: '0', station: '1', port_b: '0'}); runTimers();
   await api.act('server/point', {type: 13, ioa: 100, value: 4.5});
   await api.act('server/point', {type: 1, ioa: 1001, value: 0});
   await tick('Station');
   const sport = (els['sstate'].textContent.match(/Port (\d+)/) || [])[1];
+  const sportb = (els['sstate'].textContent.match(/und (\d+) \(B\)/) || [])[1];
   print('Station: ' + els['sstate'].textContent);
   v('lst').value = '1'; v('lioa').value = '6001'; v('lty').value = '45'; v('ltx').value = 'Schalter Q1'; v('lfb').value = '1001';
   api.listAdd(); await sleep(300); await tick('Liste');
-  v('port').value = sport; v('host').value = '127.0.0.1';
+  v('port').value = sport; v('host').value = '127.0.0.1'; v('port2').value = sportb;
   api.connect(); await sleep(2500); await tick('Verbinden'); await sleep(300); await tick('Verbinden2');
-  print('Leitstelle: ' + els['cstate'].textContent);
+  print('Leitstelle: ' + els['cstate'].textContent + '; Wege: ' + els['pathstate'].textContent);
+  const twoPaths = /^Weg \d führend, 0 Umschaltungen$/.test(els['pathstate'].textContent);
+  // Path redundancy: series, one path closed by hand, random faults on and off.
+  await api.act('series', {do: 'start', ioa: 9000, ms: 50}); await sleep(1000); await tick('Reihe');
+  const lead = (els['pathstate'].textContent.match(/^Weg (\d)/) || [])[1];
+  await api.act('client/path', {nr: lead, fault: 'close'}); await sleep(1500); await tick('Weg trennen');
+  v('fmin').value = '1'; v('fmax').value = '2'; v('fseed').value = '7'; v('fauto').checked = true;
+  api.faultAuto(); await sleep(500); await tick('zufällig an');
+  const autoText = els['fstate'].textContent;
+  v('fauto').checked = false; api.faultAuto(); await sleep(3000); await tick('zufällig aus');
+  await api.act('series', {do: 'stop'}); await sleep(1500); await tick('Reihe aus');
+  print('Wege: ' + els['pathstate'].textContent + '; zufällig: ' + autoText + '; Reihe: ' + els['series'].textContent);
+  print('Tabelle der Wege: ' + (els['paths'].innerHTML.match(/<tr/g) || []).length + ' Zeilen');
   v('cpick').value = String(1 * 16777216 + 6001); api.pickCommand();
   api.sendCommand(); await sleep(1500); await tick('Befehl');
   await api.act('server/point', {type: 1, ioa: 1001, value: 1}); await sleep(800); await tick('Rückmeldung');
   api.listEdit(1, 100); api.saveImage();
   await api.act('list/take'); await tick('Übernehmen');
   await api.act('selftest/start'); runTimers();
-  for (let i = 0; i < 40; i++) { await sleep(1000); await tick('Selbsttest'); if (/bestanden/.test(els['tstate'].textContent)) break; }
+  for (let i = 0; i < 60; i++) { await sleep(1000); await tick('Selbsttest'); if (/bestanden/.test(els['tstate'].textContent)) break; }
   try { await api.copyReport(); await api.saveReport(); } catch (e) { err('Protokoll', e); }
   for (const [id, val] of [['fdir', 'in'], ['fty', '13'], ['fc', '20'], ['fioa', '100'], ['ftext', 'Generalabfrage']]) {
     v(id).value = val; try { api.drawLog(); } catch (e) { err('Filter ' + id, e); } v(id).value = '';
@@ -145,9 +158,16 @@ async function main() {
   print('Telegramme: ' + els['lcount'].textContent + '; Fehlerzeile: "' + els['err'].textContent + '"');
   // what a user must see
   const expect = (ok, what) => { if (!ok) errors.push('erwartet: ' + what); };
-  expect(/^Port \d+, Station 1$/.test(els['sstate'].textContent), 'Station läuft');
+  expect(/^Port \d+ und \d+ \(B\), Station 1$/.test(els['sstate'].textContent), 'Station A und B laufen');
+  expect(twoPaths, 'zwei Wege, einer führend');
+  expect(/Umschaltungen$/.test(els['pathstate'].textContent) && !/ 0 Umschaltungen$/.test(els['pathstate'].textContent),
+         'Umschaltung nach dem Trennen');
+  expect(/^läuft, Startwert 7, \d+ Störungen$/.test(autoText), 'zufällige Störungen mit Startwert');
+  expect(/^angehalten: gesendet \d+, zugestellt \d+, fehlend 0, doppelt \d+, unterwegs \d+$/.test(els['series'].textContent),
+         'Reihe ohne fehlende Werte');
+  expect((els['paths'].innerHTML.match(/<tr/g) || []).length === 2, 'Tabelle mit zwei Wegen');
   expect(els['cstate'].textContent === 'Datenübertragung läuft', 'Leitstelle mit Datenübertragung');
-  expect(/^23 von 23 bestanden$|^22 von 22 bestanden$/.test(els['tstate'].textContent), 'Selbsttest bestanden');
+  expect(/^27 von 27 bestanden$|^26 von 26 bestanden$/.test(els['tstate'].textContent), 'Selbsttest bestanden');
   expect(/<td>Schalter Q1<\/td>.*ausgeführt.*ms, IOA 1001: ein/.test(els['cmds'].innerHTML), 'Befehl ausgeführt mit Rückmeldung');
   expect((els['image'].innerHTML.match(/<tr/g) || []).length >= 3, 'mindestens 3 Zeilen im Prozessabbild');
   expect(/Wert 4.5/.test(els['image'].innerHTML), 'Messwert im Prozessabbild');
